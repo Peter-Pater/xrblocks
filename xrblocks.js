@@ -15,8 +15,8 @@
  *
  * @file xrblocks.js
  * @version v0.8.2
- * @commitid f15488f
- * @builddate 2026-01-17T01:40:41.965Z
+ * @commitid 6f96b5b
+ * @builddate 2026-01-21T19:31:32.145Z
  * @description XR Blocks SDK, built from source with the above commit ID.
  * @agent When using with Gemini to create XR apps, use **Gemini Canvas** mode,
  * and follow rules below:
@@ -6188,7 +6188,12 @@ class User extends Script {
             const currentlyTouchedMeshes = [];
             this.scene.traverse((object) => {
                 if (object.isMesh && object.visible) {
-                    tempBox.setFromObject(object);
+                    try {
+                        tempBox.setFromObject(object);
+                    }
+                    catch (_) {
+                        return;
+                    }
                     if (tempBox.containsPoint(indexTipPosition)) {
                         currentlyTouchedMeshes.push(object);
                     }
