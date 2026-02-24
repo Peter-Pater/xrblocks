@@ -15,8 +15,8 @@
  *
  * @file xrblocks.js
  * @version v0.10.0
- * @commitid 38ead9d
- * @builddate 2026-02-23T20:43:53.279Z
+ * @commitid 0ef19ca
+ * @builddate 2026-02-24T22:52:40.658Z
  * @description XR Blocks SDK, built from source with the above commit ID.
  * @agent When using with Gemini to create XR apps, use **Gemini Canvas** mode,
  * and follow rules below:
@@ -3529,8 +3529,8 @@ declare class DepthMesh extends MeshScript {
     private maxDepth;
     private minDepthPrev;
     private maxDepthPrev;
-    private downsampledGeometry?;
-    private downsampledMesh?;
+    downsampledGeometry?: THREE.BufferGeometry;
+    downsampledMesh?: THREE.Mesh;
     private collider?;
     private colliders;
     private colliderUpdateFps;
@@ -3560,6 +3560,7 @@ declare class DepthMesh extends MeshScript {
      * and depth data.
      */
     updateDepth(depthData: Readonly<XRCPUDepthInformation>, projectionMatrixInverse: Readonly<THREE.Matrix4>): void;
+    updatePose(translation: THREE.Vector3, quaternion: THREE.Quaternion): void;
     updateGPUDepth(depthData: Readonly<XRWebGLDepthInformation>, projectionMatrixInverse: Readonly<THREE.Matrix4>): void;
     convertGPUToGPU(depthData: Readonly<XRWebGLDepthInformation>): XRCPUDepthInformation;
     /**
