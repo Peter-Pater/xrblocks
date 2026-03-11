@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>three-vrm test</title>
+    <style>
+      body { margin: 0; }
+      canvas { display: block; }
+    </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/",
+        "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3/lib/three-vrm.module.min.js"
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <script type="module">
+      import * as THREE from 'three';
+      import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+      import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+      import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+
+      // Renderer
+      const renderer = new THREE.WebGLRenderer();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(window.devicePixelRatio);
+      document.body.appendChild(renderer.domElement);
+
+      // Camera
+      const camera = new THREE.PerspectiveCamera(30.0, window.innerWidth / window.innerHeight, 0.1, 20.0);
+      camera.position.set(0.0, 1.0, 5.0);
+
+      // Orbit controls so you can inspect the model
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.screenSpacePanning = true;
+      controls.target.set(0.0, 1.0, 0.0);
+      controls.update();
+
+      // Scene + light
+      const scene = new THREE.Scene();
+      const light = new THREE.DirectionalLight(0xffffff, Math.PI);
+      light.position.set(1.0, 1.0, 1.0).normalize();
+      scene.add(light);
+      scene.add(new THREE.GridHelper(10, 10));
+
+      // VRM load
+      let currentVrm = undefined;
+      const loader = new GLTFLoader();
+      loader.crossOrigin = 'anonymous';
+      loader.register((parser) => new VRMLoaderPlugin(parser));
+
+      loader.load(
+        './models/VRM1_Constraint_Twist_Sample.vrm',
+        (gltf) => {
+          const vrm = gltf.userData.vrm;
+          VRMUtils.removeUnnecessaryVertices(gltf.scene);
+          VRMUtils.combineSkeletons(gltf.scene);
+          VRMUtils.combineMorphs(vrm);
+          vrm.scene.traverse((obj) => { obj.frustumCulled = false; });
+          currentVrm = vrm;
+          console.log('VRM loaded:', vrm);
+          scene.add(vrm.scene);
+        },
+        (progress) => console.log('Loading...', 100.0 * (progress.loaded / progress.total), '%'),
+        (error) => console.error('Load error:', error)
+      );
+
+      // Animate — note vrm.update(delta) is required for spring bones
+      const clock = new THREE.Clock();
+      function animate() {
+        requestAnimationFrame(animate);
+        if (currentVrm) {
+          currentVrm.update(clock.getDelta());
+        }
+        renderer.render(scene, camera);
+      }
+      animate();
+    </script>
+  </body>
+</html>

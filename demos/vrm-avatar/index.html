@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Basic Example | XR Blocks</title>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, user-scalable=no"
+    />
+    <link
+      type="text/css"
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/gh/google/xrblocks@main/samples/main.css"
+    />
+    <script type="importmap">
+        {
+          "imports": {
+            "@dimforge/rapier3d-simd-compat": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-simd-compat@0.19.2/rapier.mjs",
+            "three": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/",
+            "troika-three-text": "https://cdn.jsdelivr.net/gh/protectwise/troika@028b81cf308f0f22e5aa8e78196be56ec1997af5/packages/troika-three-text/src/index.js",
+            "troika-three-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-three-utils/src/index.js",
+            "troika-worker-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-worker-utils/src/index.js",
+            "bidi-js": "https://esm.sh/bidi-js@%5E1.0.2?target=es2022",
+            "webgl-sdf-generator": "https://esm.sh/webgl-sdf-generator@1.1.1/es2022/webgl-sdf-generator.mjs",
+            "lit": "https://cdn.jsdelivr.net/gh/lit/dist@3/core/lit-core.min.js",
+            "lit/": "https://esm.run/lit@3/",
+            "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3/lib/three-vrm.module.min.js",
+            "xrblocks": "../../build/xrblocks.js",
+            "xrblocks/addons/": "../../build/addons/"
+          }
+        }
+    </script>
+  </head>
+  <body>
+    <script type="module">
+      import 'xrblocks/addons/simulator/SimulatorAddons.js';
+      import * as THREE from 'three';
+      import * as xb from 'xrblocks';
+
+      /**
+       * A basic example of XRBlocks to render a cylinder and pinch to change its color.
+       */
+      class MainScript extends xb.Script {
+        init() {
+          // Add a simple light to the scene.
+          this.add(new THREE.HemisphereLight(0xffffff, 0x666666, 3));
+
+          // Create the 3D object.
+          const geometry = new THREE.CylinderGeometry(0.2, 0.2, 0.4, 32);
+          const material = new THREE.MeshPhongMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.8,
+          });
+          this.player = new THREE.Mesh(geometry, material);
+
+          // Position the object in front of the user.
+          this.player.position.set(
+            0,
+            xb.user.height - 0.5,
+            -xb.user.objectDistance
+          );
+          this.add(this.player);
+        }
+
+        /**
+         * Changes the color of the mesh on a pinch or click.
+         */
+        onSelectEnd(event) {
+          this.player.material.color.set(Math.random() * 0xffffff);
+        }
+      }
+
+      // When the page content is loaded, add our script and initialize XR Blocks.
+      document.addEventListener('DOMContentLoaded', function () {
+        xb.add(new MainScript());
+        xb.init(new xb.Options());
+      });
+    </script>
+  </body>
+</html>
