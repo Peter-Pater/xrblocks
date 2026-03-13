@@ -147,8 +147,11 @@ function retargetMixamoClip(clip, fbxScene, vrm) {
         ),
       );
     } else if (track instanceof THREE.VectorKeyframeTrack) {
-      // VRM1: no sign flip, just scale
-      const value = track.values.map((v) => v * hipsPositionScale);
+      // VRM1: keep Y (vertical bob) but zero X/Z on hips to strip root motion.
+      // Without this, Mixamo walk animations snap back on every loop cycle.
+      const value = track.values.map((v, i) =>
+        vrmBoneName === 'hips' && i % 3 !== 1 ? 0 : v * hipsPositionScale
+      );
       tracks.push(
         new THREE.VectorKeyframeTrack(
           `${vrmNodeName}.${propertyName}`,

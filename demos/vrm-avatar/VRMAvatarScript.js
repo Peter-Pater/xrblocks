@@ -1,20 +1,18 @@
 /**
  * VRMAvatarScript.js
  *
- * xb.Script subclass that owns the scene lifecycle for the VRM walking
- * companion. Handles:
+ * xb.Script subclass that owns the scene lifecycle for the VRM avatar.
+ * Handles:
  *   - Loading the VRM + animations in init()
- *   - Detecting user movement to drive idle/walk crossfade
- *   - Smoothly positioning the avatar behind the user each frame
+ *   - Walking the avatar to a floor point on controller selectend
  *
  * Options (passed to constructor):
- *   vrmUrl         {string}   URL to the .vrm file
- *   idleUrl        {string}   URL to the Mixamo idle FBX
- *   walkUrl        {string}   URL to the Mixamo walk FBX
- *   followOffset   {THREE.Vector3}  local offset from user; default (0.4, 0, 1.5)
- *   speedThreshold {number}   m/s above which we switch to walk; default 0.05
- *   positionLerp   {number}   lerp factor per frame; default 0.05
- *   rotateLerp     {number}   slerp factor per frame; default 0.08
+ *   vrmUrl        {string}  URL to the .vrm file
+ *   idleUrl       {string}  URL to the Mixamo idle FBX
+ *   walkUrl       {string}  URL to the Mixamo walk FBX
+ *   walkSpeed     {number}  m/s avatar walking speed; default 1.0
+ *   arrivalDist   {number}  metres from target to count as arrived; default 0.25
+ *   rotateLerp    {number}  slerp factor per frame for turning; default 0.08
  */
 
 import * as THREE from 'three';
@@ -33,27 +31,23 @@ export class VRMAvatarScript extends xb.Script {
     this._idleUrl = opts.idleUrl ?? '';
     this._walkUrl = opts.walkUrl ?? '';
 
-    // Companion positioning
-    this._speedThreshold = opts.speedThreshold ?? 0.05;
-    this._positionLerp   = opts.positionLerp   ?? 0.05;
-    this._rotateLerp     = opts.rotateLerp     ?? 0.08;
+    this._walkSpeed   = opts.walkSpeed   ?? 1.0;  // m/s
+    this._arrivalDist = opts.arrivalDist ?? 0.25; // m
+    this._rotateLerp  = opts.rotateLerp  ?? 0.08;
 
     // Internal state
-    this._avatar         = new VRMAvatar();
-    this._prevUserPos    = new THREE.Vector3();
-    this._targetPos      = new THREE.Vector3();
-    this._targetQuat     = new THREE.Quaternion();
-    this._userSpeed      = 0;
-    this._isWalking      = false;
-    this._loaded         = false;
+    this._avatar       = new VRMAvatar();
+    this._loaded       = false;
+    this._walkToTarget = null; // THREE.Vector3 world pos, or null when idle
 
     // Reusable temporaries
-    this._userPosNow  = new THREE.Vector3();
-    this._deltaPos    = new THREE.Vector3();
-    this._worldOffset = new THREE.Vector3();
-    this._lookDir     = new THREE.Vector3();
-    this._lookQuat    = new THREE.Quaternion();
-    this._up          = new THREE.Vector3(0, 1, 0);
+    this._prevUserPos  = new THREE.Vector3();
+    this._userPosNow   = new THREE.Vector3();
+    this._deltaPos     = new THREE.Vector3();
+    this._walkDir      = new THREE.Vector3();
+    this._walkFaceQuat = new THREE.Quaternion();
+    this._groundPlane  = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    this._planeHit     = new THREE.Vector3();
   }
 
   // -------------------------------------------------------------------------
@@ -80,18 +74,46 @@ export class VRMAvatarScript extends xb.Script {
 
     this.add(this._avatar.root);
 
-    // Seed user position so the first delta is zero.
     this._prevUserPos.copy(this._getUserPosition());
-    // Place avatar immediately behind the user to avoid a visible snap.
-    this._computeTargetTransform();
-    this._avatar.root.position.copy(this._targetPos);
-    this._avatar.root.quaternion.copy(this._targetQuat);
 
-    // Start idle (or walk if no idle provided).
     this._avatar.play(this._idleUrl ? 'idle' : 'walk');
 
     this._loaded = true;
     console.log('[VRMAvatarScript] Ready.');
+  }
+
+  // -------------------------------------------------------------------------
+  // XR input events
+  // -------------------------------------------------------------------------
+
+  onSelectEnd(event) {
+
+    console.log('onSelectEnd triggered');
+    if (!this._loaded) return;
+
+    let hit = null;
+
+    // Prefer depth mesh (real XR environment)
+    const depthMesh = xb.core.depth?.depthMesh;
+    if (depthMesh) {
+      const hits = xb.core.input.intersectObjectByEvent(event, depthMesh);
+      if (hits.length > 0) hit = hits[0].point.clone();
+    }
+
+    // Fallback: intersect the y=0 ground plane (simulator / no depth)
+    if (!hit) {
+      xb.core.input.setRaycasterFromController(event.target);
+      const planeHit = xb.core.input.raycaster.ray.intersectPlane(
+        this._groundPlane, this._planeHit
+      );
+      if (planeHit) hit = planeHit.clone();
+    }
+
+    if (!hit) return;
+    hit.y = 0;
+
+    this._walkToTarget = hit;
+    this._avatar.play('walk');
   }
 
   /**
@@ -105,12 +127,12 @@ export class VRMAvatarScript extends xb.Script {
     const delta = xb.core.timer.getDelta();
 
     this._updateMovement(delta);
-    this._updateTransform(delta);
+    if (this._walkToTarget) this._updateWalkTo(delta);
     this._avatar.update(delta);
   }
 
   // -------------------------------------------------------------------------
-  // Movement detection → animation switching
+  // Internal
   // -------------------------------------------------------------------------
 
   _getUserPosition() {
@@ -122,65 +144,28 @@ export class VRMAvatarScript extends xb.Script {
   _updateMovement(delta) {
     this._userPosNow.copy(this._getUserPosition());
     this._deltaPos.subVectors(this._userPosNow, this._prevUserPos);
-
-    // Ignore Y (vertical) for speed calculation.
-    const dx = this._deltaPos.x;
-    const dz = this._deltaPos.z;
-    this._userSpeed = Math.sqrt(dx * dx + dz * dz) / Math.max(delta, 0.001);
-
     this._prevUserPos.copy(this._userPosNow);
-
-    const shouldWalk = this._userSpeed > this._speedThreshold;
-    if (shouldWalk !== this._isWalking) {
-      this._isWalking = shouldWalk;
-      this._avatar.play(shouldWalk ? 'walk' : 'idle');
-    }
   }
 
-  // -------------------------------------------------------------------------
-  // Positioning: follow user with offset, face user
-  // -------------------------------------------------------------------------
+  _updateWalkTo(delta) {
+    const pos = this._avatar.root.position;
 
-  _computeTargetTransform() {
-    const camPos = xb.core.camera.position.clone();
-    camPos.y = 0;
-  
-    // Get camera forward direction in XZ plane
-    const forward = new THREE.Vector3(0, 0, -1)
-      .applyQuaternion(xb.core.camera.quaternion);
-    forward.y = 0;
-    forward.normalize();
-  
-    const right = new THREE.Vector3(1, 0, 0)
-      .applyQuaternion(xb.core.camera.quaternion);
-    right.y = 0;
-    right.normalize();
-  
-    // Place avatar in front of camera
-    this._targetPos.copy(camPos)
-      .addScaledVector(forward, 1.5)   // 1.5m in front
-      .addScaledVector(right, 0.4);    // 0.4m to the right
-  
-    // Avatar faces back toward the user
-    this._lookDir.copy(camPos).sub(this._targetPos);
-    this._lookDir.y = 0;
-    this._lookDir.normalize();
-  
-    if (this._lookDir.lengthSq() > 0.0001) {
-      this._targetQuat.setFromUnitVectors(
-        new THREE.Vector3(0, 0, 1),
-        this._lookDir
-      );
+    this._walkDir.subVectors(this._walkToTarget, pos);
+    this._walkDir.y = 0;
+    const dist = this._walkDir.length();
+
+    if (dist < this._arrivalDist) {
+      this._walkToTarget = null;
+      this._avatar.play('idle');
+      return;
     }
-  }
 
-  _updateTransform(delta) {
-    this._computeTargetTransform();
+    this._walkDir.normalize();
 
-    // Smooth position.
-    this._avatar.root.position.lerp(this._targetPos, this._positionLerp);
+    const step = Math.min(this._walkSpeed * delta, dist);
+    pos.addScaledVector(this._walkDir, step);
 
-    // Smooth rotation.
-    this._avatar.root.quaternion.slerp(this._targetQuat, this._rotateLerp);
+    this._walkFaceQuat.setFromUnitVectors(new THREE.Vector3(0, 0, 1), this._walkDir);
+    this._avatar.root.quaternion.slerp(this._walkFaceQuat, this._rotateLerp);
   }
 }
