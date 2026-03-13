@@ -1,0 +1,58 @@
+You are helping port three-vrm to XRBlocks as a demo under demos/vrm-avatar/.
+
+## Stack
+- three@0.182.0
+- @pixiv/three-vrm@3
+- xrblocks@0.11.0 (local build, not npm)
+- No bundler — ES modules + import maps only
+
+## Import map (use exactly this in every index.html)
+```json
+{
+  "imports": {
+    "@dimforge/rapier3d-simd-compat": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-simd-compat@0.19.2/rapier.mjs",
+    "three": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/",
+    "troika-three-text": "https://cdn.jsdelivr.net/gh/protectwise/troika@028b81cf308f0f22e5aa8e78196be56ec1997af5/packages/troika-three-text/src/index.js",
+    "troika-three-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-three-utils/src/index.js",
+    "troika-worker-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-worker-utils/src/index.js",
+    "bidi-js": "https://esm.sh/bidi-js@%5E1.0.2?target=es2022",
+    "webgl-sdf-generator": "https://esm.sh/webgl-sdf-generator@1.1.1/es2022/webgl-sdf-generator.mjs",
+    "lit": "https://cdn.jsdelivr.net/gh/lit/dist@3/core/lit-core.min.js",
+    "lit/": "https://esm.run/lit@3/",
+    "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3/lib/three-vrm.module.min.js",
+    "xrblocks": "../../build/xrblocks.js",
+    "xrblocks/addons/": "../../build/addons/"
+  }
+}
+```
+
+## Simulator
+Always include this as the first import in every module script — required for the desktop simulator to work:
+```js
+import 'xrblocks/addons/simulator/SimulatorAddons.js';
+```
+
+## Architecture
+- VRMAvatar.js — utility class: loads VRM via GLTFLoader + VRMLoaderPlugin, exposes vrm.scene, calls vrm.update(delta)
+- VRMAvatarScript.js — xb.Script subclass: init() + update() lifecycle, owns scene setup, calls into VRMAvatar
+- index.html — entry point
+- Pattern mirrors demos/rain/ (RainScene.js + RainParticles.js)
+
+## Key rules
+- NEVER use xb.ModelViewer for VRM — VRMLoaderPlugin must be registered directly on the GLTFLoader instance before load
+- NEVER use requestAnimationFrame manually — XRBlocks owns the render loop
+- xb.Script lifecycle: init() for setup, update(time, frame) for per-frame logic
+- Spring bones require vrm.update(delta) called every frame in update()
+- Mixamo FBX retargeting via three-vrm's loadMixamoAnimation.js + mixamoVRMRigMap.js
+
+## Demo behavior
+- Third-person walking companion, follows user ~1.5m behind
+- Idle animation when stationary, walk animation when moving
+- Movement detected by diffing xb.user position each frame
+- Smooth lerp for avatar position updates
+
+## Reference demos in this repo
+- demos/rain/ — primary structural pattern (multi-file Script + utility class)
+- templates/0_basic/ — minimal xb.Script example
+- samples/modelviewer/ — GLTFLoader usage reference
