@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <title>VRM Avatar: Walking Companion | XR Blocks</title>
+    <title>VRM Avatar: Point to Walk | XR Blocks</title>
 
     <meta
       name="viewport"
@@ -80,18 +80,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     idleUrl: IDLE_URL,
     walkUrl: WALK_URL,
 
-    // Avatar hovers 1.5 m behind and 0.4 m to the right of the user.
-    followOffset: new THREE.Vector3(0.4, 0, 1.5),
-
-    // Switch to walk animation above 0.05 m/s lateral speed.
-    speedThreshold: 0.05,
-
-    // Smoothing: lower = laggier but smoother; higher = snappier.
-    positionLerp: 0.05,
     rotateLerp:   0.08,
   }));
 
   const options = new xb.Options();
+  options.enableDepth();
   options.setAppTitle('VRM Avatar Companion');
 
   await xb.init(options);
