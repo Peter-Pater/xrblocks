@@ -157,16 +157,18 @@ export class PermissionsManager {
    * Requests multiple permissions sequentially.
    * Returns a single result: granted is true only if ALL requested permissions are granted.
    */
-  async checkAndRequestPermissions({
-    geolocation = false,
-    camera = false,
-    microphone = false,
-  }: {
-    geolocation?: boolean;
-    camera?: boolean;
-    microphone?: boolean;
-  },
-  options?: PermissionRequestOptions): Promise<PermissionResult> {
+  async checkAndRequestPermissions(
+    {
+      geolocation = false,
+      camera = false,
+      microphone = false,
+    }: {
+      geolocation?: boolean;
+      camera?: boolean;
+      microphone?: boolean;
+    },
+    options?: PermissionRequestOptions
+  ): Promise<PermissionResult> {
     const results: PermissionResult[] = [];
 
     // 1. Handle Location
