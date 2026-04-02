@@ -23,7 +23,15 @@ import { VRMAvatar } from './VRMAvatar.js';
 
 export class VRMAvatarScript extends xb.Script {
   /**
-   * @param {object} opts
+   * Constructs a new VRMAvatarScript.
+   * @param {object} [opts={}] Initialization options.
+   * @param {string} [opts.vrmUrl=''] URL to the .vrm file.
+   * @param {string} [opts.idleUrl=''] URL to the Mixamo idle FBX.
+   * @param {string} [opts.walkUrl=''] URL to the Mixamo walk FBX.
+   * @param {number} [opts.walkSpeed=1.0] Avatar walking speed in m/s.
+   * @param {number} [opts.arrivalDist=0.25] Metres from target to count as arrived.
+   * @param {number} [opts.rotateLerp=0.08] Slerp factor per frame for turning.
+   * @param {number} [opts.spawnDistance=1.8] Metres in front of the user (on the ground) at init.
    */
   constructor(opts = {}) {
     super();
@@ -56,6 +64,10 @@ export class VRMAvatarScript extends xb.Script {
   // XRBlocks lifecycle
   // -------------------------------------------------------------------------
 
+  /**
+   * Initializes the avatar and loads necessary resources.
+   * @returns {Promise<void>}
+   */
   async init() {
     if (!this._vrmUrl) {
       console.error('[VRMAvatarScript] vrmUrl is required.');
@@ -90,8 +102,12 @@ export class VRMAvatarScript extends xb.Script {
   // XR input events
   // -------------------------------------------------------------------------
 
+  /**
+   * Handles the XR select end event to set a walk target.
+   * @param {Event} event The select end event.
+   * @returns {void}
+   */
   onSelectEnd(event) {
-
     console.log('onSelectEnd triggered');
     if (!this._loaded) return;
 
@@ -122,8 +138,9 @@ export class VRMAvatarScript extends xb.Script {
 
   /**
    * Called every frame by XRBlocks.
-   * @param {number} time   Elapsed time (seconds)
-   * @param {XRFrame} frame XR frame (may be null on desktop)
+   * @param {number} time Elapsed time in seconds.
+   * @param {XRFrame} [frame] XR frame (may be null on desktop).
+   * @returns {void}
    */
   update(time, frame) {
     if (!this._loaded) return;

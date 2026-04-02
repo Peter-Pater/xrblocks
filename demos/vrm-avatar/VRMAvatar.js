@@ -82,6 +82,14 @@ const MIXAMO_VRM_RIG_MAP = {
 // Returns a new AnimationClip compatible with the VRM's bone names.
 // Based on three-vrm examples/humanoidAnimation/loadMixamoAnimation.js
 // ---------------------------------------------------------------------------
+/**
+ * Retargets a Mixamo FBX AnimationClip onto a loaded VRM's humanoid skeleton.
+ * Returns a new AnimationClip compatible with the VRM's bone names.
+ * @param {THREE.AnimationClip} clip The Mixamo animation clip.
+ * @param {THREE.Group} fbxScene The loaded FBX scene containing the rig.
+ * @param {object} vrm The loaded VRM instance.
+ * @returns {THREE.AnimationClip} A new AnimationClip compatible with the VRM's bone names.
+ */
 function retargetMixamoClip(clip, fbxScene, vrm) {
   const tracks = [];
   const restRotationInverse = new THREE.Quaternion();
@@ -103,9 +111,9 @@ function retargetMixamoClip(clip, fbxScene, vrm) {
   fbxScene.updateMatrixWorld(true);
 
   for (const track of clip.tracks) {
-    const trackSplitted = track.name.split('.');
-    const mixamoRigName = trackSplitted[0];
-    const propertyName = trackSplitted[1];
+    const nameParts = track.name.split('.');
+    const mixamoRigName = nameParts[0];
+    const propertyName = nameParts[1];
 
     // Normalize bone name for rig map lookup
     const normalizedName = mixamoRigName.replace(/^mixamorig\d*/, 'mixamorig');
@@ -170,9 +178,10 @@ function retargetMixamoClip(clip, fbxScene, vrm) {
 // ---------------------------------------------------------------------------
 export class VRMAvatar {
   /**
-   * @param {object} [opts]
-   * @param {number} [opts.blinkIntervalMin=3]  seconds between blinks (min)
-   * @param {number} [opts.blinkIntervalMax=6]  seconds between blinks (max)
+   * Constructs a new VRMAvatar.
+   * @param {object} [opts={}] Initialization options.
+   * @param {number} [opts.blinkIntervalMin=3] Seconds between blinks (min).
+   * @param {number} [opts.blinkIntervalMax=6] Seconds between blinks (max).
    */
   constructor(opts = {}) {
     /** The root Three.js object to add to the scene. */
@@ -205,7 +214,7 @@ export class VRMAvatar {
 
   /**
    * Loads a VRM model from a URL. Must be called before update().
-   * @param {string} vrmUrl
+   * @param {string} vrmUrl The URL to the VRM file.
    * @returns {Promise<void>}
    */
   async load(vrmUrl) {
@@ -238,8 +247,8 @@ export class VRMAvatar {
   /**
    * Loads a Mixamo FBX, retargets it onto the VRM skeleton, and registers it
    * as a named action. Call after load().
-   * @param {string} name      Logical name, e.g. 'idle' or 'walk'
-   * @param {string} fbxUrl    URL to the Mixamo .fbx file
+   * @param {string} name Logical name, e.g., 'idle' or 'walk'.
+   * @param {string} fbxUrl URL to the Mixamo .fbx file.
    * @returns {Promise<void>}
    */
   async loadMixamoAnimation(name, fbxUrl) {
@@ -266,8 +275,9 @@ export class VRMAvatar {
 
   /**
    * Crossfades to a named animation.
-   * @param {string} name           Clip name registered via loadMixamoAnimation
-   * @param {number} [fadeDuration=0.3]
+   * @param {string} name Clip name registered via loadMixamoAnimation.
+   * @param {number} [fadeDuration=0.3] Duration of the fade in seconds.
+   * @returns {void}
    */
   play(name, fadeDuration = 0.3) {
     const next = this._actions[name];
@@ -292,7 +302,8 @@ export class VRMAvatar {
 
   /**
    * Must be called every frame. Advances the mixer and spring bones.
-   * @param {number} delta  Time since last frame in seconds
+   * @param {number} delta Time since last frame in seconds.
+   * @returns {void}
    */
   update(delta) {
     if (!this.vrm) return;
@@ -307,9 +318,10 @@ export class VRMAvatar {
   // -------------------------------------------------------------------------
 
   /**
-   * Sets a VRM expression by name (e.g. 'blink', 'happy', 'angry').
-   * @param {string} name
-   * @param {number} weight  0.0 – 1.0
+   * Sets a VRM expression by name (e.g., 'blink', 'happy', 'angry').
+   * @param {string} name Expression name.
+   * @param {number} weight Weight value from 0.0 to 1.0.
+   * @returns {void}
    */
   setExpression(name, weight) {
     this.vrm?.expressionManager?.setValue(name, weight);

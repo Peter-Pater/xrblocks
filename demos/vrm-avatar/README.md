@@ -36,7 +36,7 @@ This demo comes with the following assets:
 
 | File | Source |
 |---|---|
-| `models/VRM1_Constraint_Twist_Sample.vrm` | [three-vrm releases](https://github.com/pixiv/three-vrm/releases) — sample model |
+| `https://cdn.jsdelivr.net/gh/pixiv/three-vrm@3.5.1/packages/three-vrm-animation/examples/models/VRM1_Constraint_Twist_Sample.vrm` | [three-vrm releases](https://github.com/pixiv/three-vrm/releases) — sample model |
 | `animations/Idle.fbx` | [Mixamo](https://www.mixamo.com/) — free, no character needed |
 | `animations/Walking.fbx` | [Mixamo](https://www.mixamo.com/) — free, no character needed |
 
@@ -72,8 +72,8 @@ On device, `onSelectEnd` raycasts against `xb.core.depth.depthMesh` for accurate
 |---|---|---|
 | `three` | `0.182.0` | CDN |
 | `@pixiv/three-vrm` | `^3` | CDN |
-| `xrblocks` | `0.11.0` | Local build |
-| `xrblocks/addons/` | `0.11.0` | Local build |
+| `xrblocks` | `0.12.0` | Local build |
+| `xrblocks/addons/` | `0.12.0` | Local build |
 
 All other dependencies (troika, rapier3d, lit) are CDN — see the import map in `index.html`.
 
