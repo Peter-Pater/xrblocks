@@ -34,11 +34,11 @@ demos/vrm-avatar/
 
 This demo comes with the following assets:
 
-| File | Source |
-|---|---|
+| File                                                                                                                              | Source                                                                           |
+| --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | `https://cdn.jsdelivr.net/gh/pixiv/three-vrm@3.5.1/packages/three-vrm-animation/examples/models/VRM1_Constraint_Twist_Sample.vrm` | [three-vrm releases](https://github.com/pixiv/three-vrm/releases) — sample model |
-| `animations/Idle.fbx` | [Mixamo](https://www.mixamo.com/) — free, no character needed |
-| `animations/Walking.fbx` | [Mixamo](https://www.mixamo.com/) — free, no character needed |
+| `animations/Idle.fbx`                                                                                                             | [Mixamo](https://www.mixamo.com/) — free, no character needed                    |
+| `animations/Walking.fbx`                                                                                                          | [Mixamo](https://www.mixamo.com/) — free, no character needed                    |
 
 For additional Mixamo animation downloads: select any animation, choose **Without Skin**, export as **FBX for Unity (.fbx)**.
 
@@ -68,19 +68,18 @@ On device, `onSelectEnd` raycasts against `xb.core.depth.depthMesh` for accurate
 
 ## Dependencies
 
-| Package | Version | Source |
-|---|---|---|
-| `three` | `0.182.0` | CDN |
-| `@pixiv/three-vrm` | `^3` | CDN |
-| `xrblocks` | `0.12.0` | Local build |
-| `xrblocks/addons/` | `0.12.0` | Local build |
+| Package            | Version   | Source      |
+| ------------------ | --------- | ----------- |
+| `three`            | `0.182.0` | CDN         |
+| `@pixiv/three-vrm` | `^3`      | CDN         |
+| `xrblocks`         | `0.12.0`  | Local build |
+| `xrblocks/addons/` | `0.12.0`  | Local build |
 
 All other dependencies (troika, rapier3d, lit) are CDN — see the import map in `index.html`.
 
 ---
 
-## Next steps
+## Potential Next steps
 
 - Extract `VRMAvatar.js` into `src/addons/vrm/` as a proper XRBlocks addon with TypeScript types
 - Integrate `@pixiv/three-vrm-animation` for `.vrma` support and AI-driven expressions
-- Connect to XRBlocks' Gemini integration for a conversational AI companion that navigates physical space using depth sensing and physics
