@@ -19,7 +19,7 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 
-import { VRMAvatar } from './VRMAvatar.js';
+import {VRMAvatar} from './VRMAvatar.js';
 
 export class VRMAvatarScript extends xb.Script {
   /**
@@ -36,28 +36,28 @@ export class VRMAvatarScript extends xb.Script {
   constructor(opts = {}) {
     super();
 
-    this._vrmUrl  = opts.vrmUrl  ?? '';
+    this._vrmUrl = opts.vrmUrl ?? '';
     this._idleUrl = opts.idleUrl ?? '';
     this._walkUrl = opts.walkUrl ?? '';
 
-    this._walkSpeed     = opts.walkSpeed     ?? 1.0;  // m/s
-    this._arrivalDist   = opts.arrivalDist   ?? 0.25; // m
-    this._rotateLerp    = opts.rotateLerp    ?? 0.08;
-    this._spawnDistance = opts.spawnDistance ?? 1.8;  // m ahead of user at spawn
+    this._walkSpeed = opts.walkSpeed ?? 1.0; // m/s
+    this._arrivalDist = opts.arrivalDist ?? 0.25; // m
+    this._rotateLerp = opts.rotateLerp ?? 0.08;
+    this._spawnDistance = opts.spawnDistance ?? 1.8; // m ahead of user at spawn
 
     // Internal state
-    this._avatar       = new VRMAvatar();
-    this._loaded       = false;
+    this._avatar = new VRMAvatar();
+    this._loaded = false;
     this._walkToTarget = null; // THREE.Vector3 world pos, or null when idle
 
     // Reusable temporaries
-    this._prevUserPos  = new THREE.Vector3();
-    this._userPosNow   = new THREE.Vector3();
-    this._deltaPos     = new THREE.Vector3();
-    this._walkDir      = new THREE.Vector3();
+    this._prevUserPos = new THREE.Vector3();
+    this._userPosNow = new THREE.Vector3();
+    this._deltaPos = new THREE.Vector3();
+    this._walkDir = new THREE.Vector3();
     this._walkFaceQuat = new THREE.Quaternion();
-    this._groundPlane  = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-    this._planeHit     = new THREE.Vector3();
+    this._groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    this._planeHit = new THREE.Vector3();
   }
 
   // -------------------------------------------------------------------------
@@ -124,7 +124,8 @@ export class VRMAvatarScript extends xb.Script {
     if (!hit) {
       xb.core.input.setRaycasterFromController(event.target);
       const planeHit = xb.core.input.raycaster.ray.intersectPlane(
-        this._groundPlane, this._planeHit
+        this._groundPlane,
+        this._planeHit
       );
       if (planeHit) hit = planeHit.clone();
     }
@@ -184,7 +185,10 @@ export class VRMAvatarScript extends xb.Script {
     } else {
       this._walkDir.normalize();
     }
-    this._walkFaceQuat.setFromUnitVectors(new THREE.Vector3(0, 0, 1), this._walkDir);
+    this._walkFaceQuat.setFromUnitVectors(
+      new THREE.Vector3(0, 0, 1),
+      this._walkDir
+    );
     root.quaternion.copy(this._walkFaceQuat);
   }
 
@@ -212,7 +216,10 @@ export class VRMAvatarScript extends xb.Script {
     const step = Math.min(this._walkSpeed * delta, dist);
     pos.addScaledVector(this._walkDir, step);
 
-    this._walkFaceQuat.setFromUnitVectors(new THREE.Vector3(0, 0, 1), this._walkDir);
+    this._walkFaceQuat.setFromUnitVectors(
+      new THREE.Vector3(0, 0, 1),
+      this._walkDir
+    );
     this._avatar.root.quaternion.slerp(this._walkFaceQuat, this._rotateLerp);
   }
 }

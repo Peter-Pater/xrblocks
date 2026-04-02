@@ -14,67 +14,67 @@
  */
 
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
-import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {FBXLoader} from 'three/addons/loaders/FBXLoader.js';
+import {VRMLoaderPlugin, VRMUtils} from '@pixiv/three-vrm';
 
 // ---------------------------------------------------------------------------
 // Mixamo → VRM HumanoidBone name map
 // Sourced from three-vrm examples/humanoidAnimation/mixamoVRMRigMap.js
 // ---------------------------------------------------------------------------
 const MIXAMO_VRM_RIG_MAP = {
-  mixamorigHips:           'hips',
-  mixamorigSpine:          'spine',
-  mixamorigSpine1:         'chest',
-  mixamorigSpine2:         'upperChest',
-  mixamorigNeck:           'neck',
-  mixamorigHead:           'head',
-  mixamorigLeftShoulder:   'leftShoulder',
-  mixamorigLeftArm:        'leftUpperArm',
-  mixamorigLeftForeArm:    'leftLowerArm',
-  mixamorigLeftHand:       'leftHand',
+  mixamorigHips: 'hips',
+  mixamorigSpine: 'spine',
+  mixamorigSpine1: 'chest',
+  mixamorigSpine2: 'upperChest',
+  mixamorigNeck: 'neck',
+  mixamorigHead: 'head',
+  mixamorigLeftShoulder: 'leftShoulder',
+  mixamorigLeftArm: 'leftUpperArm',
+  mixamorigLeftForeArm: 'leftLowerArm',
+  mixamorigLeftHand: 'leftHand',
   mixamorigLeftHandThumb1: 'leftThumbMetacarpal',
   mixamorigLeftHandThumb2: 'leftThumbProximal',
   mixamorigLeftHandThumb3: 'leftThumbDistal',
   mixamorigLeftHandIndex1: 'leftIndexProximal',
   mixamorigLeftHandIndex2: 'leftIndexIntermediate',
   mixamorigLeftHandIndex3: 'leftIndexDistal',
-  mixamorigLeftHandMiddle1:'leftMiddleProximal',
-  mixamorigLeftHandMiddle2:'leftMiddleIntermediate',
-  mixamorigLeftHandMiddle3:'leftMiddleDistal',
-  mixamorigLeftHandRing1:  'leftRingProximal',
-  mixamorigLeftHandRing2:  'leftRingIntermediate',
-  mixamorigLeftHandRing3:  'leftRingDistal',
+  mixamorigLeftHandMiddle1: 'leftMiddleProximal',
+  mixamorigLeftHandMiddle2: 'leftMiddleIntermediate',
+  mixamorigLeftHandMiddle3: 'leftMiddleDistal',
+  mixamorigLeftHandRing1: 'leftRingProximal',
+  mixamorigLeftHandRing2: 'leftRingIntermediate',
+  mixamorigLeftHandRing3: 'leftRingDistal',
   mixamorigLeftHandPinky1: 'leftLittleProximal',
   mixamorigLeftHandPinky2: 'leftLittleIntermediate',
   mixamorigLeftHandPinky3: 'leftLittleDistal',
-  mixamorigRightShoulder:  'rightShoulder',
-  mixamorigRightArm:       'rightUpperArm',
-  mixamorigRightForeArm:   'rightLowerArm',
-  mixamorigRightHand:      'rightHand',
-  mixamorigRightHandThumb1:'rightThumbMetacarpal',
-  mixamorigRightHandThumb2:'rightThumbProximal',
-  mixamorigRightHandThumb3:'rightThumbDistal',
-  mixamorigRightHandIndex1:'rightIndexProximal',
-  mixamorigRightHandIndex2:'rightIndexIntermediate',
-  mixamorigRightHandIndex3:'rightIndexDistal',
-  mixamorigRightHandMiddle1:'rightMiddleProximal',
-  mixamorigRightHandMiddle2:'rightMiddleIntermediate',
-  mixamorigRightHandMiddle3:'rightMiddleDistal',
+  mixamorigRightShoulder: 'rightShoulder',
+  mixamorigRightArm: 'rightUpperArm',
+  mixamorigRightForeArm: 'rightLowerArm',
+  mixamorigRightHand: 'rightHand',
+  mixamorigRightHandThumb1: 'rightThumbMetacarpal',
+  mixamorigRightHandThumb2: 'rightThumbProximal',
+  mixamorigRightHandThumb3: 'rightThumbDistal',
+  mixamorigRightHandIndex1: 'rightIndexProximal',
+  mixamorigRightHandIndex2: 'rightIndexIntermediate',
+  mixamorigRightHandIndex3: 'rightIndexDistal',
+  mixamorigRightHandMiddle1: 'rightMiddleProximal',
+  mixamorigRightHandMiddle2: 'rightMiddleIntermediate',
+  mixamorigRightHandMiddle3: 'rightMiddleDistal',
   mixamorigRightHandRing1: 'rightRingProximal',
   mixamorigRightHandRing2: 'rightRingIntermediate',
   mixamorigRightHandRing3: 'rightRingDistal',
-  mixamorigRightHandPinky1:'rightLittleProximal',
-  mixamorigRightHandPinky2:'rightLittleIntermediate',
-  mixamorigRightHandPinky3:'rightLittleDistal',
-  mixamorigLeftUpLeg:      'leftUpperLeg',
-  mixamorigLeftLeg:        'leftLowerLeg',
-  mixamorigLeftFoot:       'leftFoot',
-  mixamorigLeftToeBase:    'leftToes',
-  mixamorigRightUpLeg:     'rightUpperLeg',
-  mixamorigRightLeg:       'rightLowerLeg',
-  mixamorigRightFoot:      'rightFoot',
-  mixamorigRightToeBase:   'rightToes',
+  mixamorigRightHandPinky1: 'rightLittleProximal',
+  mixamorigRightHandPinky2: 'rightLittleIntermediate',
+  mixamorigRightHandPinky3: 'rightLittleDistal',
+  mixamorigLeftUpLeg: 'leftUpperLeg',
+  mixamorigLeftLeg: 'leftLowerLeg',
+  mixamorigLeftFoot: 'leftFoot',
+  mixamorigLeftToeBase: 'leftToes',
+  mixamorigRightUpLeg: 'rightUpperLeg',
+  mixamorigRightLeg: 'rightLowerLeg',
+  mixamorigRightFoot: 'rightFoot',
+  mixamorigRightToeBase: 'rightToes',
 };
 
 // ---------------------------------------------------------------------------
@@ -151,8 +151,8 @@ function retargetMixamoClip(clip, fbxScene, vrm) {
         new THREE.QuaternionKeyframeTrack(
           `${vrmNodeName}.${propertyName}`,
           track.times,
-          track.values.slice(),
-        ),
+          track.values.slice()
+        )
       );
     } else if (track instanceof THREE.VectorKeyframeTrack) {
       // VRM1: keep Y (vertical bob) but zero X/Z on hips to strip root motion.
@@ -164,8 +164,8 @@ function retargetMixamoClip(clip, fbxScene, vrm) {
         new THREE.VectorKeyframeTrack(
           `${vrmNodeName}.${propertyName}`,
           track.times,
-          value,
-        ),
+          value
+        )
       );
     }
   }
@@ -307,10 +307,10 @@ export class VRMAvatar {
    */
   update(delta) {
     if (!this.vrm) return;
-  
+
     this.mixer?.update(delta);
     this._updateBlink(delta);
-  
+
     this.vrm.update(delta);
   }
   // -------------------------------------------------------------------------
@@ -349,7 +349,7 @@ export class VRMAvatar {
     }
 
     const CLOSE_DURATION = 0.06; // seconds to fully close
-    const OPEN_DURATION  = 0.10; // seconds to fully open
+    const OPEN_DURATION = 0.1; // seconds to fully open
 
     if (this._blinkPhase === 0) {
       const t = Math.min(this._blinkTimer / CLOSE_DURATION, 1);
