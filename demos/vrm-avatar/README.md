@@ -32,15 +32,22 @@ demos/vrm-avatar/
 
 ## Assets required
 
-This demo comes with the following assets:
+The VRM model is loaded automatically via CDN and requires no manual download. The Mixamo animation files are **not included in the repo** and must be downloaded manually:
 
-| File                                                                                                                              | Source                                                                           |
-| --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `https://cdn.jsdelivr.net/gh/pixiv/three-vrm@3.5.1/packages/three-vrm-animation/examples/models/VRM1_Constraint_Twist_Sample.vrm` | [three-vrm releases](https://github.com/pixiv/three-vrm/releases) — sample model |
-| `animations/Idle.fbx`                                                                                                             | [Mixamo](https://www.mixamo.com/) — free, no character needed                    |
-| `animations/Walking.fbx`                                                                                                          | [Mixamo](https://www.mixamo.com/) — free, no character needed                    |
+| File                     | Source                                                    |
+| ------------------------ | --------------------------------------------------------- |
+| `animations/Idle.fbx`    | [Mixamo](https://www.mixamo.com/) — free account required |
+| `animations/Walking.fbx` | [Mixamo](https://www.mixamo.com/) — free account required |
 
-For additional Mixamo animation downloads: select any animation, choose **Without Skin**, export as **FBX for Unity (.fbx)**.
+### Downloading Mixamo animations
+
+1. Go to [mixamo.com](https://www.mixamo.com/) and sign in with a free Adobe account.
+2. Search for **Idle** — select any standing idle animation, set **In Place** if available.
+3. Click **Download**, choose **FBX Binary (.fbx)**, and select **Without Skin**.
+4. Save the file as `animations/Idle.fbx` inside `demos/vrm-avatar/`.
+5. Repeat for **Walking**, saving as `animations/Walking.fbx`.
+
+The FBX files cannot be redistributed in this repo due to Mixamo's license terms.
 
 ---
 
