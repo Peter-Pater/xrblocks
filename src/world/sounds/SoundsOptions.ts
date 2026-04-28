@@ -7,7 +7,8 @@ export class SoundsOptions {
   backendConfig = {
     activeBackend: 'mediapipe',
     mediapipe: {
-      wasmFilesUrl: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-audio/wasm',
+      wasmFilesUrl:
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-audio@0.10.35/wasm',
       modelAssetPath:
         'https://tfhub.dev/google/lite-model/yamnet/classification/tflite/1?lite-format=tflite',
       chunkSamples: 16000,
