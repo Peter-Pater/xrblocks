@@ -44,7 +44,7 @@ export class SimulatorOptions {
     element: 'xrblocks-simulator-mode-indicator',
   };
   instructions = {
-    enabled: true,
+    enabled: false,
     element: 'xrblocks-simulator-instructions',
     customInstructions: [] as SimulatorCustomInstruction[],
   };
@@ -58,6 +58,11 @@ export class SimulatorOptions {
   };
   stereo = {
     enabled: false,
+  };
+  deviceCamera = {
+    // Whether to enable the simulator camera feed.
+    // If disabled, the actual device camera will be used instead.
+    enabled: true,
   };
   // Whether to render the main scene to a render texture before rendering the simulator scene
   // or directly to the canvas after rendering the simulator scene.
