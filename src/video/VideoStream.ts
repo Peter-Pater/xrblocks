@@ -84,7 +84,7 @@ export class VideoStream<
   width?: number;
   height?: number;
   aspectRatio?: number;
-  texture: THREE.VideoTexture;
+  texture: THREE.Texture;
   state = StreamState.IDLE;
 
   protected stream_: MediaStream | null = null;
@@ -113,6 +113,17 @@ export class VideoStream<
     this.texture.colorSpace = THREE.SRGBColorSpace;
     this.texture.minFilter = THREE.LinearFilter;
     this.texture.magFilter = THREE.LinearFilter;
+
+    // Keep the texture updating when srcObject changes.
+    const texture = this.texture as THREE.VideoTexture & {
+      update: () => void;
+    };
+    const videoEl = this.video_;
+    texture.update = function () {
+      if (videoEl.readyState >= videoEl.HAVE_CURRENT_DATA) {
+        texture.needsUpdate = true;
+      }
+    };
   }
 
   /**
@@ -173,10 +184,12 @@ export class VideoStream<
    * @param options - The options for the snapshot.
    * @returns The captured data.
    */
-  getSnapshot(_: VideoStreamGetSnapshotImageDataOptions): ImageData;
-  getSnapshot(_: VideoStreamGetSnapshotBase64Options): Promise<string | null>;
-  getSnapshot(_: VideoStreamGetSnapshotTextureOptions): THREE.Texture;
-  getSnapshot(_: VideoStreamGetSnapshotBlobOptions): Promise<Blob | null>;
+  getSnapshot(options: VideoStreamGetSnapshotImageDataOptions): ImageData;
+  getSnapshot(
+    options: VideoStreamGetSnapshotBase64Options
+  ): Promise<string | null>;
+  getSnapshot(options: VideoStreamGetSnapshotTextureOptions): THREE.Texture;
+  getSnapshot(options: VideoStreamGetSnapshotBlobOptions): Promise<Blob | null>;
   getSnapshot({
     width = this.width,
     height = this.height,
