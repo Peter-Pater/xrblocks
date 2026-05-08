@@ -19,9 +19,114 @@ export const LavaScene = {
       float surf = top + jagged;
       return step(p.y, surf) * step(c.y - 0.05, p.y);
     }
+
+    // Ray vs axis-aligned ellipsoid.
+    float rayEllipL(vec3 oc, vec3 rd, vec3 ax) {
+      vec3 ocS = oc / ax;
+      vec3 rdS = rd / ax;
+      float a = dot(rdS, rdS);
+      float b = dot(ocS, rdS);
+      float c = dot(ocS, ocS) - 1.0;
+      float d = b * b - a * c;
+      if (d < 0.0) return -1.0;
+      return (-b - sqrt(d)) / a;
+    }
+
+    float fbm3L(vec3 p) {
+      float v = 0.0;
+      float a = 0.5;
+      for (int i = 0; i < 4; i++) {
+        v += a * fbm(p.xy + p.z * 1.3);
+        p *= 2.07;
+        a *= 0.5;
+      }
+      return v;
+    }
+
+    // 3D volcano: stacked ellipsoid mounds; returns vec4(rgb, t).
+    vec4 volcano3D_d(vec3 ro, vec3 rd, vec3 base, float t,
+                    float scaleR, float scaleH) {
+      vec3 sunDir = normalize(vec3(0.3, 0.6, -0.7));
+      float bestT = 1e9;
+      int bestLayer = -1;
+      vec3 bestN = vec3(0.0);
+      vec3 bestHp = vec3(0.0);
+      for (int i = 0; i < 4; i++) {
+        float fi = float(i);
+        float r = (3.4 - fi * 0.75) * scaleR;
+        float ry = 0.9 * scaleH;
+        vec3 ax = vec3(r, ry, r);
+        vec3 ctr = base + vec3(0.0, 0.5 * scaleH + fi * 1.4 * scaleH, 0.0);
+        float th = rayEllipL(ro - ctr, rd, ax);
+        if (th > 0.5 && th < bestT) {
+          bestT = th;
+          bestHp = ro + rd * th - ctr;
+          bestN = normalize(bestHp / (ax * ax));
+          bestLayer = i;
+        }
+      }
+      if (bestT >= 1e9) return vec4(0.0, 0.0, 0.0, 1e9);
+      float noiseTex = fbm3L(bestHp * 1.6);
+      vec3 rock = mix(vec3(0.10, 0.05, 0.04),
+                      vec3(0.22, 0.11, 0.08), noiseTex);
+      float streakNoise = fbm(vec2(atan(bestHp.x, bestHp.z) * 8.0,
+                                    bestHp.y * 0.8 - t * 0.15));
+      float layerFrac = float(bestLayer) / 3.0;
+      float streakMask = smoothstep(0.62, 0.78, streakNoise)
+                       * (1.0 - layerFrac * 0.6);
+      vec3 lava = vec3(1.00, 0.45, 0.10);
+      vec3 col = mix(rock, lava, streakMask * 0.85);
+      if (bestLayer == 3) {
+        float craterUp = max(bestN.y, 0.0);
+        col = mix(col, vec3(1.0, 0.65, 0.15), craterUp * craterUp);
+      }
+      float lamb = max(dot(bestN, sunDir), 0.0);
+      float rim = pow(1.0 - max(dot(bestN, -rd), 0.0), 2.5);
+      col = col * (0.30 + lamb * 0.85)
+          + vec3(0.6, 0.3, 0.2) * rim * 0.20;
+      return vec4(col, bestT);
+    }
+
+    // Foreground lava rocks scattered around the user.
+    vec4 lavaRocks3D(vec3 ro, vec3 rd, float t) {
+      vec3 sunDir = normalize(vec3(0.3, 0.6, -0.7));
+      float bestT = 1e9;
+      vec3 bestCol = vec3(0.0);
+      vec3 bestN = vec3(0.0);
+      for (int i = 0; i < 8; i++) {
+        float fi = float(i);
+        float ang = fi * 0.91;
+        float dist = 4.5 + mod(fi * 1.7, 4.0);
+        vec3 base = vec3(cos(ang) * dist, -1.6, sin(ang) * dist);
+        float ry = 0.35 + 0.18 * sin(fi * 2.3);
+        vec3 ax = vec3(0.7 + 0.2 * cos(fi * 1.7), ry,
+                        0.6 + 0.2 * sin(fi * 1.7));
+        vec3 ctr = base + vec3(0.0, ry, 0.0);
+        float th = rayEllipL(ro - ctr, rd, ax);
+        if (th > 0.3 && th < bestT) {
+          bestT = th;
+          vec3 hp = ro + rd * th - ctr;
+          bestN = normalize(hp / (ax * ax));
+          float n = fbm3L(hp * 4.0 + fi);
+          vec3 rock = mix(vec3(0.06, 0.03, 0.02),
+                          vec3(0.18, 0.09, 0.07), n);
+          float crack = smoothstep(0.55, 0.7,
+                                    fbm(hp.xz * 9.0 + t * 0.2));
+          crack *= max(-bestN.y, 0.0);
+          bestCol = mix(rock, vec3(1.0, 0.42, 0.08), crack * 0.6);
+        }
+      }
+      if (bestT >= 1e9) return vec4(0.0, 0.0, 0.0, 1e9);
+      float lamb = max(dot(bestN, sunDir), 0.0);
+      float rim = pow(1.0 - max(dot(bestN, -rd), 0.0), 2.5);
+      vec3 col = bestCol * (0.30 + lamb * 0.85)
+               + vec3(1.0, 0.5, 0.2) * rim * 0.18;
+      return vec4(col, bestT);
+    }
   `,
 
   body: /* glsl */ `
+    vec3 ro = uCamLocal;
     // Stereo parallax layers.
     vec2 pFar  = parallaxP(p, rd, 0.35);
     vec2 pBack = parallaxP(p, rd, 0.22);
@@ -48,19 +153,33 @@ export const LavaScene = {
       col += vec3(1.0, 0.8, 0.5) * spark * 0.6;
     }
 
-    // ---- Distant volcano on the horizon (centered) ----
+    // ---- 3D raycast volcanoes (parallax correctly with head movement) ----
+    float opaqueT = 1e9;
+    vec3 opaqueCol = vec3(0.0);
+    vec4 v1Hit = volcano3D_d(ro, rd, vec3(14.0, -1.6, -8.0), uTime, 1.0, 1.0);
+    if (v1Hit.w < opaqueT) {
+      opaqueT = v1Hit.w;
+      opaqueCol = v1Hit.rgb;
+    }
+    vec4 v2Hit = volcano3D_d(ro, rd, vec3(-18.0, -1.6, 9.0), uTime, 0.85, 0.9);
+    if (v2Hit.w < opaqueT) {
+      opaqueT = v2Hit.w;
+      opaqueCol = v2Hit.rgb;
+    }
+    vec4 rocksHit = lavaRocks3D(ro, rd, uTime);
+    if (rocksHit.w < opaqueT) {
+      opaqueT = rocksHit.w;
+      opaqueCol = rocksHit.rgb;
+    }
+    if (opaqueT < 1e8) {
+      float fogF = smoothstep(4.0, 60.0, opaqueT);
+      col = mix(opaqueCol, col, fogF * 0.55);
+    }
+
+    // Lava river still rendered as 2D parallax band on the foreground.
     vec2 volcCenter = vec2(0.0, -0.4);
     float volcW = 0.8;
     float volcH = 0.55;
-    float volc = volcanoMask(pBack, volcCenter, volcW, volcH);
-    if (volc > 0.0) {
-      // Dark rocky body with occasional glowing cracks.
-      vec3 rock = vec3(0.10, 0.05, 0.04);
-      float cracks = ridgedFbm(vec2(pBack.x * 18.0, pBack.y * 22.0));
-      cracks = smoothstep(0.55, 0.85, cracks);
-      vec3 lavaCrack = vec3(1.00, 0.45, 0.10);
-      col = mix(rock, lavaCrack, cracks * 0.6);
-    }
 
     // ---- Lava river running across the foreground ----
     {

@@ -41,9 +41,9 @@ export class LavaImmersive extends THREE.Object3D {
         this._entryMatrix
       );
       const portalQuatInv = portalQuat.clone().invert();
-      const camQuat = camera.getWorldQuaternion(new THREE.Quaternion());
-      const localQuat = portalQuatInv.multiply(camQuat);
-      const rotMat4 = new THREE.Matrix4().makeRotationFromQuaternion(localQuat);
+      const rotMat4 = new THREE.Matrix4().makeRotationFromQuaternion(
+        portalQuatInv
+      );
       mat.uniforms.uViewRotation.value.setFromMatrix4(rotMat4);
     }
 
@@ -172,6 +172,112 @@ export class LavaImmersive extends THREE.Object3D {
           return -b - sqrt(d);
         }
 
+        // Ray vs axis-aligned ellipsoid centered at origin.
+        float rayEllip(vec3 oc, vec3 rd, vec3 ax) {
+          vec3 ocS = oc / ax;
+          vec3 rdS = rd / ax;
+          float a = dot(rdS, rdS);
+          float b = dot(ocS, rdS);
+          float c = dot(ocS, ocS) - 1.0;
+          float d = b * b - a * c;
+          if (d < 0.0) return -1.0;
+          float t = (-b - sqrt(d)) / a;
+          return t;
+        }
+
+        // 3D volcano: stacked ellipsoid mounds tapering upward, with crater
+        // glow on top and lava streaks running down the slopes.
+        // Returns vec4(rgb, t) — t = bestT (large = no hit).
+        vec4 volcano3D(vec3 ro, vec3 rd, vec3 base, float t,
+                       float scaleR, float scaleH) {
+          vec3 sunDir = normalize(vec3(0.3, 0.6, -0.7));
+          float bestT = 1e9;
+          vec3 bestCol = vec3(0.0);
+          vec3 bestN = vec3(0.0);
+          vec3 bestHp = vec3(0.0);
+          int bestLayer = -1;
+          for (int i = 0; i < 4; i++) {
+            float fi = float(i);
+            float r = (3.4 - fi * 0.75) * scaleR;
+            float ry = 0.9 * scaleH;
+            vec3 ax = vec3(r, ry, r);
+            vec3 ctr = base + vec3(0.0, 0.5 * scaleH + fi * 1.4 * scaleH, 0.0);
+            float th = rayEllip(ro - ctr, rd, ax);
+            if (th > 0.5 && th < bestT) {
+              bestT = th;
+              bestHp = ro + rd * th - ctr;
+              bestN = normalize(bestHp / (ax * ax));
+              bestLayer = i;
+              bestCol = vec3(1.0);  // marker
+            }
+          }
+          if (bestT >= 1e9) return vec4(0.0, 0.0, 0.0, 1e9);
+          // Rock base color with noise variation.
+          float noiseTex = fbm3(bestHp * 1.6);
+          vec3 rock = mix(vec3(0.10, 0.05, 0.04),
+                          vec3(0.22, 0.11, 0.08), noiseTex);
+          // Lava streaks running down (more on lower layers).
+          float streakNoise = fbm(vec2(atan(bestHp.x, bestHp.z) * 8.0,
+                                        bestHp.y * 0.8 - t * 0.15));
+          float streakMask = smoothstep(0.62, 0.78, streakNoise);
+          // Streaks fade out near the top.
+          float layerFrac = float(bestLayer) / 3.0;
+          streakMask *= (1.0 - layerFrac * 0.6);
+          vec3 lava = vec3(1.00, 0.45, 0.10);
+          vec3 col = mix(rock, lava, streakMask * 0.85);
+          // Crater glow on top layer.
+          if (bestLayer == 3) {
+            float craterUp = max(bestN.y, 0.0);
+            col = mix(col, vec3(1.0, 0.65, 0.15), craterUp * craterUp);
+          }
+          // Lighting.
+          float lamb = max(dot(bestN, sunDir), 0.0);
+          float rim = pow(1.0 - max(dot(bestN, -rd), 0.0), 2.5);
+          col = col * (0.30 + lamb * 0.85)
+              + vec3(0.6, 0.3, 0.2) * rim * 0.20;
+          return vec4(col, bestT);
+        }
+
+        // Foreground lava rocks scattered around the user.
+        vec4 lavaRocks(vec3 ro, vec3 rd, float t) {
+          vec3 sunDir = normalize(vec3(0.3, 0.6, -0.7));
+          float bestT = 1e9;
+          vec3 bestCol = vec3(0.0);
+          vec3 bestN = vec3(0.0);
+          for (int i = 0; i < 8; i++) {
+            float fi = float(i);
+            float ang = fi * 0.91;
+            float dist = 4.5 + mod(fi * 1.7, 4.0);
+            vec3 base = vec3(cos(ang) * dist, -1.6,
+                              sin(ang) * dist);
+            float ry = 0.35 + 0.18 * sin(fi * 2.3);
+            vec3 ax = vec3(0.7 + 0.2 * cos(fi * 1.7),
+                            ry,
+                            0.6 + 0.2 * sin(fi * 1.7));
+            vec3 ctr = base + vec3(0.0, ry, 0.0);
+            float th = rayEllip(ro - ctr, rd, ax);
+            if (th > 0.3 && th < bestT) {
+              bestT = th;
+              vec3 hp = ro + rd * th - ctr;
+              bestN = normalize(hp / (ax * ax));
+              float n = fbm3(hp * 4.0 + fi);
+              vec3 rock = mix(vec3(0.06, 0.03, 0.02),
+                              vec3(0.18, 0.09, 0.07), n);
+              // Glowing crack underneath.
+              float crack = smoothstep(0.55, 0.7,
+                                        fbm(hp.xz * 9.0 + t * 0.2));
+              crack *= max(-bestN.y, 0.0);  // crack glow on undersides
+              bestCol = mix(rock, vec3(1.0, 0.42, 0.08), crack * 0.6);
+            }
+          }
+          if (bestT >= 1e9) return vec4(0.0, 0.0, 0.0, 1e9);
+          float lamb = max(dot(bestN, sunDir), 0.0);
+          float rim = pow(1.0 - max(dot(bestN, -rd), 0.0), 2.5);
+          vec3 col = bestCol * (0.30 + lamb * 0.85)
+                   + vec3(1.0, 0.5, 0.2) * rim * 0.18;
+          return vec4(col, bestT);
+        }
+
         // Rising ember columns: small fast glowing particles around user.
         vec3 embers(vec3 ro, vec3 rd, float t) {
           vec3 col = vec3(0.0);
@@ -284,38 +390,33 @@ export class LavaImmersive extends THREE.Object3D {
             col += vec3(1.0, 0.85, 0.55) * sparks * 0.6;
           }
 
-          // ---- Distant volcano silhouettes (3 around the horizon) ----
-          float dist1 = 1.4;
-          vec2 v1 = volcanoAt(rd, 2.4, dist1, t);
-          if (v1.x > 0.5) {
-            // Volcano body: dark with subtle texture.
-            float az = atan(rd.x, -rd.z);
-            vec3 vbody = mix(vec3(0.05, 0.02, 0.04),
-                             vec3(0.18, 0.08, 0.06),
-                             fbm(vec2(az * 30.0, asin(rd.y) * 30.0)));
-            // Add lava streaks down the slope.
-            float streak = fbm(vec2(az * 80.0, -asin(rd.y) * 6.0 + t * 0.4));
-            vec3 lava = vec3(1.00, 0.40, 0.05);
-            float streakMask = smoothstep(0.7, 0.85, streak)
-                             * smoothstep(0.0, 0.06, asin(rd.y));
-            vbody = mix(vbody, lava, streakMask * 0.8);
-            // Crater glow (bright orange at top).
-            vbody = mix(vbody, vec3(1.0, 0.7, 0.2), v1.y * 1.4);
-            col = vbody;
+          // ---- 3D raycast volcanoes (parallax correctly as user walks) ----
+          // Track best opaque hit (volcanoes + rocks).
+          float opaqueT = 1e9;
+          vec3 opaqueCol = vec3(0.0);
+          vec4 v1Hit = volcano3D(ro, rd, vec3(14.0, -1.6, -8.0), t, 1.0, 1.0);
+          if (v1Hit.w < opaqueT) {
+            opaqueT = v1Hit.w;
+            opaqueCol = v1Hit.rgb;
           }
-          // Smaller volcano on opposite side.
-          vec2 v2 = volcanoAt(rd, -1.8, 2.2, t);
-          if (v2.x > 0.5) {
-            float az = atan(rd.x, -rd.z);
-            vec3 vbody = mix(vec3(0.04, 0.02, 0.03),
-                             vec3(0.14, 0.06, 0.05),
-                             fbm(vec2(az * 30.0, asin(rd.y) * 30.0)));
-            vbody = mix(vbody, vec3(1.0, 0.65, 0.18), v2.y * 1.2);
-            col = vbody;
+          vec4 v2Hit = volcano3D(ro, rd, vec3(-18.0, -1.6, 9.0), t, 0.85, 0.9);
+          if (v2Hit.w < opaqueT) {
+            opaqueT = v2Hit.w;
+            opaqueCol = v2Hit.rgb;
+          }
+          vec4 rocksHit = lavaRocks(ro, rd, t);
+          if (rocksHit.w < opaqueT) {
+            opaqueT = rocksHit.w;
+            opaqueCol = rocksHit.rgb;
+          }
+          if (opaqueT < 1e8) {
+            // Atmospheric fog blends distant volcanoes into smoky sky.
+            float fogF = smoothstep(4.0, 60.0, opaqueT);
+            col = mix(opaqueCol, col, fogF * 0.55);
           }
 
           // Ash plumes rising from the main volcano.
-          col += ashPlume(rd, 2.4, dist1, t);
+          col += ashPlume(rd, atan(-8.0, 14.0), 1.4, t);
 
           // ---- Lava bombs (raymarched glowing spheres) ----
           col += lavaBombs(ro, rd, t);
@@ -326,7 +427,7 @@ export class LavaImmersive extends THREE.Object3D {
           // ---- Lava ground beneath user (looking down) ----
           if (rd.y < -0.05) {
             float gt = -ro.y / rd.y;
-            if (gt > 0.0 && gt < 60.0) {
+            if (gt > 0.0 && gt < 60.0 && gt < opaqueT) {
               vec3 gp = ro + rd * gt;
               // Solidified crust with hot crack pattern.
               float crust = fbm(gp.xz * 0.4);
