@@ -234,9 +234,10 @@ export const LavaScene = {
     // ---- Animated ash plume + lava spurts above main volcano apex ----
     {
       vec3 apexW = vec3(2.0, 4.4, -16.0);
-      // Sample 14 horizontal slices from the crater upward; each slice tests
-      // distance from the vertical column through the apex.
-      for (int i = 0; i < 14; i++) {
+      // Sample kNumSlices horizontal slices from the crater upward; each
+      // slice tests distance from the vertical column through the apex.
+      const int kNumSlices = 14;
+      for (int i = 0; i < kNumSlices; i++) {
         float h = float(i) * 0.65;
         float ty = apexW.y + h;
         if (abs(rd.y) < 0.001) continue;

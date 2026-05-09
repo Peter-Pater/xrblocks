@@ -52,7 +52,7 @@ const TRANSITION_COOLDOWN_MS = 600; // Lock new transitions briefly after each
 export class PortalGalleryScene extends xb.Script {
   portals = [];
   labels = [];
-  immersives = []; // index → ImmersiveInstance | null
+  immersives = []; // index -> ImmersiveInstance | null
   clock = new THREE.Clock();
   _held = null;
   _activeIndex = -1; // Portal index user has walked into, or -1.
@@ -167,9 +167,9 @@ export class PortalGalleryScene extends xb.Script {
 
     // Immersive worlds (one per scene that supports walk-in).
     for (let i = 0; i < SCENES.length; i++) {
-      const Cls = IMMERSIVE_BY_NAME[SCENES[i].name];
-      if (Cls) {
-        const inst = new Cls();
+      const ImmersiveClass = IMMERSIVE_BY_NAME[SCENES[i].name];
+      if (ImmersiveClass) {
+        const inst = new ImmersiveClass();
         this.add(inst);
         this.immersives.push(inst);
       } else {
