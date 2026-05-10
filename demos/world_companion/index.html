@@ -24,7 +24,9 @@
           "lit": "https://cdn.jsdelivr.net/gh/lit/dist@3/core/lit-core.min.js",
           "lit/": "https://esm.run/lit@3/",
           "xrblocks": "../../build/xrblocks.js",
-          "@google/genai": "https://cdn.jsdelivr.net/npm/@google/genai/+esm"
+          "@google/genai": "https://cdn.jsdelivr.net/npm/@google/genai/+esm",
+          "marked": "https://esm.sh/marked@14",
+          "dompurify": "https://esm.sh/dompurify@3"
         }
       }
     </script>
@@ -74,14 +76,22 @@
         background: #c0392b;
       }
       .panel .transcript {
-        max-height: 180px;
+        height: 80px;
         overflow-y: auto;
         font-size: 13px;
         line-height: 1.4;
         padding: 8px 10px;
         background: #111;
         border-radius: 8px;
-        white-space: pre-wrap;
+      }
+      .panel .transcript p,
+      .panel .transcript ul,
+      .panel .transcript ol {
+        margin: 0 0 0.4em 0;
+      }
+      .panel .transcript ul,
+      .panel .transcript ol {
+        padding-left: 1.2em;
       }
       .panel .transcript:empty::before {
         content: 'Press Start, then talk to the companion. It can see what the camera sees.';
@@ -167,8 +177,8 @@
     </div>
 
     <script>
-      // Resolve gemini key: ?key= URL param > localStorage > overlay prompt.
-      (function () {
+      // Resolve gemini key: ?key= URL param > localStorage > ./keys.json > overlay.
+      (async function () {
         const STORAGE_KEY = 'gemini-api-key';
         const params = new URLSearchParams(window.location.search);
         if (params.has('key')) {
@@ -185,6 +195,20 @@
             window.location.hash;
           window.history.replaceState(null, '', newUrl);
           return;
+        }
+        try {
+          const res = await fetch('./keys.json', {cache: 'no-store'});
+          if (res.ok) {
+            const k = (await res.json()).key;
+            if (k) {
+              window.localStorage.setItem(STORAGE_KEY, k);
+              params.set('key', k);
+              window.location.search = '?' + params.toString();
+              return;
+            }
+          }
+        } catch (_) {
+          // no keys.json, fall through to overlay
         }
         const overlay = document.getElementById('keyOverlay');
         const input = document.getElementById('keyInput');
@@ -218,6 +242,9 @@
     <script type="module">
       import * as THREE from 'three';
       import * as xb from 'xrblocks';
+      import {Text} from 'troika-three-text';
+      import {marked} from 'marked';
+      import DOMPurify from 'dompurify';
 
       const startBtn = document.getElementById('start');
       const stopBtn = document.getElementById('stop');
@@ -227,12 +254,18 @@
 
       const labels = new THREE.Group();
       let session = null;
+      let transcriptBuffer = '';
+      let xrStatusText = null;
 
       function setStatus(s) {
         statusEl.textContent = s;
+        if (xrStatusText) xrStatusText.text = s;
       }
       function appendTranscript(t) {
-        transcriptEl.textContent += t;
+        transcriptBuffer += t;
+        transcriptEl.innerHTML = DOMPurify.sanitize(
+          marked.parse(transcriptBuffer)
+        );
         transcriptEl.scrollTop = transcriptEl.scrollHeight;
       }
 
@@ -240,28 +273,44 @@
         const placeLabel = new xb.Tool({
           name: 'placeLabel',
           description:
-            "Drop a small marker in front of the user, anchored to the camera. " +
-            "Use it to flag something interesting you can see in the scene.",
+            'Run object detection on the current scene and drop a labelled marker ' +
+            'on the object whose name best matches the given text. Use when the ' +
+            'user asks you to identify or point out something in the room.',
           parameters: {
             type: 'OBJECT',
             properties: {
-              text: {type: 'STRING', description: 'Short label, ~3 words.'},
+              text: {
+                type: 'STRING',
+                description: 'Short label, ~3 words, naming what to mark.',
+              },
             },
             required: ['text'],
           },
           onTriggered: async ({text}) => {
-            const cam = xb.core.camera;
-            const pos = new THREE.Vector3(0, 0, -1.2).applyMatrix4(
-              cam.matrixWorld
+            if (!xb.core.world?.objects) {
+              console.warn('[placeLabel] object detector unavailable');
+              return {success: false, error: 'object detector unavailable'};
+            }
+            const detected = await xb.core.world.objects.runDetection();
+            console.log(
+              '[placeLabel]',
+              text,
+              'detected:',
+              detected.map((d) => d.label)
             );
-            const mesh = new THREE.Mesh(
-              new THREE.SphereGeometry(0.04, 16, 16),
-              new THREE.MeshBasicMaterial({color: 0xffd54f})
-            );
-            mesh.position.copy(pos);
-            mesh.userData.labelText = text;
-            labels.add(mesh);
-            return {success: true, data: {placed: text}};
+            if (!detected.length) {
+              return {success: false, error: 'nothing detected in view'};
+            }
+            const needle = text.toLowerCase();
+            const match =
+              detected.find((d) => d.label?.toLowerCase().includes(needle)) ||
+              detected.find((d) => needle.includes(d.label?.toLowerCase())) ||
+              detected[0];
+            placeMarker(match.position, match.label || text);
+            return {
+              success: true,
+              data: {placed: match.label, requested: text},
+            };
           },
         });
 
@@ -278,6 +327,7 @@
                 data: {target: target?.name || target?.type || 'nothing'},
               };
             } catch (err) {
+              console.warn('[lookCloser] error', err);
               return {success: false, error: err.message};
             }
           },
@@ -286,16 +336,40 @@
         return [placeLabel, lookCloser];
       }
 
+      function placeMarker(position, text) {
+        const group = new THREE.Group();
+        group.position.copy(position);
+        const sphere = new THREE.Mesh(
+          new THREE.SphereGeometry(0.04, 16, 16),
+          new THREE.MeshBasicMaterial({color: 0xffd54f})
+        );
+        group.add(sphere);
+        const label = new Text();
+        label.text = text;
+        label.fontSize = 0.05;
+        label.color = 0xffffff;
+        label.outlineWidth = 0.004;
+        label.outlineColor = 0x000000;
+        label.anchorX = 'center';
+        label.anchorY = 'bottom';
+        label.position.set(0, 0.06, 0);
+        group.add(label);
+        label.sync();
+        labels.add(group);
+      }
+
       async function start() {
+        if (session) return;
         startBtn.disabled = true;
         setStatus('opening session...');
-        transcriptEl.textContent = '';
+        transcriptBuffer = '';
+        transcriptEl.innerHTML = '';
         try {
           await xb.core.sound.enableAudio({streamToAI: true});
           session = await xb.core.world.streamScene(
-            "You are a helpful AR companion. The user is wearing a headset " +
-              "and you receive their camera every second. Keep replies short " +
-              "and conversational. Use placeLabel to mark things you see; use " +
+            'You are a helpful AR companion. The user is wearing a headset ' +
+              'and you receive their camera every second. Keep replies short ' +
+              'and conversational. Use placeLabel to mark things you see; use ' +
               "lookCloser when the user asks about what they're pointing at.",
             {
               fps: 1,
@@ -322,6 +396,7 @@
       }
 
       async function stop() {
+        if (!session) return;
         stopBtn.disabled = true;
         setStatus('stopping...');
         try {
@@ -337,8 +412,10 @@
       function clearLabels() {
         while (labels.children.length) {
           const c = labels.children.pop();
-          c.geometry?.dispose();
-          c.material?.dispose();
+          c.traverse((n) => {
+            n.geometry?.dispose();
+            n.material?.dispose();
+          });
           labels.remove(c);
         }
       }
@@ -351,10 +428,53 @@
       options.enableUI();
       options.enableAI();
       options.enableCamera();
+      options.enableDepth();
+      options.enableObjectDetection();
+      options.world.objects.backendConfig.activeBackend = 'gemini';
+      options.reticles.enabled = true;
       options.setAppTitle('World Companion');
 
       xb.init(options);
       xb.core.scene.add(labels);
+
+      const xrPanel = new xb.SpatialPanel({
+        width: 0.6,
+        height: 0.4,
+        backgroundColor: '#1a1a1abb',
+        showEdge: true,
+        edgeColor: 'white',
+        edgeWidth: 0.001,
+      });
+      xrPanel.position.set(0, 1.1, -0.8);
+      xb.core.scene.add(xrPanel);
+      const xrGrid = xrPanel.addGrid();
+      xrGrid.addRow({weight: 0.25}).addTextButton({
+        text: 'Start',
+        fontColor: '#fff',
+        backgroundColor: '#2e7d32',
+        fontSize: 0.5,
+        weight: 1,
+      }).onTriggered = start;
+      xrGrid.addRow({weight: 0.25}).addTextButton({
+        text: 'Stop',
+        fontColor: '#fff',
+        backgroundColor: '#c0392b',
+        fontSize: 0.5,
+        weight: 1,
+      }).onTriggered = stop;
+      xrGrid.addRow({weight: 0.25}).addTextButton({
+        text: 'Clear labels',
+        fontColor: '#fff',
+        backgroundColor: '#444',
+        fontSize: 0.5,
+        weight: 1,
+      }).onTriggered = clearLabels;
+      xrStatusText = xrGrid.addRow({weight: 0.25}).addText({
+        text: 'idle',
+        fontColor: '#ccc',
+        fontSize: 0.4,
+        textAlign: 'center',
+      });
     </script>
   </body>
 </html>
