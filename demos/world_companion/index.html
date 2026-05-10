@@ -537,26 +537,26 @@
         textAlign: 'center',
       });
 
-      const startBtn = ctrlGrid.addCol({weight: 1}).addIconButton({
+      const xrStartBtn = ctrlGrid.addCol({weight: 1}).addIconButton({
         text: 'mic',
         fontSize: 0.7,
         fontColor: '#ffffff',
       });
-      startBtn.onTriggered = start;
+      xrStartBtn.onTriggered = start;
 
-      const stopBtn = ctrlGrid.addCol({weight: 1}).addIconButton({
+      const xrStopBtn = ctrlGrid.addCol({weight: 1}).addIconButton({
         text: 'stop',
         fontSize: 0.7,
         fontColor: '#ffffff',
       });
-      stopBtn.onTriggered = stop;
+      xrStopBtn.onTriggered = stop;
 
-      const clearBtn = ctrlGrid.addCol({weight: 1}).addIconButton({
+      const xrClearBtn = ctrlGrid.addCol({weight: 1}).addIconButton({
         text: 'delete_sweep',
         fontSize: 0.6,
         fontColor: '#ffffff',
       });
-      clearBtn.onTriggered = clearLabels;
+      xrClearBtn.onTriggered = clearLabels;
 
       const orbiter = ctrlGrid.addOrbiter();
       orbiter.addExitButton();
