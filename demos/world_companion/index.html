@@ -334,7 +334,6 @@
               placeLabel._lastKey === callKey &&
               now - (placeLabel._lastAt || 0) < 2000
             ) {
-              console.log('[placeLabel] debounced retry', callKey);
               return placeLabel._lastResult ||
                 {success: true, data: {placed: [], detected: []}};
             }
@@ -359,20 +358,6 @@
             } catch (e) {
               console.warn('[placeLabel] detection threw', e);
             }
-            const camPos = new THREE.Vector3();
-            xb.core.camera.getWorldPosition(camPos);
-            console.log(
-              '[placeLabel]',
-              list,
-              'cam:',
-              camPos.toArray().map((n) => n.toFixed(2)),
-              'detected:',
-              detected.map((d) => ({
-                label: d.label,
-                pos: d.position.toArray().map((n) => n.toFixed(2)),
-                dist: camPos.distanceTo(d.position).toFixed(2),
-              }))
-            );
             if (xrStatusText) {
               const want = list.map((it) => it.text).join(',');
               const got = detected.map((d) => d.label).join(',') || '(none)';
@@ -463,17 +448,12 @@
         let existing = labels.children.find(
           (g) => norm(g.userData.text) === key
         );
-        let matchKind = existing ? 'text' : null;
         if (!existing) {
           existing = labels.children.find(
             (g) => g.position.distanceTo(position) < 2.0
           );
-          if (existing) matchKind = 'pos';
         }
         if (existing) {
-          console.log('[placeMarker] dedup', matchKind,
-            'old:', existing.userData.text, '→ new:', text,
-            'd=', existing.position.distanceTo(position).toFixed(2));
           existing.position.copy(position);
           existing.userData.t0 = performance.now() / 1000;
           existing.userData.text = text;
@@ -484,8 +464,6 @@
           }
           return;
         }
-        console.log('[placeMarker] new', text,
-          'existing labels:', labels.children.map((g) => g.userData.text));
 
         const group = new THREE.Group();
         group.position.copy(position);
