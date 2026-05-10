@@ -436,9 +436,43 @@
       }
 
       function placeMarker(position, text, style) {
+        // Dedupe: same physical object should only get one label. Match by
+        // either same text (e.g. two "laptop" calls) OR by proximity (e.g.
+        // Gemini calls the same laptop "laptop" then "macbook" — both land
+        // in roughly the same spot).
+        const norm = (s) => (s || '').toLowerCase().trim();
+        const key = norm(text);
+        let existing = labels.children.find(
+          (g) => norm(g.userData.text) === key
+        );
+        let matchKind = existing ? 'text' : null;
+        if (!existing) {
+          existing = labels.children.find(
+            (g) => g.position.distanceTo(position) < 2.0
+          );
+          if (existing) matchKind = 'pos';
+        }
+        if (existing) {
+          console.log('[placeMarker] dedup', matchKind,
+            'old:', existing.userData.text, '→ new:', text,
+            'd=', existing.position.distanceTo(position).toFixed(2));
+          existing.position.copy(position);
+          existing.userData.t0 = performance.now() / 1000;
+          existing.userData.text = text;
+          const labelChild = existing.children.find((c) => c.isText || c.text);
+          if (labelChild && 'text' in labelChild) {
+            labelChild.text = text;
+            labelChild.sync && labelChild.sync();
+          }
+          return;
+        }
+        console.log('[placeMarker] new', text,
+          'existing labels:', labels.children.map((g) => g.userData.text));
+
         const group = new THREE.Group();
         group.position.copy(position);
         group.userData.style = style;
+        group.userData.text = text;
         group.userData.t0 = performance.now() / 1000;
         if (style === 'arrow') {
           const arrow = buildArrow();
