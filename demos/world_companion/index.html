@@ -465,6 +465,11 @@
         label.anchorX = 'center';
         label.anchorY = 'bottom';
         label.position.set(0, style === 'arrow' ? 0.4 : 0.06, 0);
+        label.depthOffset = -1;
+        label.renderOrder = 999;
+        label.material.depthTest = false;
+        label.material.depthWrite = false;
+        label.material.transparent = true;
         group.add(label);
         label.sync();
         labels.add(group);
