@@ -273,14 +273,15 @@
         const placeLabel = new xb.Tool({
           name: 'placeLabel',
           description:
-            'Run object detection once and drop one or more markers. Pass an ' +
-            'array of items so you can label several things in a single call ' +
-            '(e.g. ["mug","laptop","keys"]). The response returns ' +
-            '`detected[]` with all object names the detector saw — if your ' +
-            'requested label is missed, retry with a name from that list. ' +
+            'Drop one or more labels. Pass items[] to mark several things at ' +
+            'once (e.g. ["mug","laptop","keys"]). For each item the tool ' +
+            'tries to anchor the label to the matching detected object; if ' +
+            'no match it places the label in front of the user as a ' +
+            'fallback. The response returns `placed[]` with `anchored: ' +
+            'true|false` so you know whether it landed on a real object. ' +
             'Choose a style per item: "dot" for casual noting, "arrow" when ' +
-            'pointing something out (e.g. "find my bag"), "pulse" for small ' +
-            'or hard-to-spot things.',
+            'pointing something out, "pulse" for small or hard-to-spot ' +
+            'things.',
           parameters: {
             type: 'OBJECT',
             properties: {
@@ -318,51 +319,37 @@
             },
           },
           onTriggered: async ({items, text, style}) => {
-            if (!xb.core.world?.objects) {
-              console.warn('[placeLabel] object detector unavailable');
-              return {success: false, error: 'object detector unavailable'};
-            }
             let list = Array.isArray(items) ? items.slice() : [];
             if (text) list.push({text, style});
             if (!list.length) {
               return {success: false, error: 'no items provided'};
             }
-            const detector = xb.core.world.objects;
-            console.log(
-              '[placeLabel] aiAvailable=',
-              !!xb.core.ai?.isAvailable?.(),
-              'cam=',
-              !!xb.core.deviceCamera,
-              'depth=',
-              !!xb.core.depth
-            );
-            let snapshotOk = null;
+
+            const fallbackPosition = (i) => {
+              const cam = xb.core.camera;
+              const offset = new THREE.Vector3(
+                (i - (list.length - 1) / 2) * 0.25,
+                0,
+                -1.2
+              );
+              return offset.applyMatrix4(cam.matrixWorld);
+            };
+
+            let detected = [];
             try {
-              snapshotOk = await xb.core.deviceCamera?.getSnapshot?.({
-                outputFormat: 'base64',
-              });
+              if (xb.core.world?.objects) {
+                detected = await xb.core.world.objects.runDetection();
+              }
             } catch (e) {
-              console.warn('[placeLabel] snapshot test threw', e);
+              console.warn('[placeLabel] detection threw', e);
             }
-            console.log(
-              '[placeLabel] snapshot test:',
-              snapshotOk ? `ok (${snapshotOk.length} chars)` : 'NULL'
-            );
-            const detected = await detector.runDetection();
             console.log(
               '[placeLabel]',
               list,
               'detected:',
               detected.map((d) => d.label)
             );
-            if (!detected.length) {
-              return {
-                success: false,
-                error:
-                  'detection returned empty — check console for camera/AI ' +
-                  'status. May be camera permission, AI key, or depth issue.',
-              };
-            }
+
             const used = new Set();
             const findMatch = (text) => {
               const needle = text.toLowerCase();
@@ -376,27 +363,36 @@
               );
             };
             const placed = [];
-            const missed = [];
-            for (const item of list) {
+            list.forEach((item, i) => {
               const match = findMatch(item.text);
-              if (!match) {
-                missed.push(item.text);
-                continue;
+              const itemStyle = item.style || 'dot';
+              if (match) {
+                used.add(match);
+                placeMarker(
+                  match.position,
+                  match.label || item.text,
+                  itemStyle
+                );
+                placed.push({
+                  placed: match.label,
+                  requested: item.text,
+                  style: itemStyle,
+                  anchored: true,
+                });
+              } else {
+                placeMarker(fallbackPosition(i), item.text, itemStyle);
+                placed.push({
+                  placed: item.text,
+                  requested: item.text,
+                  style: itemStyle,
+                  anchored: false,
+                });
               }
-              used.add(match);
-              const style = item.style || 'dot';
-              placeMarker(match.position, match.label || item.text, style);
-              placed.push({
-                placed: match.label,
-                requested: item.text,
-                style,
-              });
-            }
+            });
             return {
-              success: placed.length > 0,
+              success: true,
               data: {
                 placed,
-                missed,
                 detected: detected.map((d) => d.label),
               },
             };
