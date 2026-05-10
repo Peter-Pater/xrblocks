@@ -273,54 +273,85 @@
         const placeLabel = new xb.Tool({
           name: 'placeLabel',
           description:
-            'Run object detection and drop a marker on the object whose name ' +
-            'best matches the given text. Choose a style: "dot" for casual ' +
-            'noting, "arrow" when the user wants you to point something out ' +
-            '(e.g. "find my bag"), "pulse" for small or hard-to-spot things.',
+            'Run object detection once and drop one or more markers. Pass an ' +
+            'array of items so you can label several things in a single call ' +
+            '(e.g. ["mug","laptop","keys"]). Choose a style per item: "dot" ' +
+            'for casual noting, "arrow" when pointing something out (e.g. ' +
+            '"find my bag"), "pulse" for small or hard-to-spot things.',
           parameters: {
             type: 'OBJECT',
             properties: {
-              text: {
-                type: 'STRING',
-                description: 'Short label, ~3 words, naming what to mark.',
-              },
-              style: {
-                type: 'STRING',
-                enum: ['dot', 'arrow', 'pulse'],
-                description: 'Marker style. Defaults to dot.',
+              items: {
+                type: 'ARRAY',
+                description:
+                  'Labels to place. Use multiple entries to mark several ' +
+                  'objects at once instead of calling the tool repeatedly.',
+                items: {
+                  type: 'OBJECT',
+                  properties: {
+                    text: {
+                      type: 'STRING',
+                      description: 'Short label, ~3 words.',
+                    },
+                    style: {
+                      type: 'STRING',
+                      enum: ['dot', 'arrow', 'pulse'],
+                      description: 'Marker style. Defaults to dot.',
+                    },
+                  },
+                  required: ['text'],
+                },
               },
             },
-            required: ['text'],
+            required: ['items'],
           },
-          onTriggered: async ({text, style}) => {
+          onTriggered: async ({items}) => {
             if (!xb.core.world?.objects) {
               console.warn('[placeLabel] object detector unavailable');
               return {success: false, error: 'object detector unavailable'};
             }
+            const list = Array.isArray(items) ? items : [];
+            if (!list.length) {
+              return {success: false, error: 'no items provided'};
+            }
             const detected = await xb.core.world.objects.runDetection();
             console.log(
               '[placeLabel]',
-              text,
-              style,
+              list,
               'detected:',
               detected.map((d) => d.label)
             );
             if (!detected.length) {
               return {success: false, error: 'nothing detected in view'};
             }
-            const needle = text.toLowerCase();
-            const match =
-              detected.find((d) => d.label?.toLowerCase().includes(needle)) ||
-              detected.find((d) => needle.includes(d.label?.toLowerCase())) ||
-              detected[0];
-            placeMarker(match.position, match.label || text, style || 'dot');
-            return {
-              success: true,
-              data: {
+            const used = new Set();
+            const findMatch = (text) => {
+              const needle = text.toLowerCase();
+              const free = detected.filter((d) => !used.has(d));
+              return (
+                free.find((d) => d.label?.toLowerCase().includes(needle)) ||
+                free.find((d) =>
+                  needle.includes(d.label?.toLowerCase() || '\0')
+                ) ||
+                free[0]
+              );
+            };
+            const placed = [];
+            for (const item of list) {
+              const match = findMatch(item.text);
+              if (!match) break;
+              used.add(match);
+              const style = item.style || 'dot';
+              placeMarker(match.position, match.label || item.text, style);
+              placed.push({
                 placed: match.label,
-                requested: text,
-                style: style || 'dot',
-              },
+                requested: item.text,
+                style,
+              });
+            }
+            return {
+              success: placed.length > 0,
+              data: {placed, count: placed.length},
             };
           },
         });
@@ -443,7 +474,9 @@
           session = await xb.core.world.streamScene(
             'You are a helpful AR companion. The user is wearing a headset ' +
               'and you receive their camera every second. Keep replies short ' +
-              'and conversational. Use placeLabel to mark things you see; use ' +
+              'and conversational. Use placeLabel to mark things you see — ' +
+              'pass several items in one call when labelling multiple ' +
+              'objects. Use ' +
               "lookCloser when the user asks about what they're pointing at.",
             {
               fps: 1,
