@@ -75,7 +75,7 @@ export class Simulator extends Script {
   private initialized = false;
   private renderSimulatorSceneToCanvasBound =
     this.renderSimulatorSceneToCanvas.bind(this);
-  private sparkRenderer?: SparkRenderer & {encodeLinear?: boolean};
+  private sparkRenderer?: SparkRenderer;
   private registry?: Registry;
 
   constructor(
