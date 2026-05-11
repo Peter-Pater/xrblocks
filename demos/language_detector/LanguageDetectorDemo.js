@@ -26,6 +26,32 @@ export class LanguageDetectorDemo extends xb.Script {
     this.detectTimer = null;
     this.lastTextDetected = '';
 
+    // Web Speech input language picker. The browser locks SpeechRecognition
+    // to one language, so we cycle through common ones. ?lang=de-DE overrides.
+    this.webLangs = [
+      'en-US',
+      'de-DE',
+      'fr-FR',
+      'es-ES',
+      'it-IT',
+      'pt-PT',
+      'nl-NL',
+      'ja-JP',
+      'zh-CN',
+      'ko-KR',
+      'ru-RU',
+      'ar-SA',
+      'hi-IN',
+      'tr-TR',
+    ];
+    const urlLang = new URLSearchParams(location.search).get('lang');
+    const navLang = navigator.language || 'en-US';
+    const initial =
+      urlLang ||
+      this.webLangs.find((l) => l.startsWith(navLang.slice(0, 2))) ||
+      'en-US';
+    this.webLangIndex = Math.max(0, this.webLangs.indexOf(initial));
+
     this._buildUi();
   }
 
@@ -74,9 +100,19 @@ export class LanguageDetectorDemo extends xb.Script {
     const controlRow = grid.addRow({weight: 0.17});
     const controlGrid = controlRow.addPanel({showEdge: false}).addGrid();
 
-    controlGrid.addCol({weight: 0.15});
+    controlGrid.addCol({weight: 0.05});
 
-    this.webButton = controlGrid.addCol({weight: 0.2}).addIconButton({
+    // Language picker for Web Speech (cycle through languages on click).
+    this.langButton = controlGrid.addCol({weight: 0.22}).addTextButton({
+      text: this._currentLangLabel(),
+      fontSize: 0.5,
+      fontColor: '#ffffff',
+    });
+    this.langButton.onTriggered = () => this._cycleLang();
+
+    controlGrid.addCol({weight: 0.05});
+
+    this.webButton = controlGrid.addCol({weight: 0.18}).addIconButton({
       text: 'mic',
       fontSize: 0.6,
       fontColor: '#ffffff',
@@ -85,7 +121,7 @@ export class LanguageDetectorDemo extends xb.Script {
 
     controlGrid.addCol({weight: 0.05});
 
-    this.geminiButton = controlGrid.addCol({weight: 0.2}).addIconButton({
+    this.geminiButton = controlGrid.addCol({weight: 0.18}).addIconButton({
       text: 'auto_awesome',
       fontSize: 0.6,
       fontColor: '#ffffff',
@@ -94,16 +130,32 @@ export class LanguageDetectorDemo extends xb.Script {
 
     controlGrid.addCol({weight: 0.05});
 
-    this.clearButton = controlGrid.addCol({weight: 0.2}).addIconButton({
+    this.clearButton = controlGrid.addCol({weight: 0.18}).addIconButton({
       text: 'delete',
       fontSize: 0.55,
       fontColor: '#ffffff',
     });
     this.clearButton.onTriggered = () => this._clear();
 
-    controlGrid.addCol({weight: 0.15});
+    controlGrid.addCol({weight: 0.04});
 
     panel.updateLayouts();
+  }
+
+  _currentLangLabel() {
+    return this.webLangs[this.webLangIndex].split('-')[0].toUpperCase();
+  }
+
+  async _cycleLang() {
+    this.webLangIndex = (this.webLangIndex + 1) % this.webLangs.length;
+    this.langButton.setText?.(this._currentLangLabel());
+    // If Web Speech is currently running, restart it on the new language.
+    if (this.activeMode === 'web') {
+      await this._stopActive();
+      await this._toggleMode('web');
+    } else {
+      this._setStatus(`Web Speech: ${this.webLangs[this.webLangIndex]}`);
+    }
   }
 
   async _toggleMode(mode) {
@@ -135,11 +187,15 @@ export class LanguageDetectorDemo extends xb.Script {
       this._setStatus('Error: ' + (err?.message || err));
     });
     try {
-      await source.start();
+      const startOpts =
+        mode === 'web' ? {lang: this.webLangs[this.webLangIndex]} : undefined;
+      await source.start(startOpts);
       this.activeSource = source;
       this.activeMode = mode;
       this._setStatus(
-        mode === 'web' ? 'Listening (Web Speech)…' : 'Listening (Gemini Live)…'
+        mode === 'web'
+          ? `Listening (${this.webLangs[this.webLangIndex]})…`
+          : 'Listening (Gemini Live)…'
       );
     } catch (err) {
       console.error('Failed to start:', err);

@@ -26,7 +26,7 @@ export class WebSpeechSource {
     this._handlers.error = fn;
   }
 
-  async start() {
+  async start({lang} = {}) {
     if (this._running) return;
     const Cls = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Cls) {
@@ -36,9 +36,8 @@ export class WebSpeechSource {
     const rec = new Cls();
     rec.continuous = true;
     rec.interimResults = true;
-    // 'auto' is non-standard; leave language undefined to let the browser pick,
-    // since the whole point is multilingual detection.
-    rec.lang = navigator.language || 'en-US';
+    // Web Speech can't auto-detect; the caller picks an input language.
+    rec.lang = lang || navigator.language || 'en-US';
     rec.onresult = (event) => {
       let interim = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
