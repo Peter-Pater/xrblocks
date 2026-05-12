@@ -405,16 +405,35 @@
                 .toLowerCase()
                 .split(/[^a-z0-9]+/)
                 .filter((t) => t && !STOPWORDS.has(t));
+            const SYNONYMS = {
+              couch: ['sofa'],
+              sofa: ['couch'],
+              tv: ['television'],
+              television: ['tv'],
+              fridge: ['refrigerator'],
+              refrigerator: ['fridge'],
+              mug: ['cup'],
+              cup: ['mug'],
+              picture: ['painting', 'artwork', 'art'],
+              painting: ['picture', 'artwork', 'art'],
+              artwork: ['picture', 'painting', 'art'],
+            };
+            const expand = (s) => {
+              const t = (s || '').toLowerCase().trim();
+              return [t, ...(SYNONYMS[t] || [])];
+            };
             const used = new Set();
             const findMatch = (text) => {
-              const needle = text.toLowerCase();
+              const needles = expand(text);
               const free = detected.filter((d) => !used.has(d));
-              const exact =
-                free.find((d) => d.label?.toLowerCase().includes(needle)) ||
-                free.find((d) =>
-                  needle.includes(d.label?.toLowerCase() || '\0')
-                );
-              if (exact) return exact;
+              for (const needle of needles) {
+                const exact =
+                  free.find((d) => d.label?.toLowerCase().includes(needle)) ||
+                  free.find((d) =>
+                    needle.includes(d.label?.toLowerCase() || '\0')
+                  );
+                if (exact) return exact;
+              }
               const wantTokens = new Set(tokens(text));
               if (wantTokens.size === 0) return null;
               return (
