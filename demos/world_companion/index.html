@@ -344,13 +344,23 @@
             placeLabel._lastKey = callKey;
             placeLabel._lastAt = now;
 
+            const fallbackRaycaster = new THREE.Raycaster();
             const fallbackPosition = (i) => {
               const cam = xb.core.camera;
-              const offset = new THREE.Vector3(
-                (i - (list.length - 1) / 2) * 0.25,
-                0,
-                -1.2
-              );
+              const ndcX = (i - (list.length - 1) / 2) * 0.15;
+              const depthMesh = xb.core.depth?.depthMesh;
+              if (depthMesh) {
+                fallbackRaycaster.setFromCamera(
+                  new THREE.Vector2(ndcX, 0),
+                  cam
+                );
+                const hits = [];
+                depthMesh.raycast(fallbackRaycaster, hits);
+                if (hits.length > 0) {
+                  return hits[0].point.clone();
+                }
+              }
+              const offset = new THREE.Vector3(ndcX * 1.6, 0, -1.2);
               return offset.applyMatrix4(cam.matrixWorld);
             };
 
@@ -368,29 +378,86 @@
               xrStatusText.text = `want: ${want} | got: ${got}`;
             }
 
+            const STOPWORDS = new Set([
+              'the',
+              'a',
+              'an',
+              'of',
+              'on',
+              'in',
+              'with',
+              'and',
+              'to',
+              'for',
+              'piece',
+              'item',
+              'thing',
+              'object',
+              'small',
+              'large',
+              'big',
+              'tiny',
+              'white',
+              'black',
+              'red',
+              'blue',
+              'green',
+              'yellow',
+              'gray',
+              'grey',
+              'brown',
+              'tall',
+              'short',
+              'wide',
+            ]);
+            const tokens = (s) =>
+              (s || '')
+                .toLowerCase()
+                .split(/[^a-z0-9]+/)
+                .filter((t) => t && !STOPWORDS.has(t));
             const used = new Set();
             const findMatch = (text) => {
               const needle = text.toLowerCase();
               const free = detected.filter((d) => !used.has(d));
-              return (
+              const exact =
                 free.find((d) => d.label?.toLowerCase().includes(needle)) ||
                 free.find((d) =>
                   needle.includes(d.label?.toLowerCase() || '\0')
-                ) ||
-                free[0] ||
-                null
+                );
+              if (exact) return exact;
+              const wantTokens = new Set(tokens(text));
+              if (wantTokens.size === 0) return null;
+              return (
+                free.find((d) => {
+                  for (const t of tokens(d.label)) {
+                    if (wantTokens.has(t)) return true;
+                  }
+                  return false;
+                }) || null
               );
             };
+            const MAX_ANCHOR_DIST = 8;
+            const camForRange = xb.core.camera;
+            const camPosForRange = new THREE.Vector3();
+            if (camForRange) camForRange.getWorldPosition(camPosForRange);
+            const batchKey = `b${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
             const placed = [];
             list.forEach((item, i) => {
-              const match = findMatch(item.text);
+              let match = findMatch(item.text);
+              if (match && camForRange) {
+                const d = camPosForRange.distanceTo(match.position);
+                if (d > MAX_ANCHOR_DIST) {
+                  match = null;
+                }
+              }
               const itemStyle = item.style || 'dot';
               if (match) {
                 used.add(match);
                 placeMarker(
                   match.position,
                   match.label || item.text,
-                  itemStyle
+                  itemStyle,
+                  batchKey
                 );
                 placed.push({
                   placed: match.label,
@@ -399,7 +466,12 @@
                   anchored: true,
                 });
               } else {
-                placeMarker(fallbackPosition(i), item.text, itemStyle);
+                placeMarker(
+                  fallbackPosition(i),
+                  item.text,
+                  itemStyle,
+                  batchKey
+                );
                 placed.push({
                   placed: item.text,
                   requested: item.text,
@@ -442,18 +514,26 @@
         return [placeLabel, lookCloser];
       }
 
-      function placeMarker(position, text, style) {
+      function placeMarker(position, text, style, batchKey) {
         // Dedupe: same physical object should only get one label. Match by
-        // either same text (e.g. two "laptop" calls) OR by proximity (e.g.
-        // Gemini calls the same laptop "laptop" then "macbook" — both land
-        // in roughly the same spot).
+        // text (exact, contains, or contained), then by proximity. Skip
+        // labels added in the same batch — caller asked for multiple
+        // distinct items, so don't merge them with each other.
         const norm = (s) => (s || '').toLowerCase().trim();
         const key = norm(text);
-        let existing = labels.children.find(
-          (g) => norm(g.userData.text) === key
+        const candidates = labels.children.filter(
+          (g) => !batchKey || g.userData.batchKey !== batchKey
         );
+        let existing = candidates.find((g) => {
+          const other = norm(g.userData.text);
+          if (other === key) return true;
+          if (key && other && (other.includes(key) || key.includes(other))) {
+            return true;
+          }
+          return false;
+        });
         if (!existing) {
-          existing = labels.children.find(
+          existing = candidates.find(
             (g) => g.position.distanceTo(position) < 2.0
           );
         }
@@ -474,6 +554,7 @@
         group.userData.style = style;
         group.userData.text = text;
         group.userData.t0 = performance.now() / 1000;
+        group.userData.batchKey = batchKey;
         if (style === 'arrow') {
           const arrow = buildArrow();
           arrow.position.set(0, 0.25, 0);
@@ -542,8 +623,11 @@
         return ring;
       }
 
+      const _camWorldPos = new THREE.Vector3();
       function animateMarkers() {
         const now = performance.now() / 1000;
+        const cam = xb.core.camera;
+        if (cam) cam.getWorldPosition(_camWorldPos);
         for (const g of labels.children) {
           const dt = now - (g.userData.t0 || now);
           if (g.userData.style === 'arrow' && g.userData.arrow) {
@@ -553,6 +637,15 @@
             const s = 1 + phase * 3;
             g.userData.ring.scale.setScalar(s);
             g.userData.ring.material.opacity = 0.9 * (1 - phase);
+          }
+          if (cam) {
+            for (const c of g.children) {
+              if (typeof c.text === 'string') {
+                // Troika Text reads from its local -Z side, so aim that at
+                // the camera with a plain lookAt.
+                c.lookAt(_camWorldPos);
+              }
+            }
           }
         }
         requestAnimationFrame(animateMarkers);
@@ -566,13 +659,22 @@
         transcriptBuffer = '';
         transcriptEl.innerHTML = '';
         try {
+          // Clear any leftover labels from prior session to avoid stacking.
+          while (labels.children.length) {
+            const c = labels.children.pop();
+            c.traverse?.((n) => {
+              n.geometry?.dispose?.();
+              n.material?.dispose?.();
+            });
+            labels.remove(c);
+          }
           await xb.core.sound.enableAudio({streamToAI: true});
           session = await xb.core.world.streamScene(
             'You are a helpful AR companion. The user is wearing a headset ' +
               'and you receive their camera every second. Keep replies short ' +
-              'and conversational. Use placeLabel to mark things you see — ' +
-              'pass several items in one call when labelling multiple ' +
-              'objects. Use ' +
+              'and conversational. Only call placeLabel when the user ' +
+              'explicitly asks you to label, point to, or mark something — ' +
+              'never proactively label things you happen to see. Use ' +
               "lookCloser when the user asks about what they're pointing at.",
             {
               fps: 1,
@@ -638,7 +740,7 @@
       options.depth.matchDepthView = false;
       options.enableObjectDetection();
       options.world.objects.backendConfig.activeBackend = 'gemini';
-      options.world.objects.showDebugVisualizations = true;
+      options.world.objects.showDebugVisualizations = false;
       options.reticles.enabled = true;
       options.setAppTitle('World Companion');
 
