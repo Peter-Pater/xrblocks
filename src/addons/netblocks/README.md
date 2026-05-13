@@ -102,10 +102,13 @@ that isn't a recurring transform.
 
 ### VoiceChat + SpatialVoice
 
-WebRTC audio that piggybacks on the data plane for signaling. Audio is
-parented to each peer's `headPivot` via `THREE.PositionalAudio` so it
-spatializes naturally. Enable via `{voice: true}` in `joinRoom()` or
-`session.voice.enable(...)` later.
+WebRTC audio that piggybacks on the **active transport** for signaling
+(SDP/ICE flow as `voice` messages over whatever NetSession is using —
+BroadcastChannel, WebSocket, or WebRTC data channels). Audio itself
+always flows directly between browsers over a dedicated WebRTC peer
+connection, parented to each peer's `headPivot` via
+`THREE.PositionalAudio` so it spatializes naturally. Enable via
+`{voice: true}` in `joinRoom()` or `session.voice.enable(...)` later.
 
 ---
 
@@ -125,10 +128,12 @@ new BroadcastChannelTransport();
 Peer-to-peer using the public PeerJS broker for signaling. Audio and data
 flow directly between browsers, so latency is excellent. Limitations:
 
-- The public broker is best-effort — supply `signalingUrl` for production.
+- The public broker is best-effort and rate-limits aggressive reconnects;
+  supply your own `signalingUrl` (`npx peerjs --port 9000`) for anything
+  beyond local demos.
 - Without TURN, NAT traversal can fail across some networks. Pass
   `iceServers` to add TURN.
-- Full mesh — best for ≤ 6 participants.
+- Full mesh with a 12-slot pool — best for ≤ 12 participants.
 
 ```ts
 new WebRTCTransport({
@@ -192,7 +197,9 @@ See [`samples/SAMPLES.md`](./samples/SAMPLES.md). Highlights:
 - `samples/basic/presence` — see remote heads + hands.
 - `samples/basic/objects` — drag a shared cube; ownership transfers on grab.
 - `samples/basic/events` — broadcast emoji bursts via the RPC bus.
-- `samples/basic/voice` — push-to-talk spatial voice chat.
+- `samples/basic/voice` — push-to-talk spatial voice chat. WASD/mouse
+  (or gamepad sticks) to walk around in 2D; the headset's pose drives
+  it in XR.
 - `samples/basic/transports` — switch transports at runtime.
 - `samples/netblocks/index.html` — assembled "shared room" demo combining
   presence + objects + chat + voice.
@@ -215,9 +222,3 @@ See [`samples/SAMPLES.md`](./samples/SAMPLES.md). Highlights:
   smoothing so 20 Hz looks like 60 Hz.
 - **No CRDT.** Shared documents are out of scope. If you need them, layer
   Yjs or Automerge on top of `session.events.emit('crdt-update', ...)`.
-
----
-
-## License
-
-Apache-2.0 — same as xrblocks.
