@@ -7,7 +7,10 @@
  * and is wrapped in a `pose` envelope so transports can still treat the frame
  * as opaque bytes.
  */
-import {MAX_MESSAGE_BYTES, NET_PROTOCOL_VERSION} from '../constants/NetConstants';
+import {
+  MAX_MESSAGE_BYTES,
+  NET_PROTOCOL_VERSION,
+} from '../constants/NetConstants';
 
 export type NetMessage =
   | HelloMessage

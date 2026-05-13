@@ -148,7 +148,8 @@
           } catch (err) {
             console.error('[netblocks-sample] joinRoom failed:', err);
             const status = document.getElementById('peers');
-            if (status) status.textContent = `failed to join room: ${err.message ?? err}`;
+            if (status)
+              status.textContent = `failed to join room: ${err.message ?? err}`;
             return;
           }
           this._session = session;
@@ -260,7 +261,12 @@
         _renderPeers() {
           const el = document.getElementById('peers');
           el.innerHTML = '';
-          el.appendChild(this._peerRow('#9177c7', `${this._session.localPeerId.slice(0, 6)} (you)`));
+          el.appendChild(
+            this._peerRow(
+              '#9177c7',
+              `${this._session.localPeerId.slice(0, 6)} (you)`
+            )
+          );
           for (const [, user] of this._session.users) {
             const c = '#' + user.avatar.color.getHexString();
             const label = user.displayName ?? user.peerId.slice(0, 6);

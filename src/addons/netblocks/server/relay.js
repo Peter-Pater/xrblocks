@@ -32,7 +32,11 @@ const rooms = new Map(); // roomId -> Map<peerId, ws>
 
 // 64 KiB cap mirrors MAX_MESSAGE_BYTES on the client; relay never inspects
 // payloads but a hostile client could otherwise stream gigabytes.
-const wss = new WebSocketServer({host: HOST, port: PORT, maxPayload: 64 * 1024});
+const wss = new WebSocketServer({
+  host: HOST,
+  port: PORT,
+  maxPayload: 64 * 1024,
+});
 
 console.log(`[netblocks-relay] listening on ws://${HOST}:${PORT}`);
 
