@@ -207,7 +207,7 @@ See [`samples/SAMPLES.md`](./samples/SAMPLES.md). Highlights:
   (or gamepad sticks) to walk around in 2D; the headset's pose drives
   it in XR.
 - `samples/basic/transports` — switch transports at runtime.
-- `samples/netblocks/index.html` — assembled "shared room" demo combining
+- `src/addons/netblocks/samples/integration/` — assembled "shared room" demo combining
   presence + objects + chat + voice.
 
 ---
