@@ -5,9 +5,11 @@
  * calling `claim()`. The current owner is the only peer that broadcasts
  * authoritative transform updates; non-owners interpolate.
  *
- * Ownership is cooperative — there is no central arbiter, so two peers can
- * race to claim. We resolve races deterministically by preferring the lower
- * peer id (lex sort) on conflict.
+ * Ownership is cooperative — there is no central arbiter. Explicit claims
+ * always preempt the previous owner so users can hand off / steal objects;
+ * the only deterministic tiebreak left is for the rare case where two peers
+ * implicitly auto-own the same id at create-time (see NetSession's
+ * `netobject` handler), where the lex-smaller peer id wins.
  *
  * NetObjects are normal three.js Object3Ds; you can `.add()` any meshes to
  * them. Each frame, NetSession applies remote updates to the local
