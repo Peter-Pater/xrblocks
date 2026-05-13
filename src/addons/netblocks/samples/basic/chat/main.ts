@@ -1,5 +1,5 @@
 import * as xb from 'xrblocks';
-import {BroadcastChannelTransport} from 'netblocks';
+import {WebRTCTransport} from 'netblocks';
 import {NetSample} from '../../Sample';
 
 /**
@@ -7,8 +7,8 @@ import {NetSample} from '../../Sample';
  *
  * Plain text chat over `session.events`. Each message is one
  * `chat-message` RPC carrying `{ from, text, ts }`. Open this page in
- * two browser tabs to chat with yourself; everything is local thanks to
- * BroadcastChannelTransport.
+ * two tabs (or two devices) to chat — WebRTCTransport uses the public
+ * PeerJS broker so cross-device works out of the box.
  *
  * The chat UI is a small floating panel in the corner — kept entirely
  * in DOM so the sample reads cleanly. In a real XR app you'd likely
@@ -28,7 +28,7 @@ class ChatSample extends NetSample {
     return {
       roomId: 'netblocks-sample-chat',
       options: {
-        transport: new BroadcastChannelTransport(),
+        transport: new WebRTCTransport(),
         displayName: this._displayName,
       },
     };

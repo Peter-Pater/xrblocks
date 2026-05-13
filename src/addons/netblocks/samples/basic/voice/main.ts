@@ -1,18 +1,15 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
-import {BroadcastChannelTransport} from 'netblocks';
+import {WebRTCTransport} from 'netblocks';
 import {NetSample} from '../../Sample';
 
 /**
  * VoiceSample.
  *
- * Push-to-talk spatial voice chat. The audio itself always flows over
- * direct WebRTC peer connections (BroadcastChannel can't carry media),
- * but the WebRTC handshake (SDP/ICE) is signalled through whatever
- * transport NetSession is using — here, BroadcastChannel — so this
- * sample needs zero external infrastructure to run between two tabs.
- * Swap the transport for `WebRTCTransport` (or `WebSocketTransport`) to
- * test cross-machine.
+ * Push-to-talk spatial voice chat. The audio itself flows over direct
+ * WebRTC peer connections; the SDP/ICE handshake is signalled through
+ * NetSession's transport — here, WebRTCTransport via the public PeerJS
+ * broker — so this sample works cross-machine out of the box.
  *
  * The audio is parented to each remote user's avatar head, so as you walk
  * around (or in XR, as the speaker walks around), their voice pans
@@ -32,7 +29,7 @@ class VoiceSample extends NetSample {
     return {
       roomId: 'netblocks-sample-voice',
       options: {
-        transport: new BroadcastChannelTransport(),
+        transport: new WebRTCTransport(),
         displayName: `User-${Math.floor(Math.random() * 1000)}`,
       },
     };

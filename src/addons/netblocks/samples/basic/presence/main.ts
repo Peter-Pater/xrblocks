@@ -1,20 +1,22 @@
-import {BroadcastChannelTransport} from 'netblocks';
+import {WebRTCTransport} from 'netblocks';
 import {NetSample} from '../../Sample';
 
 /**
  * PresenceSample.
  *
  * The simplest possible netblocks demo: join a room and watch other peers'
- * heads + hands appear as default avatars. Open this page in two tabs to
- * see yourself across both — the head spheres render the simulator camera
- * pose, and any hand joints reported by WebXR appear as fingertip dots.
+ * heads + hands appear as default avatars. Open this page in two tabs (or
+ * two devices — WebRTCTransport uses the public PeerJS broker, so cross-
+ * device works out of the box) to see yourself across both — the head
+ * spheres render the simulator camera pose, and any hand joints reported
+ * by WebXR appear as fingertip dots.
  */
 class PresenceSample extends NetSample {
   protected getJoinOptions() {
     return {
       roomId: 'netblocks-sample-presence',
       options: {
-        transport: new BroadcastChannelTransport(),
+        transport: new WebRTCTransport(),
         displayName: `User-${Math.floor(Math.random() * 1000)}`,
       },
     };
