@@ -23,6 +23,7 @@ export interface SpatialVoiceOptions {
 export class SpatialVoice {
   readonly listener: THREE.AudioListener;
   private _byPeer = new Map<string, THREE.PositionalAudio>();
+  private _primersByPeer = new Map<string, HTMLAudioElement>();
   private _opts: Required<SpatialVoiceOptions>;
 
   constructor(camera: THREE.Camera, opts: SpatialVoiceOptions = {}) {
@@ -59,16 +60,44 @@ export class SpatialVoice {
       src
     );
 
+    // Chromium quirk: a MediaStreamAudioSourceNode built from a remote WebRTC
+    // stream stays silent unless the stream is also attached to an
+    // HTMLMediaElement that is actually playing. Attach a muted, off-DOM
+    // <audio> element to pump the stream's audio thread so the WebAudio
+    // graph above receives samples. See crbug.com/933677.
+    if (typeof document !== 'undefined') {
+      const primer = document.createElement('audio');
+      primer.muted = true;
+      primer.autoplay = true;
+      primer.srcObject = stream;
+      primer.play().catch(() => {
+        // ignore; user-gesture restrictions can defer playback, the stream
+        // will still pump once playback starts.
+      });
+      this._primersByPeer.set(peerId, primer);
+    }
+
     parent.add(audio);
     this._byPeer.set(peerId, audio);
   }
 
   detach(peerId: string): void {
     const audio = this._byPeer.get(peerId);
-    if (!audio) return;
-    audio.parent?.remove(audio);
-    audio.disconnect();
-    this._byPeer.delete(peerId);
+    if (audio) {
+      audio.parent?.remove(audio);
+      audio.disconnect();
+      this._byPeer.delete(peerId);
+    }
+    const primer = this._primersByPeer.get(peerId);
+    if (primer) {
+      try {
+        primer.pause();
+      } catch {
+        // ignore
+      }
+      primer.srcObject = null;
+      this._primersByPeer.delete(peerId);
+    }
   }
 
   dispose(): void {
