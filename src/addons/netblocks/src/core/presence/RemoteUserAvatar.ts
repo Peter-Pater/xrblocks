@@ -11,9 +11,27 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import {InterpolatedPose} from './InterpolatedPose';
-import {hashStringToHue} from '../utils/IdUtils';
+import {hashStringToIndex} from '../utils/IdUtils';
 
 const FINGERTIP_INDICES = [4, 9, 14, 19, 24]; // thumb-tip, index-tip, middle-tip, ring-tip, pinky-tip
+
+/**
+ * Eight well-separated colors so two peers in the same room are easy to
+ * tell apart at a glance. Hashing into a continuous hue space ended up
+ * producing peers with near-identical hues too often (e.g., two adjacent
+ * blues) — a discrete palette makes "who is who" obvious. Exported so
+ * apps can match other UI (chat sender names, etc.) to the avatar color.
+ */
+export const AVATAR_PALETTE: number[] = [
+  0xff5959, // red
+  0xffa64d, // orange
+  0xffd84d, // yellow
+  0x5ad17a, // green
+  0x4dc3ff, // cyan
+  0x6a8cff, // blue
+  0xb066ff, // purple
+  0xff66c4, // pink
+];
 
 export interface RemoteUserAvatarOptions {
   peerId: string;
@@ -67,8 +85,8 @@ export class RemoteUserAvatar extends THREE.Group {
     this.peerId = opts.peerId;
     this._displayName = opts.displayName;
 
-    const hue = hashStringToHue(opts.peerId);
-    this.color = new THREE.Color().setHSL(hue, 0.65, 0.55);
+    const paletteIdx = hashStringToIndex(opts.peerId, AVATAR_PALETTE.length);
+    this.color = new THREE.Color(AVATAR_PALETTE[paletteIdx]);
 
     this.add(this.headPivot, this.handPivots[0], this.handPivots[1]);
 

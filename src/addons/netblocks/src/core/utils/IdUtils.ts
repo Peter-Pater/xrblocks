@@ -39,3 +39,17 @@ export function hashStringToHue(input: string): number {
   }
   return (h >>> 0) / 0xffffffff;
 }
+
+/**
+ * Map a string to a stable index in [0, modulo). Same hash family as
+ * `hashStringToHue` so callers get deterministic-across-reloads bucketing
+ * (e.g. picking a per-peer color from a fixed palette).
+ */
+export function hashStringToIndex(input: string, modulo: number): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % modulo;
+}
