@@ -10,6 +10,15 @@ export const DEFAULT_ROOM_ID = 'xrblocks-default-room';
 /** Frequency at which the local presence is broadcast (Hz). */
 export const DEFAULT_PRESENCE_HZ = 20;
 
+/**
+ * Render delay for remote pose interpolation, in milliseconds. Receivers
+ * sample InterpolatedPose at `now - PRESENCE_RENDER_DELAY_MS` so there is
+ * always a buffered next snapshot beyond the render time, which keeps
+ * interpolation in the (0, 1] range instead of constantly extrapolating.
+ * Sized at ~1.5 packet intervals at the default 20Hz cadence.
+ */
+export const PRESENCE_RENDER_DELAY_MS = 75;
+
 /** Frequency at which net object transforms are broadcast (Hz). */
 export const DEFAULT_NETOBJECT_HZ = 20;
 

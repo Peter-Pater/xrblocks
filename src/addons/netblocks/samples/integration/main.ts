@@ -47,6 +47,7 @@ class IntegrationSample extends NetSample {
   } | null = null;
   private _voiceOn = false;
   private _log?: HTMLDivElement;
+  private _chatPanel?: HTMLDivElement;
   // Last canvas-relative pointer position (NDC space), used to bypass
   // the platform mouse raycaster (which has been returning intersections
   // mirrored around the origin in this sample) and pick cubes ourselves
@@ -339,7 +340,7 @@ class IntegrationSample extends NetSample {
     const panel = document.createElement('div');
     Object.assign(panel.style, {
       position: 'fixed',
-      bottom: '20px',
+      top: '20px',
       right: '20px',
       width: '320px',
       maxHeight: '60vh',
@@ -372,6 +373,7 @@ class IntegrationSample extends NetSample {
     });
     panel.appendChild(log);
     this._log = log;
+    this._chatPanel = panel;
 
     const inputRow = document.createElement('form');
     Object.assign(inputRow.style, {
@@ -457,20 +459,17 @@ class IntegrationSample extends NetSample {
     const btn = document.createElement('button');
     btn.textContent = '🎙️ Enable voice';
     Object.assign(btn.style, {
-      position: 'fixed',
-      bottom: '24px',
-      left: '50%',
-      transform: 'translateX(-50%)',
-      padding: '10px 18px',
+      marginTop: '8px',
+      padding: '8px 14px',
       background: '#9177c7',
       color: '#fff',
       border: 'none',
       borderRadius: '20px',
-      fontSize: '14px',
+      fontSize: '13px',
       cursor: 'pointer',
-      zIndex: '999',
+      alignSelf: 'flex-start',
     } as Partial<CSSStyleDeclaration>);
-    document.body.appendChild(btn);
+    (this._chatPanel ?? document.body).appendChild(btn);
     btn.addEventListener('click', async () => {
       if (this._voiceOn) {
         session.voice.disable();

@@ -62,15 +62,25 @@ class ObjectsSample extends NetSample {
   private _tryGrab(controller: THREE.Object3D) {
     const session = this.net.session;
     if (!this._cube || !session) return;
-    // Naive: only grab if the controller's pointer ray is within reach of the cube.
+    // Pick the cube if the controller's forward ray passes within ~one
+    // cube radius of its center. A naive "controller within 0.6m of the
+    // cube" check would never grab in the simulator, where the controller
+    // sits at the head pose ~1m away from the cube.
+    controller.updateMatrixWorld();
+    const origin = new THREE.Vector3();
+    controller.getWorldPosition(origin);
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(
+      controller.getWorldQuaternion(new THREE.Quaternion())
+    );
     const cubeWorld = new THREE.Vector3();
     this._cube.getWorldPosition(cubeWorld);
-    const ctrlWorld = new THREE.Vector3();
-    controller.getWorldPosition(ctrlWorld);
-    if (cubeWorld.distanceTo(ctrlWorld) > 0.6) return;
+    const along = cubeWorld.clone().sub(origin).dot(dir);
+    if (along <= 0) return;
+    const closest = origin.clone().add(dir.clone().multiplyScalar(along));
+    if (closest.distanceTo(cubeWorld) > 0.15) return;
 
     session.claim(this._cube);
-    const offset = cubeWorld.clone().sub(ctrlWorld);
+    const offset = cubeWorld.clone().sub(origin);
     const quat = this._cube.quaternion.clone();
     this._grab = {controller, offset, quat};
   }

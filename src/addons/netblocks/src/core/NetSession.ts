@@ -36,6 +36,7 @@ import {base64ToBytes, decodePose} from './codec/PoseCodec';
 import {
   DEFAULT_NETOBJECT_HZ,
   NET_PROTOCOL_VERSION,
+  PRESENCE_RENDER_DELAY_MS,
 } from './constants/NetConstants';
 import {NetObject} from './objects/NetObject';
 import {NetObjectRegistry} from './objects/NetObjectRegistry';
@@ -258,9 +259,12 @@ export class NetSession extends EventTarget {
     // Outbound presence.
     this.presence.update(now);
 
-    // Smooth remote avatars.
+    // Smooth remote avatars. Sample slightly in the past so we always
+    // interpolate between two received snapshots that bracket render time
+    // (instead of extrapolating from the most recent one alone).
+    const renderTime = now - PRESENCE_RENDER_DELAY_MS;
     for (const [, user] of this._users) {
-      user.avatar.applyPose(now);
+      user.avatar.applyPose(renderTime);
     }
 
     // Replicated objects.
@@ -444,7 +448,12 @@ export class NetSession extends EventTarget {
       case 'pose':
         try {
           const snap = decodePose(base64ToBytes(msg.data));
-          user.avatar.pose.push(snap, msg.ts ?? performance.now());
+          // Stamp with receive-time, not sender ts. Sender and receiver
+          // performance.now() origins are independent (per-tab), so using
+          // msg.ts would mix two unrelated clocks and degenerate the
+          // interpolation factor toward 1 (snap-to-latest), producing
+          // visible chop even on the same machine.
+          user.avatar.pose.push(snap, performance.now());
         } catch (err) {
           console.warn('[netblocks] failed to decode pose:', err);
         }
