@@ -45,12 +45,38 @@ export abstract class NetSample extends xb.Script {
       options = {...options, transport: new WebRTCTransport()};
     }
     buildRoomCodeHud(code);
+    if (code) this._buildXrRoomCodePanel(code);
     try {
       const session = await this.net.joinRoom(roomId, options);
       this.onSession(session);
     } catch (err) {
       console.error('[netblocks/sample] failed to join room:', err);
     }
+  }
+
+  private _buildXrRoomCodePanel(code: string) {
+    // Tiny SpatialPanel that mirrors the DOM HUD's room code into
+    // immersive XR, so a headset user can read the code back to a
+    // friend without leaving VR. Positioned up-right of forward so
+    // it doesn't fight per-sample HUDs (which typically anchor left
+    // or below).
+    const panel = new xb.SpatialPanel({
+      width: 0.4,
+      height: 0.12,
+      backgroundColor: '#1a1a2add',
+    });
+    panel
+      .addGrid()
+      .addRow()
+      .addText({
+        text: `Room  ${code}`,
+        fontSize: 0.05,
+        fontColor: '#7be3a4',
+        textAlign: 'center',
+      });
+    panel.position.set(0.8, 1.9, -1.5);
+    panel.rotation.y = -Math.PI / 8;
+    this.add(panel);
   }
 
   static run<T extends NetSample>(ctor: new () => T) {
