@@ -1,3 +1,4 @@
+export * from './enableNet';
 export * from './NetCore';
 export * from './NetSession';
 export * from './NetUser';

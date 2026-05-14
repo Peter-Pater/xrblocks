@@ -31,15 +31,14 @@ voice on top.** Swap transports without changing app code.
 ```ts
 import * as xb from 'xrblocks';
 import {
-  NetCore,
+  enableNet,
   BroadcastChannelTransport,
 } from 'xrblocks/addons/netblocks/src';
 
 class MyApp extends xb.Script {
-  net = new NetCore(this);
-
   async init() {
-    const session = await this.net.joinRoom('my-room', {
+    const net = enableNet();
+    const session = await net.joinRoom('my-room', {
       transport: new BroadcastChannelTransport(),
       displayName: 'Alice',
     });
@@ -47,10 +46,6 @@ class MyApp extends xb.Script {
     session.events.on('chat', (text, fromPeerId) => {
       console.log(`${fromPeerId}: ${text}`);
     });
-  }
-
-  update(time, frame) {
-    this.net.update(time, frame);
   }
 }
 
@@ -69,39 +64,34 @@ also gets two stick-figure hands.
 
 Adding netblocks to an existing scene is small. The pattern is:
 
-1. Construct a `NetCore` as a child of your root `xb.Script`.
-2. `await net.joinRoom(...)` in `init()`.
-3. Call `net.update(t, frame)` from your `update()`.
+1. Call `enableNet()` once after `xb.init()` (e.g. from your script's `init()`).
+2. `await xb.core.net.joinRoom(...)`.
 
-That's enough to get remote head/hand avatars rendered into your scene. From
-there you wrap any `Object3D` you want shared in a `NetObject` and add it to
-`net.session.netObjects`, and use `net.session.events` for chat / cursor
-pings / button presses.
+That's it — `xb.core.net` ticks on the standard xrblocks frame loop, so
+there's no `update()` to wire up. From there you wrap any `Object3D` you
+want shared in a `NetObject` and add it to `xb.core.net.session.netObjects`,
+and use `xb.core.net.session.events` for chat / cursor pings / button
+presses.
 
 Concretely, taking the standard xb starter:
 
 ```diff
  import * as xb from 'xrblocks';
-+import {NetCore, WebRTCTransport} from 'xrblocks/addons/netblocks/src/index.js';
++import {enableNet, NetObject, WebRTCTransport} from 'xrblocks/addons/netblocks/src/index.js';
 
  class App extends xb.Script {
    cube = new THREE.Mesh(/* ... */);
-+  net = new NetCore(this);
 +  sharedCube = new NetObject({id: 'cube', object: this.cube});
 
    async init() {
      this.add(this.cube);
-+    await this.net.joinRoom('demo', {
++    const net = enableNet();
++    await net.joinRoom('demo', {
 +      transport: new WebRTCTransport(),
 +      displayName: 'Alice',
 +    });
-+    this.net.session?.netObjects.add(this.sharedCube);
++    net.session?.netObjects.add(this.sharedCube);
    }
-
--  update(t, frame) {}
-+  update(t, frame) {
-+    this.net.update(t, frame);
-+  }
  }
 ```
 

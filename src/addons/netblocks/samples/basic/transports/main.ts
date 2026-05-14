@@ -1,6 +1,7 @@
 import * as xb from 'xrblocks';
 import {
   BroadcastChannelTransport,
+  enableNet,
   NetCore,
   Transport,
   WebRTCTransport,
@@ -16,16 +17,16 @@ import {
  * session down and starts a new one in-place.
  */
 class TransportsSample extends xb.Script {
-  net = new NetCore(this);
+  net!: NetCore;
   private _peerCountEl?: HTMLSpanElement;
   private _statusEl?: HTMLSpanElement;
 
   async init() {
+    this.net = enableNet();
     this._buildHud();
   }
 
-  update(time?: number, frame?: XRFrame) {
-    this.net.update(time, frame);
+  update() {
     if (this._peerCountEl && this.net.session) {
       this._peerCountEl.textContent = String(this.net.session.users.size);
     }

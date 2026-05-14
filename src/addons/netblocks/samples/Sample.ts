@@ -1,22 +1,16 @@
 import * as xb from 'xrblocks';
 import 'xrblocks/addons/simulator/SimulatorAddons.js';
-import {NetCore, JoinRoomOptions} from 'netblocks';
+import {enableNet, JoinRoomOptions, NetCore} from 'netblocks';
 
 /**
- * Base class for netblocks samples. Wires up an xrblocks app, exposes a
- * NetCore on `this.net`, and forwards `update()` so sample subclasses
- * never have to remember to drive the network tick.
- *
- * Subclasses implement `getJoinOptions()` to choose a transport and
- * `onSession(session)` to attach app-level listeners.
+ * Base class for netblocks samples. Wires up an xrblocks app and joins a
+ * room via `xb.enableNet()`. Subclasses implement `getJoinOptions()` to
+ * choose a transport and `onSession(session)` to attach app-level
+ * listeners. The frame loop is driven by xrblocks itself — there's no
+ * `update()` to override.
  */
 export abstract class NetSample extends xb.Script {
-  net: NetCore;
-
-  constructor() {
-    super();
-    this.net = new NetCore(this);
-  }
+  net!: NetCore;
 
   /** Return the room name + transport. Called once during `init`. */
   protected abstract getJoinOptions(): {
@@ -28,6 +22,7 @@ export abstract class NetSample extends xb.Script {
   protected onSession(_session: NonNullable<NetCore['session']>): void {}
 
   async init() {
+    this.net = enableNet();
     const {roomId, options} = this.getJoinOptions();
     try {
       const session = await this.net.joinRoom(roomId, options);
@@ -35,10 +30,6 @@ export abstract class NetSample extends xb.Script {
     } catch (err) {
       console.error('[netblocks/sample] failed to join room:', err);
     }
-  }
-
-  update(time?: number, frame?: XRFrame) {
-    this.net.update(time, frame);
   }
 
   static run<T extends NetSample>(ctor: new () => T) {

@@ -1,34 +1,32 @@
-/**
- * NetCore: the public entry point for the netblocks addon. It mirrors the
- * shape of `UICore` from uiblocks: a single object you instantiate from
- * your root xrblocks Script, then call `joinRoom()` on to connect.
- *
- * Typical usage:
- *
- * ```ts
- * class App extends xb.Script {
- *   net = new NetCore(this);
- *   async init() {
- *     await this.net.joinRoom('demo', {
- *       transport: new BroadcastChannelTransport(),
- *       displayName: 'Alice',
- *     });
- *     this.net.session?.events.on('chat', (text) => console.log(text));
- *   }
- *   update(time, frame) {
- *     this.net.update(time, frame);
- *   }
- * }
- * ```
- *
- * NetCore is intentionally a single-room facade — you can hold multiple
- * sessions at once if you really need to, but in practice an XR app
- * almost always belongs to exactly one room at a time.
- */
 import * as THREE from 'three';
+
 import {NetSession, NetSessionOptions} from './NetSession';
 import {Transport} from './transport/Transport';
 
+/**
+ * NetCore is the public entry point for the netblocks addon. The easiest
+ * way to use it is `xb.enableNet()`, which constructs one for you and
+ * wires its per-frame `update()` into the host xrblocks frame loop —
+ * after that you just call `xb.core.net.joinRoom(...)`.
+ *
+ * For advanced setups (e.g. multiple concurrent rooms) you can construct
+ * a NetCore directly with your own root and tick `update()` yourself.
+ *
+ * ```ts
+ * import * as xb from 'xrblocks';
+ * import {enableNet, BroadcastChannelTransport} from 'netblocks';
+ *
+ * class App extends xb.Script {
+ *   async init() {
+ *     const net = enableNet();
+ *     await net.joinRoom('demo', {
+ *       transport: new BroadcastChannelTransport(),
+ *       displayName: 'Alice',
+ *     });
+ *   }
+ * }
+ * ```
+ */
 export interface JoinRoomOptions extends NetSessionOptions {
   /** Required: the transport to use. */
   transport: Transport;
@@ -37,9 +35,13 @@ export interface JoinRoomOptions extends NetSessionOptions {
 export class NetCore {
   /** The currently active session, or undefined when not joined. */
   session?: NetSession;
-
   private _root: THREE.Object3D;
 
+  /**
+   * @param root - The Object3D under which remote-user avatars are added.
+   *   Usually your app's root xb.Script. When using `enableNet()`, this is
+   *   the xrblocks scene.
+   */
   constructor(root: THREE.Object3D) {
     this._root = root;
   }
@@ -59,7 +61,7 @@ export class NetCore {
     this.session = undefined;
   }
 
-  /** Per-frame tick. Call from your xb.Script's `update()`. */
+  /** Per-frame tick. Driven automatically when registered via `enableNet()`. */
   update(time?: number, frame?: XRFrame): void {
     this.session?.update(time, frame);
   }
