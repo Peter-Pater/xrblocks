@@ -38,6 +38,16 @@ interface ChatPayload {
   ts: number;
 }
 
+interface BurstPayload {
+  x: number;
+  y: number;
+  z: number;
+  hue: number;
+}
+
+const PARTICLES_PER_BURST = 24;
+const BURST_LIFETIME_MS = 1200;
+
 class IntegrationSample extends NetSample {
   private _displayName = `User-${Math.floor(Math.random() * 1000)}`;
   private _cubes: NetObject[] = [];
@@ -68,6 +78,11 @@ class IntegrationSample extends NetSample {
   private _ndc = new THREE.Vector2(-2, -2);
   private _mouseDown = false;
   private _mouseRaycaster = new THREE.Raycaster();
+  private _bursts: Array<{
+    points: THREE.Points;
+    velocities: Float32Array;
+    bornAt: number;
+  }> = [];
 
   protected getJoinOptions() {
     return {
@@ -90,6 +105,7 @@ class IntegrationSample extends NetSample {
     this._buildChatPanel(session);
     this._buildVoiceButton(session);
     this._buildSpatialHud(session);
+    this._wireBursts(session);
   }
 
   // Track the canvas-relative cursor in NDC and our own mousedown
@@ -125,6 +141,7 @@ class IntegrationSample extends NetSample {
     super.update(time, frame);
     const session = this.net.session;
     if (session) this._tickDrag(session);
+    this._stepBursts();
   }
 
   // ---- Shared cubes ------------------------------------------------------
@@ -612,6 +629,101 @@ class IntegrationSample extends NetSample {
       await this._toggleVoice(session);
       btn.textContent = this._voiceOn ? '🔇 Disable voice' : '🎙️ Enable voice';
     });
+  }
+
+  // ---- Emoji burst RPC ---------------------------------------------------
+  // Press 'B' (or trigger an XR select on empty space) to fire a particle
+  // puff that every peer sees. Demonstrates the typed events bus same as
+  // the basic events sample, but here so the integration demo also shows
+  // a visible RPC alongside chat and shared cubes.
+
+  private _wireBursts(session: NonNullable<this['net']['session']>) {
+    session.events.on<BurstPayload>('emoji-burst', (p) => this._spawnBurst(p));
+    const fire = (origin: THREE.Vector3) => {
+      const payload: BurstPayload = {
+        x: origin.x,
+        y: origin.y,
+        z: origin.z,
+        hue: Math.random(),
+      };
+      session.events.emit('emoji-burst', payload);
+      this._spawnBurst(payload);
+    };
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'b' && e.key !== 'B') return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+      const cam = xb.core?.camera;
+      if (!cam) return;
+      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+      fire(cam.position.clone().add(fwd.multiplyScalar(1.2)));
+    });
+    // Quest grip button (squeeze) on either controller fires a burst from
+    // the controller's tip — separate from the trigger so it doesn't
+    // collide with cube drag (which uses select).
+    xb.core?.input?.bindSqueezeStart?.((event) => {
+      const ctrl = event.target as THREE.Object3D | undefined;
+      if (!ctrl) return;
+      fire(ctrl.getWorldPosition(new THREE.Vector3()));
+    });
+  }
+
+  private _spawnBurst(p: BurstPayload) {
+    const positions = new Float32Array(PARTICLES_PER_BURST * 3);
+    const velocities = new Float32Array(PARTICLES_PER_BURST * 3);
+    for (let i = 0; i < PARTICLES_PER_BURST; i++) {
+      positions[i * 3] = p.x;
+      positions[i * 3 + 1] = p.y;
+      positions[i * 3 + 2] = p.z;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      const speed = 0.4 + Math.random() * 0.4;
+      velocities[i * 3] = speed * Math.sin(phi) * Math.cos(theta);
+      velocities[i * 3 + 1] = speed * Math.cos(phi) + 0.4;
+      velocities[i * 3 + 2] = speed * Math.sin(phi) * Math.sin(theta);
+    }
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const color = new THREE.Color().setHSL(p.hue, 0.85, 0.6);
+    const mat = new THREE.PointsMaterial({
+      color,
+      size: 0.04,
+      transparent: true,
+    });
+    const points = new THREE.Points(geom, mat);
+    this.add(points);
+    this._bursts.push({points, velocities, bornAt: performance.now()});
+  }
+
+  private _stepBursts() {
+    const now = performance.now();
+    const dt = 1 / 60;
+    for (let i = this._bursts.length - 1; i >= 0; i--) {
+      const b = this._bursts[i];
+      const age = now - b.bornAt;
+      if (age > BURST_LIFETIME_MS) {
+        this.remove(b.points);
+        b.points.geometry.dispose();
+        (b.points.material as THREE.Material).dispose();
+        this._bursts.splice(i, 1);
+        continue;
+      }
+      const pos = b.points.geometry.getAttribute(
+        'position'
+      ) as THREE.BufferAttribute;
+      for (let j = 0; j < pos.count; j++) {
+        pos.setXYZ(
+          j,
+          pos.getX(j) + b.velocities[j * 3] * dt,
+          pos.getY(j) + b.velocities[j * 3 + 1] * dt - 0.6 * dt,
+          pos.getZ(j) + b.velocities[j * 3 + 2] * dt
+        );
+        b.velocities[j * 3 + 1] -= 1.5 * dt;
+      }
+      pos.needsUpdate = true;
+      (b.points.material as THREE.PointsMaterial).opacity =
+        1 - age / BURST_LIFETIME_MS;
+    }
   }
 }
 
