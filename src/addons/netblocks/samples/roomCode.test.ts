@@ -1,6 +1,10 @@
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
-import {generateRoomCode, getRoomCodeFromUrl} from './roomCode';
+import {
+  buildRoomCodeHud,
+  generateRoomCode,
+  getRoomCodeFromUrl,
+} from './roomCode';
 
 describe('roomCode helpers', () => {
   const originalSearch = window.location.search;
@@ -47,6 +51,56 @@ describe('roomCode helpers', () => {
         const code = generateRoomCode();
         expect(code).toMatch(allowed);
       }
+    });
+  });
+
+  describe('buildRoomCodeHud', () => {
+    afterEach(() => {
+      document.body.innerHTML = '';
+    });
+
+    it('renders the disconnected HUD with Start + Join controls when code is null', () => {
+      buildRoomCodeHud(null);
+      const text = document.body.textContent ?? '';
+      expect(text).toContain('Local mode');
+      expect(text).toContain('Start new room');
+      expect(text).toContain('Join');
+      expect(document.querySelector('input[placeholder="CODE"]')).toBeTruthy();
+    });
+
+    it('renders the connected HUD with the code, Copy code, and Leave', () => {
+      buildRoomCodeHud('ABCD');
+      const text = document.body.textContent ?? '';
+      expect(text).toContain('ABCD');
+      expect(text).toContain('Copy code');
+      expect(text).toContain('Leave');
+    });
+
+    it('anchors the HUD top-left so it does not collide with top-right sample UI', () => {
+      buildRoomCodeHud('ABCD');
+      const root = document.body.firstElementChild as HTMLElement;
+      expect(root.style.position).toBe('fixed');
+      expect(root.style.top).toBe('48px');
+      expect(root.style.left).toBe('12px');
+      expect(root.style.right).toBe('');
+    });
+
+    it('Copy code button writes the code (not the URL) to the clipboard', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: {writeText},
+      });
+
+      buildRoomCodeHud('WXYZ');
+      const buttons = Array.from(
+        document.querySelectorAll('button')
+      ) as HTMLButtonElement[];
+      const copyBtn = buttons.find((b) => b.textContent?.includes('Copy code'));
+      expect(copyBtn).toBeTruthy();
+      copyBtn!.click();
+      await Promise.resolve();
+      expect(writeText).toHaveBeenCalledWith('WXYZ');
     });
   });
 });
