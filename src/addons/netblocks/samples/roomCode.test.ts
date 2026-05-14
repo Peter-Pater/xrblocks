@@ -76,13 +76,13 @@ describe('roomCode helpers', () => {
       expect(text).toContain('Leave');
     });
 
-    it('anchors the HUD top-left so it does not collide with top-right sample UI', () => {
+    it('anchors the HUD top-left below the sample HUD so they do not overlap', () => {
       buildRoomCodeHud('ABCD');
       const root = document.body.firstElementChild as HTMLElement;
       expect(root.style.position).toBe('fixed');
-      expect(root.style.top).toBe('48px');
+      expect(root.style.top).toBe('90px');
       expect(root.style.left).toBe('12px');
-      expect(root.style.right).toBe('');
+      expect(root.style.bottom).toBe('');
     });
 
     it('Copy code button writes the code (not the URL) to the clipboard', async () => {

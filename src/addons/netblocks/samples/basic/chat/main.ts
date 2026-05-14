@@ -10,8 +10,8 @@ import {NetSample} from '../../Sample';
  * `chat-message` RPC carrying `{ from, text, ts }`. Open this page in
  * two tabs to chat — `BroadcastChannelTransport` keeps the demo
  * self-contained with no signaling broker. To play with friends across
- * devices, click "Start new room" in the top-right HUD and share the
- * link; the framework swaps in `WebRTCTransport` automatically.
+ * devices, click "Start new room" in the top-left HUD and share the
+ * code; the framework swaps in `WebRTCTransport` automatically.
  *
  * The chat UI lives in two places:
  *   - a small floating DOM panel for desktop / pre-XR;

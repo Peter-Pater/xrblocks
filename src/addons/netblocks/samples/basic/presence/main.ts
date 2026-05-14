@@ -9,8 +9,8 @@ import {NetSample} from '../../Sample';
  * hand tracking). Open this page in two tabs to see yourself across
  * both — the head spheres render the simulator camera pose, and any
  * hand joints reported by WebXR appear as fingertip dots. To play with
- * friends across devices, click "Start new room" in the top-right HUD
- * and share the link.
+ * friends across devices, click "Start new room" in the top-left HUD
+ * and share the code.
  */
 class PresenceSample extends NetSample {
   protected getJoinOptions() {

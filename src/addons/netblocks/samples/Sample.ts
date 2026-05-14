@@ -13,7 +13,7 @@ import {buildRoomCodeHud, getRoomCodeFromUrl} from './roomCode';
  *
  * If the page URL has `?room=ABCD`, this base class overrides the
  * default transport with `WebRTCTransport` and suffixes the room id
- * with the code, so anyone arriving via the same shareable link lands
+ * with the code, so anyone arriving with the same code lands
  * in the same mesh. A small DOM HUD exposes "Start new room" / "Join
  * code" controls — both navigate to a new URL and reload, so we never
  * have to tear a live session down in-place. The frame loop is driven

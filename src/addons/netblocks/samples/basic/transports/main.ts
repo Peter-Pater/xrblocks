@@ -36,9 +36,8 @@ class TransportsSample extends xb.Script {
     const root = document.createElement('div');
     Object.assign(root.style, {
       position: 'fixed',
-      bottom: '20px',
-      left: '50%',
-      transform: 'translateX(-50%)',
+      top: '12px',
+      right: '12px',
       padding: '14px 18px',
       background: 'rgba(20,20,30,0.85)',
       color: '#eee',

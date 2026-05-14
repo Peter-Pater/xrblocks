@@ -91,8 +91,8 @@ class IntegrationSample extends NetSample {
       options: {
         // BroadcastChannel keeps the showcase self-contained: open the page
         // in two tabs and they see each other with no signaling broker. To
-        // play across devices, click "Start new room" in the top-right HUD
-        // and share the link — the framework swaps in WebRTCTransport.
+        // play across devices, click "Start new room" in the top-left HUD
+        // and share the code — the framework swaps in WebRTCTransport.
         transport: new BroadcastChannelTransport(),
         displayName: this._displayName,
       },

@@ -4,7 +4,7 @@
  * The samples default to `BroadcastChannelTransport` (two tabs, same
  * browser, no signaling). When the URL has `?room=ABCD` we suffix the
  * sample's roomId with the code and use `WebRTCTransport` so friends
- * with the same link land in the same mesh. The DOM HUD lets a visitor
+ * with the same code land in the same mesh. The DOM HUD lets a visitor
  * spin up a fresh code, type one a friend sent them, copy the share
  * link, or leave back to local mode. All transitions are done via a
  * page reload — the URL is the source of truth, so we never have to
@@ -46,7 +46,7 @@ export function buildRoomCodeHud(currentCode: string | null) {
   const root = document.createElement('div');
   Object.assign(root.style, {
     position: 'fixed',
-    top: '48px',
+    top: '90px',
     left: '12px',
     padding: '12px 14px',
     background: 'rgba(20,20,30,0.85)',
