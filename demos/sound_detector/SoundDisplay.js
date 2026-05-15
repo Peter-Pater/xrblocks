@@ -139,7 +139,7 @@ export class SoundDisplay extends xb.Script {
       // Get forward direction
       const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion);
 
-      // Position card 1.0m in front of camera (matching original code behavior)
+      // Position card 1.0m in front of camera.
       this.hudCard.position.copy(position).addScaledVector(forward, 1.0);
       this.hudCard.quaternion.copy(quaternion);
     }
