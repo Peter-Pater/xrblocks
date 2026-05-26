@@ -92,7 +92,7 @@ code below:
       import * as xb from 'xrblocks';
 
       /**
-       * A basic example of XRBlocks to render a cylinder and pinch to change its color.
+       * A basic example of XR Blocks to render a cylinder and pinch to change its color.
        */
       class MainScript extends xb.Script {
         init() {

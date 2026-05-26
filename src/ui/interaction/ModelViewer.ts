@@ -72,6 +72,7 @@ export class ModelViewer extends Script implements Draggable {
     scene: THREE.Scene,
     renderer: THREE.WebGLRenderer,
     registry: Registry,
+    timer: THREE.Timer,
   };
 
   draggable = true;
@@ -85,7 +86,7 @@ export class ModelViewer extends Script implements Draggable {
   clipActions: THREE.AnimationAction[] = [];
 
   private data?: GLTFData | SplatData;
-  private clock = new THREE.Clock();
+  private timer!: THREE.Timer;
   private animationMixer?: THREE.AnimationMixer;
   private gltfMesh?: GLTF;
   private splatMesh?: SplatMesh;
@@ -121,18 +122,21 @@ export class ModelViewer extends Script implements Draggable {
     scene,
     renderer,
     registry,
+    timer,
   }: {
     camera: THREE.Camera;
     depth: Depth;
     scene: THREE.Scene;
     renderer: THREE.WebGLRenderer;
     registry: Registry;
+    timer: THREE.Timer;
   }) {
     this.camera = camera;
     this.depth = depth;
     this.scene = scene;
     this.renderer = renderer;
     this.registry = registry;
+    this.timer = timer;
 
     for (const shader of this.occludableShaders) {
       this.depth!.occludableShaders.add(shader);
@@ -424,7 +428,7 @@ export class ModelViewer extends Script implements Draggable {
   }
 
   update() {
-    const delta = this.clock.getDelta();
+    const delta = this.timer.getDelta();
     if (this.animationMixer) {
       this.animationMixer.update(delta);
     }

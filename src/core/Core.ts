@@ -65,7 +65,7 @@ export class Core {
   registry = new Registry();
 
   /**
-   * A clock for tracking time deltas. Call clock.getDeltaTime().
+   * A timer for tracking time deltas. Call timer.getDelta() or getDeltaTime().
    */
   timer = new THREE.Timer();
 
