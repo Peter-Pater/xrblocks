@@ -9,6 +9,102 @@ const AXES = [
   {axis: 'y', label: 'Y', description: 'Abduction/adduction'},
   {axis: 'z', label: 'Z', description: 'Twist'},
 ];
+const DEG_TO_RAD = Math.PI / 180;
+const MIN_DEGREES = -180;
+const MAX_DEGREES = 180;
+const ROTATION_JOINT_NAMES = xb.HAND_JOINT_NAMES.filter(
+  (jointName) => !jointName.endsWith('-tip')
+);
+
+function clampDegrees(value) {
+  return Math.min(MAX_DEGREES, Math.max(MIN_DEGREES, value));
+}
+
+function toFixedNumber(value) {
+  return Number(value.toFixed(6));
+}
+
+function cleanRotationsForJson(rotations) {
+  const cleanRotations = {};
+  for (const jointName of ROTATION_JOINT_NAMES) {
+    const rotation = rotations[jointName] ?? {};
+    cleanRotations[jointName] = [
+      toFixedNumber(rotation.x ?? 0),
+      toFixedNumber(rotation.y ?? 0),
+      toFixedNumber(rotation.z ?? 0),
+    ];
+  }
+  return cleanRotations;
+}
+
+function cleanJointsForJson(joints) {
+  return joints.map((joint) => ({
+    t: joint.t.map(toFixedNumber),
+    r: joint.r.map(toFixedNumber),
+    s: (joint.s ?? [1, 1, 1]).map(toFixedNumber),
+  }));
+}
+
+function formatJson(value) {
+  return formatJsonValue(value);
+}
+
+function formatJsonValue(value, indentLevel = 0) {
+  const indent = '  '.repeat(indentLevel);
+  const childIndent = '  '.repeat(indentLevel + 1);
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '[]';
+    if (value.every((item) => item === null || typeof item !== 'object')) {
+      return `[${value.map((item) => JSON.stringify(item)).join(', ')}]`;
+    }
+    return [
+      '[',
+      value
+        .map(
+          (item) => `${childIndent}${formatJsonValue(item, indentLevel + 1)}`
+        )
+        .join(',\n'),
+      `${indent}]`,
+    ].join('\n');
+  }
+
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value);
+    if (entries.length === 0) return '{}';
+    return [
+      '{',
+      entries
+        .map(
+          ([key, item]) =>
+            `${childIndent}${JSON.stringify(key)}: ${formatJsonValue(
+              item,
+              indentLevel + 1
+            )}`
+        )
+        .join(',\n'),
+      `${indent}}`,
+    ].join('\n');
+  }
+
+  return JSON.stringify(value);
+}
+
+async function copyText(text) {
+  if (navigator.clipboard) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textArea = document.createElement('textarea');
+  textArea.value = text;
+  textArea.style.position = 'fixed';
+  textArea.style.opacity = '0';
+  document.body.append(textArea);
+  textArea.select();
+  document.execCommand('copy');
+  textArea.remove();
+}
 
 function formatJointName(jointName) {
   return jointName
@@ -17,7 +113,7 @@ function formatJointName(jointName) {
     .join(' ');
 }
 
-function createSlider(jointName, axisConfig) {
+function createSlider(jointName, axisConfig, onRotationChange) {
   const row = document.createElement('label');
   row.className = 'manual-sim-hand-slider';
 
@@ -28,29 +124,53 @@ function createSlider(jointName, axisConfig) {
 
   const input = document.createElement('input');
   input.type = 'range';
-  input.min = '-180';
-  input.max = '180';
+  input.min = String(MIN_DEGREES);
+  input.max = String(MAX_DEGREES);
   input.step = '1';
   input.value = '0';
-  input.dataset.handedness = 'left';
   input.dataset.joint = jointName;
   input.dataset.axis = axisConfig.axis;
 
-  const value = document.createElement('output');
+  const value = document.createElement('input');
   value.className = 'manual-sim-hand-value';
+  value.type = 'number';
+  value.min = String(MIN_DEGREES);
+  value.max = String(MAX_DEGREES);
+  value.step = '1';
   value.value = '0';
-  value.textContent = '0 deg';
+  value.dataset.joint = jointName;
+  value.dataset.axis = axisConfig.axis;
+
+  const setDegrees = (degrees) => {
+    const clampedDegrees = clampDegrees(degrees);
+    input.value = String(clampedDegrees);
+    value.value = String(clampedDegrees);
+    onRotationChange(jointName, axisConfig.axis, clampedDegrees * DEG_TO_RAD);
+  };
 
   input.addEventListener('input', () => {
-    value.value = input.value;
-    value.textContent = `${input.value} deg`;
+    setDegrees(Number(input.value));
+  });
+
+  value.addEventListener('input', () => {
+    if (value.value === '') return;
+    const degrees = Number(value.value);
+    if (!Number.isFinite(degrees)) return;
+    const clampedDegrees = clampDegrees(degrees);
+    input.value = String(clampedDegrees);
+    onRotationChange(jointName, axisConfig.axis, clampedDegrees * DEG_TO_RAD);
+  });
+
+  value.addEventListener('change', () => {
+    const degrees = Number(value.value);
+    setDegrees(Number.isFinite(degrees) ? degrees : 0);
   });
 
   row.append(axis, input, value);
   return row;
 }
 
-function createJointControl(jointName) {
+function createJointControl(jointName, onRotationChange) {
   const section = document.createElement('section');
   section.className = 'manual-sim-hand-joint';
 
@@ -59,13 +179,51 @@ function createJointControl(jointName) {
   section.append(title);
 
   for (const axisConfig of AXES) {
-    section.append(createSlider(jointName, axisConfig));
+    section.append(createSlider(jointName, axisConfig, onRotationChange));
   }
 
   return section;
 }
 
-function createSidebar() {
+function createJsonView(titleText) {
+  const view = document.createElement('section');
+  view.className = 'manual-sim-hand-json-view';
+
+  const header = document.createElement('div');
+  header.className = 'manual-sim-hand-json-header';
+
+  const title = document.createElement('h2');
+  title.textContent = titleText;
+
+  const copyButton = document.createElement('button');
+  copyButton.className = 'manual-sim-hand-copy';
+  copyButton.type = 'button';
+  copyButton.textContent = 'Copy';
+
+  const output = document.createElement('pre');
+  output.className = 'manual-sim-hand-json';
+  output.textContent = '{}';
+
+  copyButton.addEventListener('click', async () => {
+    await copyText(output.textContent);
+    copyButton.textContent = 'Copied';
+    window.setTimeout(() => {
+      copyButton.textContent = 'Copy';
+    }, 900);
+  });
+
+  header.append(title, copyButton);
+  view.append(header, output);
+
+  return {
+    element: view,
+    setValue(value) {
+      output.textContent = formatJson(value);
+    },
+  };
+}
+
+function createSidebar(onRotationChange, onReset, getJsonData) {
   const sidebar = document.createElement('aside');
   sidebar.className = 'manual-sim-hand-sidebar';
 
@@ -76,24 +234,88 @@ function createSidebar() {
   title.textContent = 'Manual Sim Hand';
 
   const subtitle = document.createElement('p');
-  subtitle.textContent = 'Left hand joint angles';
+  subtitle.textContent = 'Shared hand joint angles';
 
-  header.append(title, subtitle);
+  const resetButton = document.createElement('button');
+  resetButton.className = 'manual-sim-hand-reset';
+  resetButton.type = 'button';
+  resetButton.textContent = 'Reset';
+  resetButton.addEventListener('click', () => {
+    for (const input of sidebar.querySelectorAll('input[type="range"]')) {
+      input.value = '0';
+      input.nextElementSibling.value = '0';
+    }
+    onReset();
+  });
+
+  header.append(title, subtitle, resetButton);
   sidebar.append(header);
 
+  const tabs = document.createElement('nav');
+  tabs.className = 'manual-sim-hand-tabs';
+
+  const panels = document.createElement('div');
+  panels.className = 'manual-sim-hand-panels';
+
   const controls = document.createElement('div');
-  controls.className = 'manual-sim-hand-controls';
+  controls.className = 'manual-sim-hand-controls manual-sim-hand-panel';
+  controls.dataset.panel = 'controls';
 
-  const bendableJointNames = xb.HAND_JOINT_NAMES.filter(
-    (jointName) => !jointName.endsWith('-tip')
-  );
-
-  for (const jointName of bendableJointNames) {
-    controls.append(createJointControl(jointName));
+  for (const jointName of ROTATION_JOINT_NAMES) {
+    controls.append(createJointControl(jointName, onRotationChange));
   }
 
-  sidebar.append(controls);
+  const rawJsonView = createJsonView('Raw Joint Data');
+  rawJsonView.element.classList.add('manual-sim-hand-panel');
+  rawJsonView.element.dataset.panel = 'raw';
+
+  const rotationsJsonView = createJsonView('Rotation Data');
+  rotationsJsonView.element.classList.add('manual-sim-hand-panel');
+  rotationsJsonView.element.dataset.panel = 'rotations';
+
+  const panelEntries = [
+    {id: 'controls', label: 'Controls', element: controls},
+    {id: 'raw', label: 'Raw JSON', element: rawJsonView.element},
+    {
+      id: 'rotations',
+      label: 'Rotations JSON',
+      element: rotationsJsonView.element,
+    },
+  ];
+
+  const selectPanel = (selectedId) => {
+    for (const entry of panelEntries) {
+      const isSelected = entry.id === selectedId;
+      entry.button.setAttribute('aria-selected', String(isSelected));
+      entry.element.hidden = !isSelected;
+    }
+  };
+
+  for (const entry of panelEntries) {
+    const button = document.createElement('button');
+    button.className = 'manual-sim-hand-tab';
+    button.type = 'button';
+    button.textContent = entry.label;
+    button.setAttribute('role', 'tab');
+    button.addEventListener('click', () => selectPanel(entry.id));
+    entry.button = button;
+    tabs.append(button);
+    panels.append(entry.element);
+  }
+
+  sidebar.append(tabs, panels);
   document.body.append(sidebar);
+
+  selectPanel('controls');
+
+  const updateJsonViews = () => {
+    const jsonData = getJsonData();
+    rawJsonView.setValue(jsonData.raw);
+    rotationsJsonView.setValue(jsonData.rotations);
+  };
+  updateJsonViews();
+
+  return updateJsonViews;
 }
 
 class ManualSimHandScene extends xb.Script {
@@ -103,7 +325,46 @@ class ManualSimHandScene extends xb.Script {
 }
 
 async function start() {
-  createSidebar();
+  const handRotations = {};
+  let updateJsonViews = () => {};
+  const applyHandRotations = () => {
+    const hands = xb.core?.simulator?.hands;
+    if (hands) {
+      hands.setLeftHandRotations(handRotations);
+      hands.setRightHandRotations(handRotations);
+    }
+    updateJsonViews();
+  };
+  updateJsonViews = createSidebar(
+    (jointName, axis, value) => {
+      handRotations[jointName] = {
+        ...handRotations[jointName],
+        [axis]: value,
+      };
+      applyHandRotations();
+    },
+    () => {
+      for (const jointName of Object.keys(handRotations)) {
+        delete handRotations[jointName];
+      }
+      applyHandRotations();
+    },
+    () => {
+      const hands = xb.core?.simulator?.hands;
+      return {
+        raw: {
+          left: hands?.leftHandTargetJoints
+            ? cleanJointsForJson(hands.leftHandTargetJoints)
+            : [],
+          right: hands?.rightHandTargetJoints
+            ? cleanJointsForJson(hands.rightHandTargetJoints)
+            : [],
+        },
+        rotations: cleanRotationsForJson(handRotations),
+      };
+    }
+  );
+
   const options = new xb.Options();
   options.enableReticles();
   options.enableHands();
@@ -116,6 +377,7 @@ async function start() {
 
   xb.add(new ManualSimHandScene());
   await xb.init(options);
+  applyHandRotations();
 }
 
 document.addEventListener('DOMContentLoaded', start);

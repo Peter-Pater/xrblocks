@@ -41,8 +41,68 @@
   line-height: 1.3;
 }
 
-.manual-sim-hand-controls {
+.manual-sim-hand-reset {
+  margin-top: 0.75rem;
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 0.35rem;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-family: Arial, sans-serif;
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 0.55rem 0.75rem;
+  text-transform: none;
+}
+
+.manual-sim-hand-reset:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.manual-sim-hand-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.manual-sim-hand-tab,
+.manual-sim-hand-copy {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 0.35rem;
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff;
+  font-family: Arial, sans-serif;
+  font-size: 0.75rem;
+  line-height: 1;
+  padding: 0.5rem 0.45rem;
+}
+
+.manual-sim-hand-tab[aria-selected='true'] {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.36);
+}
+
+.manual-sim-hand-tab:hover,
+.manual-sim-hand-copy:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.manual-sim-hand-panels {
   min-height: 0;
+  flex: 1;
+  display: flex;
+}
+
+.manual-sim-hand-panel {
+  min-height: 0;
+  width: 100%;
+}
+
+.manual-sim-hand-panel[hidden] {
+  display: none;
+}
+
+.manual-sim-hand-controls {
   overflow-y: auto;
   padding-right: 0.35rem;
 }
@@ -61,7 +121,7 @@
 
 .manual-sim-hand-slider {
   display: grid;
-  grid-template-columns: 1.4rem minmax(7rem, 1fr) 3.5rem;
+  grid-template-columns: 1.4rem minmax(7rem, 1fr) 4.2rem;
   align-items: center;
   gap: 0.55rem;
   margin: 0.35rem 0;
@@ -74,14 +134,71 @@
   font-weight: 500;
 }
 
-.manual-sim-hand-slider input {
+.manual-sim-hand-slider input[type='range'] {
   width: 100%;
 }
 
 .manual-sim-hand-value {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0.25rem;
+  background: rgba(255, 255, 255, 0.08);
   color: rgba(255, 255, 255, 0.72);
+  font-family: Arial, sans-serif;
+  font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
+  line-height: 1;
+  padding: 0.28rem 0.35rem;
   text-align: right;
+}
+
+.manual-sim-hand-value:focus {
+  border-color: rgba(255, 255, 255, 0.48);
+  outline: none;
+}
+
+.manual-sim-hand-json-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.manual-sim-hand-json-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.manual-sim-hand-json-header h2 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.manual-sim-hand-copy {
+  flex: 0 0 auto;
+  min-width: 4.25rem;
+}
+
+.manual-sim-hand-json {
+  box-sizing: border-box;
+  min-height: 0;
+  flex: 1;
+  margin: 0;
+  padding: 0.75rem;
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 0.35rem;
+  background: rgba(0, 0, 0, 0.3);
+  color: rgba(255, 255, 255, 0.86);
+  font-family: Arial, sans-serif;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: pre;
 }
 
 @media all and (max-width: 640px) {
