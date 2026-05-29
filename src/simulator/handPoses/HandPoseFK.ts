@@ -6,7 +6,7 @@ import type {
   SimulatorHandPoseJoints,
   SimulatorHandPoseRotations,
 } from './HandPoseJoints';
-import {LEFT_HAND_RELAXED, RIGHT_HAND_RELAXED} from './RelaxedHandPoses';
+import {LEFT_HAND_NEUTRAL, RIGHT_HAND_NEUTRAL} from './NeutralHandPose';
 
 const HAND_JOINT_PARENT: Partial<Record<JointName, JointName>> = {
   'thumb-metacarpal': 'wrist',
@@ -43,7 +43,7 @@ type RestJoint = {
 };
 
 function createRestJoints(
-  joints: typeof LEFT_HAND_RELAXED | typeof RIGHT_HAND_RELAXED
+  joints: typeof LEFT_HAND_NEUTRAL | typeof RIGHT_HAND_NEUTRAL
 ) {
   const restJoints = new Map<JointName, RestJoint>();
   HAND_JOINT_NAMES.forEach((jointName, index) => {
@@ -88,8 +88,8 @@ function createRestJoints(
   return restJoints;
 }
 
-const LEFT_REST_JOINTS = createRestJoints(LEFT_HAND_RELAXED);
-const RIGHT_REST_JOINTS = createRestJoints(RIGHT_HAND_RELAXED);
+const LEFT_REST_JOINTS = createRestJoints(LEFT_HAND_NEUTRAL);
+const RIGHT_REST_JOINTS = createRestJoints(RIGHT_HAND_NEUTRAL);
 
 function getHandednessAxisValue(
   handedness: Handedness,
