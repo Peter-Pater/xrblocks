@@ -49,6 +49,7 @@ export * from './simulator/controlModes/SimulatorControlMode';
 export * from './simulator/events/SimulatorEvents';
 export * from './simulator/handPoses/HandPoseFK';
 export * from './simulator/handPoses/HandPoseJoints';
+export * from './simulator/handPoses/HandPoseRotations';
 export * from './simulator/handPoses/HandPoses';
 export * from './simulator/Simulator';
 export * from './simulator/SimulatorCamera';

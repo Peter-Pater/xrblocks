@@ -77,6 +77,15 @@ function cleanRotationsForJson(rotations) {
   return cleanRotations;
 }
 
+function copyRotations(target, source) {
+  for (const jointName of ROTATION_JOINT_NAMES) {
+    const rotation = source[jointName] ?? [0, 0, 0];
+    target[jointName][0] = rotation[0];
+    target[jointName][1] = rotation[1];
+    target[jointName][2] = rotation[2];
+  }
+}
+
 function cleanJointsForJson(joints) {
   return joints.map((joint) => ({
     t: joint.t.map(toFixedNumber),
@@ -502,29 +511,35 @@ async function start() {
 
   let updateJsonViews = () => {};
 
+  const getActiveHandRotations = () => {
+    const activeHandIndex =
+      xb.core.simulator.controls.simulatorControllerState
+        .currentControllerIndex;
+    return activeHandIndex === 0
+      ? xb.core.simulator.hands.leftHandCurrentRotations
+      : xb.core.simulator.hands.rightHandCurrentRotations;
+  };
+
+  const getDisplayedJoints = (bones) =>
+    bones.map((bone) => ({
+      t: bone.position.toArray(),
+      r: bone.quaternion.toArray(),
+      s: bone.scale.toArray(),
+    }));
+
   const applyHandRotations = () => {
-    const constrainedRotations =
-      xb.applySimulatorHandPoseRotationConstraints(handRotations);
-    for (const jointName of ROTATION_JOINT_NAMES) {
-      const constrainedRotation = constrainedRotations[jointName];
-      if (!constrainedRotation) continue;
-      handRotations[jointName][0] = constrainedRotation[0];
-      handRotations[jointName][1] = constrainedRotation[1];
-      handRotations[jointName][2] = constrainedRotation[2];
-    }
-    syncControlsToRotations();
-    xb.core.simulator.hands.setLeftHandRotations(handRotations, true);
-    xb.core.simulator.hands.setRightHandRotations(handRotations, true);
+    xb.core.simulator.hands.setLeftHandRotations(handRotations);
+    xb.core.simulator.hands.setRightHandRotations(handRotations);
     updateJsonViews();
   };
 
-  const syncControlsToRotations = () => {
+  const syncControlsToRotations = (rotations = getActiveHandRotations()) => {
     for (const input of document.querySelectorAll(
       '.manual-sim-hand-slider input[type="range"]'
     )) {
       const axisIndex = ['x', 'y', 'z'].indexOf(input.dataset.axis);
       const degrees = Math.round(
-        handRotations[input.dataset.joint][axisIndex] / DEG_TO_RAD
+        (rotations[input.dataset.joint]?.[axisIndex] ?? 0) / DEG_TO_RAD
       );
       input.value = String(degrees);
       input.nextElementSibling.value = String(degrees);
@@ -533,6 +548,7 @@ async function start() {
 
   updateJsonViews = createSidebar(
     (jointName, axis, value) => {
+      copyRotations(handRotations, getActiveHandRotations());
       handRotations[jointName][['x', 'y', 'z'].indexOf(axis)] = value;
       applyHandRotations();
     },
@@ -540,19 +556,28 @@ async function start() {
       for (const rotation of Object.values(handRotations)) {
         rotation.fill(0);
       }
-      syncControlsToRotations();
+      syncControlsToRotations(handRotations);
       applyHandRotations();
     },
     () => ({
       raw: {
-        left: cleanJointsForJson(xb.core.simulator.hands.leftHandTargetJoints),
+        left: cleanJointsForJson(
+          getDisplayedJoints(xb.core.simulator.hands.leftHandBones)
+        ),
         right: cleanJointsForJson(
-          xb.core.simulator.hands.rightHandTargetJoints
+          getDisplayedJoints(xb.core.simulator.hands.rightHandBones)
         ),
       },
-      rotations: cleanRotationsForJson(handRotations),
+      rotations: cleanRotationsForJson(getActiveHandRotations()),
     })
   );
+
+  const syncDisplayedPose = () => {
+    syncControlsToRotations();
+    updateJsonViews();
+    requestAnimationFrame(syncDisplayedPose);
+  };
+  syncDisplayedPose();
 
   createPromptBubble(async (description) => {
     xb.core.options.ai.gemini.config = {
@@ -572,7 +597,7 @@ async function start() {
       handRotations[jointName][1] = generatedRotation[1];
       handRotations[jointName][2] = generatedRotation[2];
     }
-    syncControlsToRotations();
+    syncControlsToRotations(handRotations);
     applyHandRotations();
   });
 }
