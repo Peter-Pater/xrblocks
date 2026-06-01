@@ -159,7 +159,10 @@ export class SimulatorHands {
   }
 
   /** Applies semantic biomechanical rotations from SimulatorHandPoseRotations. */
-  setLeftHandRotations(rotations: SimulatorHandPoseRotations) {
+  setLeftHandRotations(
+    rotations: SimulatorHandPoseRotations,
+    applyConstraints = false
+  ) {
     if (this.leftHandPose === SimulatorHandPose.PINCHING) {
       this.input.dispatchEvent({
         type: 'selectend',
@@ -172,13 +175,17 @@ export class SimulatorHands {
     this.leftHandPose = undefined;
     this.leftHandTargetJoints = resolveSimulatorHandPoseRotations(
       Handedness.LEFT,
-      rotations
+      rotations,
+      applyConstraints
     );
     this.updateHandPosePanel();
   }
 
   /** Applies semantic biomechanical rotations from SimulatorHandPoseRotations. */
-  setRightHandRotations(rotations: SimulatorHandPoseRotations) {
+  setRightHandRotations(
+    rotations: SimulatorHandPoseRotations,
+    applyConstraints = false
+  ) {
     if (this.rightHandPose === SimulatorHandPose.PINCHING) {
       this.input.dispatchEvent({
         type: 'selectend',
@@ -191,7 +198,8 @@ export class SimulatorHands {
     this.rightHandPose = undefined;
     this.rightHandTargetJoints = resolveSimulatorHandPoseRotations(
       Handedness.RIGHT,
-      rotations
+      rotations,
+      applyConstraints
     );
     this.updateHandPosePanel();
   }

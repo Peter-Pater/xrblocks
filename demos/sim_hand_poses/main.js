@@ -503,8 +503,18 @@ async function start() {
   let updateJsonViews = () => {};
 
   const applyHandRotations = () => {
-    xb.core.simulator.hands.setLeftHandRotations(handRotations);
-    xb.core.simulator.hands.setRightHandRotations(handRotations);
+    const constrainedRotations =
+      xb.applySimulatorHandPoseRotationConstraints(handRotations);
+    for (const jointName of ROTATION_JOINT_NAMES) {
+      const constrainedRotation = constrainedRotations[jointName];
+      if (!constrainedRotation) continue;
+      handRotations[jointName][0] = constrainedRotation[0];
+      handRotations[jointName][1] = constrainedRotation[1];
+      handRotations[jointName][2] = constrainedRotation[2];
+    }
+    syncControlsToRotations();
+    xb.core.simulator.hands.setLeftHandRotations(handRotations, true);
+    xb.core.simulator.hands.setRightHandRotations(handRotations, true);
     updateJsonViews();
   };
 
