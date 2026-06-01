@@ -5,7 +5,7 @@ export const SIMULATOR_HAND_POSE_ROTATIONS: Readonly<
   Record<SimulatorHandPose, SimulatorHandPoseRotations>
 > = Object.freeze({
   [SimulatorHandPose.NEUTRAL]: {
-    'wrist': [0, 0, 0],
+    wrist: [0, 0, 0],
     'thumb-metacarpal': [0, 0, 0],
     'thumb-phalanx-proximal': [0, 0, 0],
     'thumb-phalanx-distal': [0, 0, 0],
@@ -27,7 +27,7 @@ export const SIMULATOR_HAND_POSE_ROTATIONS: Readonly<
     'pinky-finger-phalanx-distal': [0, 0, 0],
   },
   [SimulatorHandPose.RELAXED]: {
-    'wrist': [0.066528, 0.199494, 0.406252],
+    wrist: [0.066528, 0.199494, 0.406252],
     'thumb-metacarpal': [0.288969, -0.421561, 0.566077],
     'thumb-phalanx-proximal': [0.314159, 0, 0],
     'thumb-phalanx-distal': [0, 0, 0],
@@ -49,7 +49,7 @@ export const SIMULATOR_HAND_POSE_ROTATIONS: Readonly<
     'pinky-finger-phalanx-distal': [0.261799, 0, 0],
   },
   [SimulatorHandPose.PINCHING]: {
-    'wrist': [0.066528, 0.199494, 0.406252],
+    wrist: [0.066528, 0.199494, 0.406252],
     'thumb-metacarpal': [0.672677, -0.541947, 0.45959],
     'thumb-phalanx-proximal': [0.428777, -0.042223, -0.002288],
     'thumb-phalanx-distal': [-0.185089, -0.007076, -0.003675],
@@ -71,7 +71,7 @@ export const SIMULATOR_HAND_POSE_ROTATIONS: Readonly<
     'pinky-finger-phalanx-distal': [0.279492, 0.000126, 0.000026],
   },
   [SimulatorHandPose.FIST]: {
-    'wrist': [0.718906, -0.420664, 0.506276],
+    wrist: [0.718906, -0.420664, 0.506276],
     'thumb-metacarpal': [0.501474, -0.295042, 0.551349],
     'thumb-phalanx-proximal': [0.457195, -0.17737, 0.299589],
     'thumb-phalanx-distal': [0.050138, 0.061422, -0.365074],
@@ -90,11 +90,10 @@ export const SIMULATOR_HAND_POSE_ROTATIONS: Readonly<
     'pinky-finger-metacarpal': [-0.002309, 0, 0],
     'pinky-finger-phalanx-proximal': [1.256637, 0.000002, 0],
     'pinky-finger-phalanx-intermediate': [1.389296, 0.000234, -0.000492],
-    'pinky-finger-phalanx-distal': [1.291544, 0.000307, 0.000013]
-
+    'pinky-finger-phalanx-distal': [1.291544, 0.000307, 0.000013],
   },
   [SimulatorHandPose.THUMBS_UP]: {
-    'wrist': [0.704686, -0.201371, 1.791237],
+    wrist: [0.704686, -0.201371, 1.791237],
     'thumb-metacarpal': [0.134051, -0.193436, 0.759515],
     'thumb-phalanx-proximal': [-0.125664, -0.029745, 0.357544],
     'thumb-phalanx-distal': [-0.08182, 0.010624, -0.369933],
@@ -116,7 +115,7 @@ export const SIMULATOR_HAND_POSE_ROTATIONS: Readonly<
     'pinky-finger-phalanx-distal': [0.601801, 0.000321, 0.0003],
   },
   [SimulatorHandPose.POINTING]: {
-    'wrist': [0.596035, -0.414914, 1.043752],
+    wrist: [0.596035, -0.414914, 1.043752],
     'thumb-metacarpal': [0.637297, -0.491225, 0.458936],
     'thumb-phalanx-proximal': [0.759414, -0.175775, 0.269178],
     'thumb-phalanx-distal': [0.081354, 0.073188, -0.363034],
@@ -135,10 +134,10 @@ export const SIMULATOR_HAND_POSE_ROTATIONS: Readonly<
     'pinky-finger-metacarpal': [-0.008366, -0.028749, 0.217979],
     'pinky-finger-phalanx-proximal': [0.977895, 0.073588, -0.202452],
     'pinky-finger-phalanx-intermediate': [1.33904, 0.00018, -0.000557],
-    'pinky-finger-phalanx-distal': [0.58579, 0.00031, 0.000028]
+    'pinky-finger-phalanx-distal': [0.58579, 0.00031, 0.000028],
   },
   [SimulatorHandPose.ROCK]: {
-    'wrist': [0.011734, -0.065693, 0.297017],
+    wrist: [0.011734, -0.065693, 0.297017],
     'thumb-metacarpal': [0.785398, -0.750492, 0.575959],
     'thumb-phalanx-proximal': [0.794647, -0.152901, 0.267991],
     'thumb-phalanx-distal': [-0.127808, -0.007272, -0.369855],
@@ -157,7 +156,7 @@ export const SIMULATOR_HAND_POSE_ROTATIONS: Readonly<
     'pinky-finger-metacarpal': [-0.00368, -0.000004, 0],
     'pinky-finger-phalanx-proximal': [-0.000013, 0.008337, 0],
     'pinky-finger-phalanx-intermediate': [0, -0.00029, -0.000068],
-    'pinky-finger-phalanx-distal': [0, 0.000287, -0.000171]
+    'pinky-finger-phalanx-distal': [0, 0.000287, -0.000171],
   },
   [SimulatorHandPose.THUMBS_DOWN]: {
     wrist: [0.640485, -1.129773, -0.862294],
@@ -182,7 +181,7 @@ export const SIMULATOR_HAND_POSE_ROTATIONS: Readonly<
     'pinky-finger-phalanx-distal': [0.580409, 0.000258, 0.000122],
   },
   [SimulatorHandPose.VICTORY]: {
-    'wrist': [0.10923, 0.217352, 0.365586],
+    wrist: [0.10923, 0.217352, 0.365586],
     'thumb-metacarpal': [0.907571, -0.577914, 0.414543],
     'thumb-phalanx-proximal': [0.931093, -0.18921, 0.243373],
     'thumb-phalanx-distal': [0.349066, 0.000003, -0.366582],
@@ -201,6 +200,6 @@ export const SIMULATOR_HAND_POSE_ROTATIONS: Readonly<
     'pinky-finger-metacarpal': [0.157079, -0.087266, 0.191986],
     'pinky-finger-phalanx-proximal': [0.15708, -0.20944, 0],
     'pinky-finger-phalanx-intermediate': [2.059489, -0.000263, -0.000474],
-    'pinky-finger-phalanx-distal': [0.977384, 0.000422, 0.000077]
+    'pinky-finger-phalanx-distal': [0.977384, 0.000422, 0.000077],
   },
 } as const);
