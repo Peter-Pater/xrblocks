@@ -88,6 +88,7 @@ const sidebars: SidebarsConfig = {
         'samples/AI-Simulator',
         'samples/Virtual-Screens',
         'samples/3DGS-Walkthrough',
+        'samples/VRM-Avatar',
       ],
     },
   ],
