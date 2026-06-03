@@ -7,7 +7,12 @@ const options = new xb.Options();
 options.enableReticles();
 options.enableGestures();
 options.gestures.setPoseEstimator(new xb.WebXRHandPoseEstimator());
-options.gestures.setGestureRecognizer(new xb.HeuristicGestureRecognizer());
+
+const gestureRecognizer = new xb.HeuristicGestureRecognizer();
+gestureRecognizer.registerGesture('victory', detectVictoryGesture, {
+  enabled: true,
+});
+options.gestures.setGestureRecognizer(gestureRecognizer);
 
 options.gestures.setGestureEnabled('point', true);
 options.gestures.setGestureEnabled('spread', true);
@@ -18,6 +23,60 @@ options.hands.visualizeJoints = true;
 options.hands.visualizeMeshes = true;
 
 options.simulator.defaultMode = xb.SimulatorMode.POSE;
+
+const ANGLE_INDICES = {
+  INDEX: [2, 3, 4],
+  MIDDLE: [5, 6, 7],
+  RING: [8, 9, 10],
+  PINKY: [11, 12, 13],
+};
+
+const BONE_INDICES = {
+  INDEX_PROXIMAL: 3,
+  MIDDLE_PROXIMAL: 7,
+};
+
+function detectVictoryGesture(context) {
+  const angles = xb.getRelativeBoneAngles(context);
+  const boneVectors = xb.getBoneVectors(context);
+
+  const indexStraight = getFingerStraightness(angles, ANGLE_INDICES.INDEX);
+  const middleStraight = getFingerStraightness(angles, ANGLE_INDICES.MIDDLE);
+  const ringCurled = 1 - getFingerStraightness(angles, ANGLE_INDICES.RING);
+  const pinkyCurled = 1 - getFingerStraightness(angles, ANGLE_INDICES.PINKY);
+
+  const indexVector = boneVectors[BONE_INDICES.INDEX_PROXIMAL];
+  const middleVector = boneVectors[BONE_INDICES.MIDDLE_PROXIMAL];
+  const spread =
+    indexVector && middleVector
+      ? xb.clamp01((0.96 - indexVector.dot(middleVector)) / 0.22)
+      : 0;
+
+  const confidence = xb.clamp01(
+    indexStraight * 0.25 +
+      middleStraight * 0.25 +
+      ringCurled * 0.2 +
+      pinkyCurled * 0.2 +
+      spread * 0.1
+  );
+
+  return {
+    confidence,
+    data: {
+      indexStraight,
+      middleStraight,
+      ringCurled,
+      pinkyCurled,
+      spread,
+    },
+  };
+}
+
+function getFingerStraightness(angles, indices) {
+  return xb.average(
+    indices.map((index) => xb.clamp01((angles[index] - 0.7) / 0.28))
+  );
+}
 
 function createHudElement() {
   const style = document.createElement('style');
