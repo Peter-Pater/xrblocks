@@ -31,8 +31,6 @@ export type HeuristicGestureDetector = (
   config: GestureConfiguration
 ) => GestureDetectionResult | undefined;
 
-export type GestureDetector = HeuristicGestureDetector;
-
 export interface GestureRecognizer {
   init?(): Promise<void>;
   recognize(context: HandContext): GestureScoreMap | Promise<GestureScoreMap>;

@@ -12,16 +12,15 @@ high-level gesture events that any script can subscribe to.
 ## Enabling the gesture subsystem
 
 Call `options.enableGestures()` before `xb.init()` to toggle on hand tracking
-and the shared recogniser. You can tweak the provider, confidence threshold, and
-individual gesture toggles from the same options object.
+and the shared recogniser. You can swap the pose estimator or gesture
+recognizer, tune the confidence threshold, and toggle gesture names from the
+same options object.
 
 ```js
 import * as xb from 'xrblocks';
 
 const options = new xb.Options();
 options.enableGestures();
-options.gestures.setPoseEstimator(new xb.WebXRHandPoseEstimator());
-options.gestures.setGestureRecognizer(new xb.HeuristicGestureRecognizer());
 options.gestures.minimumConfidence = 0.7; // default is 0.6
 options.gestures.setGestureEnabled('point', true);
 options.gestures.setGestureEnabled('spread', true);
@@ -81,9 +80,9 @@ lifecycle.
 ## Heuristic testing template
 
 The repository includes `templates/heuristic_hand_gestures`, which configures
-the heuristic provider and logs every gesture’s start/end phases to the console.
-It is handy for validating pinch, open-palm, fist, thumbs-up, point, and spread
-recognition on Quest or in the desktop simulator.
+the heuristic gesture recognizer and logs every gesture’s start/end phases to
+the console. It is handy for validating pinch, open-palm, fist, thumbs-up,
+thumbs-down, point, and spread recognition on Quest or in the desktop simulator.
 
 If you need deeper insight, consider piping the event data into your own UI or
 telemetry system.

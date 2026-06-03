@@ -44,9 +44,6 @@ const GESTURE_IMAGES = [
   'images/error.png',
 ];
 
-const LEFT_HAND_INDEX = 0;
-const RIGHT_HAND_INDEX = 1;
-
 const UNKNOWN_GESTURE = 8;
 
 export class CustomGestureRecognizer {
@@ -162,49 +159,14 @@ export class CustomGestureRecognizer {
   shiftIndexIfNeeded(context, result) {
     result += result > 2 ? 1 : 0;
     if (result === 2) {
-      const globalThumbDirection = this.getThumbDirection(context, true);
-      const localThumbDirection = this.getThumbDirection(context, false);
-      const thumbDirection = globalThumbDirection || localThumbDirection || 0;
-      result =
-        thumbDirection === 0 ? 0 : thumbDirection < 0 ? result + 1 : result;
+      const thumbDirection = xb.getThumbVerticalDirection(context);
+      if (Math.abs(thumbDirection) < 0.25) {
+        result = 0;
+      } else if (thumbDirection < 0) {
+        result += 1;
+      }
     }
     return result;
-  }
-
-  getThumbDirection(context, global) {
-    const thumbDistal = context.getJoint('thumb-phalanx-distal', global);
-    const thumbTip = context.getJoint('thumb-tip', global);
-    if (!thumbDistal || !thumbTip) return null;
-    return this.isThumbUpOrDown(thumbDistal, thumbTip);
-  }
-
-  isThumbUpOrDown(p1, p2) {
-    const vector = {
-      x: p2.x - p1.x,
-      y: p2.y - p1.y,
-      z: p2.z - p1.z,
-    };
-
-    const magnitude = Math.sqrt(
-      vector.x * vector.x + vector.y * vector.y + vector.z * vector.z
-    );
-
-    if (magnitude < 0.001) {
-      return 0;
-    }
-
-    const normalizedVector = {
-      x: vector.x / magnitude,
-      y: vector.y / magnitude,
-      z: vector.z / magnitude,
-    };
-
-    if (normalizedVector.y >= 0.25) {
-      return 1;
-    } else if (normalizedVector.y <= -0.25) {
-      return -1;
-    }
-    return 0;
   }
 }
 

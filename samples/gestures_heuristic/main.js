@@ -6,7 +6,6 @@ import * as THREE from 'three';
 const options = new xb.Options();
 options.enableReticles();
 options.enableGestures();
-options.gestures.setPoseEstimator(new xb.WebXRHandPoseEstimator());
 
 const gestureRecognizer = new xb.HeuristicGestureRecognizer();
 gestureRecognizer.registerGesture('victory', detectVictoryGesture, {
@@ -29,31 +28,19 @@ function detectVictoryGesture(context) {
   const middleStraight = xb.getFingerStraightness(context, 'middle');
   const ringCurled = xb.getFingerCurl(context, 'ring');
   const pinkyCurled = xb.getFingerCurl(context, 'pinky');
-  const indexDistance = xb.getFingertipPalmDistance(context, 'index');
-  const middleDistance = xb.getFingertipPalmDistance(context, 'middle');
-  const ringDistance = xb.getFingertipPalmDistance(context, 'ring');
-  const pinkyDistance = xb.getFingertipPalmDistance(context, 'pinky');
-  const ringClosed = getFingerClosedScore(context, 'ring');
-  const pinkyClosed = getFingerClosedScore(context, 'pinky');
-  const tipSpread = getNormalizedTipDistance(context, 'index', 'middle');
+  const indexMiddleSpread = xb.getFingerSpread(context, 'index', 'middle');
 
   const otherFingersClosed = xb.average([
-    Math.max(ringCurled, ringClosed),
-    Math.max(pinkyCurled, pinkyClosed),
+    ringCurled,
+    pinkyCurled,
   ]);
-  const relativeExtension = getRelativeExtensionScore(
-    [indexDistance, middleDistance],
-    [ringDistance, pinkyDistance]
-  );
-  const foldedPair = xb.clamp01((otherFingersClosed - 0.25) / 0.65);
-  const vShape = xb.average([
-    indexStraight,
-    middleStraight,
-    relativeExtension,
-    tipSpread,
-  ]);
+  const extendedPair = xb.average([indexStraight, middleStraight]);
+  const foldedPair = xb.clamp01((otherFingersClosed - 0.15) / 0.65);
+  const separatedPair = xb.clamp01(indexMiddleSpread);
+  const middleGate = xb.clamp01((middleStraight - 0.2) / 0.55);
   const confidence = xb.clamp01(
-    vShape * (foldedPair * 0.65 + tipSpread * 0.35)
+    middleGate *
+      (extendedPair * 0.55 + separatedPair * 0.25 + foldedPair * 0.2)
   );
 
   return {
@@ -61,45 +48,13 @@ function detectVictoryGesture(context) {
     data: {
       indexStraight,
       middleStraight,
-      relativeExtension,
+      extendedPair,
       foldedPair,
+      middleGate,
       otherFingersClosed,
-      tipSpread,
+      separatedPair,
     },
   };
-}
-
-function getRelativeExtensionScore(extendedDistances, foldedDistances) {
-  const extended = extendedDistances.filter(
-    (distance) => distance !== null && Number.isFinite(distance)
-  );
-  const folded = foldedDistances.filter(
-    (distance) => distance !== null && Number.isFinite(distance)
-  );
-  if (extended.length === 0 || folded.length === 0) return 0;
-
-  const extendedAverage = xb.average(extended);
-  const foldedAverage = xb.average(folded);
-  if (extendedAverage <= 0) return 0;
-  return xb.clamp01((extendedAverage - foldedAverage) / extendedAverage);
-}
-
-function getNormalizedTipDistance(context, digitA, digitB) {
-  const distance = xb.getFingertipDistance(context, digitA, digitB);
-  const scale = xb.getPalmWidth(context) ?? xb.estimateHandScale(context);
-  if (distance === null || scale <= 0.000001) return 0;
-  return xb.clamp01((distance - scale * 0.2) / (scale * 0.55));
-}
-
-function getFingerExtensionScore(context, finger) {
-  const distance = xb.getFingertipPalmDistance(context, finger);
-  const scale = xb.getPalmWidth(context) ?? xb.estimateHandScale(context);
-  if (distance === null || scale <= 0.000001) return 0;
-  return xb.clamp01((distance - scale * 0.45) / (scale * 0.85));
-}
-
-function getFingerClosedScore(context, finger) {
-  return 1 - getFingerExtensionScore(context, finger);
 }
 
 function createHudElement() {
