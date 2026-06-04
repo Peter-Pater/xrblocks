@@ -124,13 +124,15 @@ same workaround `SpatialVoice` uses.
 
 The main export is `LipsyncMouth`. It's an `xb.Script` you construct with
 a `MediaStream` and add to any `Object3D` head. The constructor options
-are `audioContext`, `fftSize`, `silenceThreshold`, `headRadius`, and
-`showEyes`.
+are `audioContext`, `fftSize`, `silenceThreshold`, `silenceHoldMs`,
+`headRadius`, and `showEyes`.
 
 `StylizedMouth`, the underlying canvas decal, is also exported and can be
 used standalone if you already have viseme weights from another source. It
 takes `headRadius`, `textureSize`, and `showEyes`.
 
 The lower-level pieces (`FormantVisemeMapper`, `MfccExtractor`,
-`computeAudioFeatures`) and the types (`VisemeWeights`, `LipMetrics`) are
+`computeAudioFeatures`) and the types (`VisemeWeights`, `LipMetrics`,
+`StylizedMouthOptions`, `FormantVisemeMapperOptions`,
+`MfccExtractorOptions`, `AudioFeatures`, `AudioFeatureInputs`) are
 exported as well, so a future ML mapper can plug into the same pipeline.

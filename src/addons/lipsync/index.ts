@@ -13,6 +13,7 @@
 export {LipsyncMouth} from './LipsyncMouth';
 export type {LipsyncMouthOptions} from './LipsyncMouth';
 export {StylizedMouth} from './StylizedMouth';
+export type {StylizedMouthOptions, LipMetrics} from './StylizedMouth';
 export {FormantVisemeMapper} from './FormantVisemeMapper';
 export type {
   AudioFeatures,
