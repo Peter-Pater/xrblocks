@@ -1,6 +1,5 @@
 import {Script} from 'xrblocks';
 
-import {ZERO_VISEME} from './BlendshapeReducer';
 import {computeAudioFeatures} from './computeAudioFeatures';
 import {FormantVisemeMapper} from './FormantVisemeMapper';
 import {StylizedMouth} from './StylizedMouth';
@@ -17,11 +16,6 @@ export interface LipsyncMouthOptions {
   audioContext?: AudioContext;
   /** AnalyserNode FFT size; must be a power of two. Defaults to 1024. */
   fftSize?: number;
-  /**
-   * Below this RMS the viseme target is forced to zero so background noise
-   * doesn't drive the mouth. Default 0.01.
-   */
-  silenceThreshold?: number;
   /**
    * Approximate radius (metres) of the host head this mouth will sit on.
    * Used to scale and position the stylised mouth mesh. Defaults to 0.1
@@ -71,7 +65,6 @@ export class LipsyncMouth extends Script {
 
   private readonly stream: MediaStream;
   private readonly fftSize: number;
-  private readonly silenceThreshold: number;
   private readonly externalContext: boolean;
 
   private ctx?: AudioContext;
@@ -92,7 +85,6 @@ export class LipsyncMouth extends Script {
     super();
     this.stream = stream;
     this.fftSize = opts.fftSize ?? 1024;
-    this.silenceThreshold = opts.silenceThreshold ?? 0.01;
     this.externalContext = !!opts.audioContext;
     this.ctx = opts.audioContext;
     this.mouth = new StylizedMouth({
@@ -159,18 +151,11 @@ export class LipsyncMouth extends Script {
       this.ctx!.sampleRate
     );
 
-    if (features.rms < this.silenceThreshold) {
-      // True silence: collapse the mouth to its rest pose. Reset the
-      // mapper so a subsequent voiced frame doesn't smooth from a
-      // stale-but-zero internal state, and explicitly write ZERO_VISEME.
-      // `setVisemes(this.mouth.visemes)` would reapply whatever shape
-      // was last drawn, leaving the mouth frozen open after a mid-word
-      // mute or peer disconnect.
-      this.mapper.reset();
-      this.mouth.setVisemes(ZERO_VISEME);
-      return;
-    }
-
+    // No silence bypass here: the mapper's voicing gate already drives
+    // every viseme target toward zero when RMS is small, and its
+    // exponential smoothing then closes the mouth gracefully over a
+    // few frames. Bypassing the mapper and snapping to ZERO_VISEME
+    // looks visibly aggressive on a mid-word mute or pause.
     const visemes = this.mapper.update(features, dt);
     this.mouth.setVisemes(visemes);
   }

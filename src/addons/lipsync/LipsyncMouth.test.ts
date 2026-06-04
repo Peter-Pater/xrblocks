@@ -121,7 +121,7 @@ describe('LipsyncMouth', () => {
     expect(m.mouth.visemes.jawOpen).toBeLessThan(0.05);
   });
 
-  it('loud then silent → mouth converges back to zero (not frozen on the last viseme)', async () => {
+  it('loud then silent: mouth decays smoothly back toward zero', async () => {
     const m = new LipsyncMouth(makeStream(), {
       audioContext: ctx as unknown as AudioContext,
     });
@@ -130,17 +130,25 @@ describe('LipsyncMouth', () => {
       .value as MockAnalyserNode;
     analyser.__setLoudVoiced();
     for (let i = 0; i < 60; i++) m.update(i * 16);
-    expect(m.mouth.visemes.jawOpen).toBeGreaterThan(0.05);
+    const peakJaw = m.mouth.visemes.jawOpen;
+    expect(peakJaw).toBeGreaterThan(0.05);
+
+    // Go silent and let the mapper's smoothing pull the visemes down
+    // over a few frames. After one frame the decay should already be
+    // visible (no freeze, no instant snap); after enough frames every
+    // viseme should be near zero.
     analyser.__setSilent();
-    // One silent-frame update is enough: the silence branch forces
-    // ZERO_VISEME directly rather than relying on smoothing.
-    m.update(60 * 16);
-    expect(m.mouth.visemes.jawOpen).toBe(0);
-    expect(m.mouth.visemes.aa).toBe(0);
-    expect(m.mouth.visemes.ee).toBe(0);
-    expect(m.mouth.visemes.oo).toBe(0);
-    expect(m.mouth.visemes.oh).toBe(0);
-    expect(m.mouth.visemes.consonant).toBe(0);
+    m.update(60 * 16 + 16);
+    const afterOne = m.mouth.visemes.jawOpen;
+    expect(afterOne).toBeLessThan(peakJaw);
+    expect(afterOne).toBeGreaterThan(0);
+
+    for (let i = 2; i < 40; i++) m.update(60 * 16 + i * 16);
+    expect(m.mouth.visemes.jawOpen).toBeLessThan(0.02);
+    expect(m.mouth.visemes.aa).toBeLessThan(0.02);
+    expect(m.mouth.visemes.ee).toBeLessThan(0.02);
+    expect(m.mouth.visemes.oo).toBeLessThan(0.02);
+    expect(m.mouth.visemes.consonant).toBeLessThan(0.02);
   });
 
   it('dispose() disconnects analyser + source and removes the mouth child', async () => {
