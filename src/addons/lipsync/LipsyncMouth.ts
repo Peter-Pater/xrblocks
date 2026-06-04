@@ -17,6 +17,18 @@ export interface LipsyncMouthOptions {
   /** AnalyserNode FFT size; must be a power of two. Defaults to 1024. */
   fftSize?: number;
   /**
+   * Below this RMS the mouth enters its "silence" path. Default 0.01.
+   */
+  silenceThreshold?: number;
+  /**
+   * Minimum continuous silence duration (ms) before the mouth starts
+   * closing. Brief sub-threshold gaps shorter than this (plosive stops,
+   * breaths, syllable boundaries) leave the mouth held in place so it
+   * doesn't jitter. Once exceeded, the mapper's natural smoothing
+   * decays the mouth to rest. Default 150.
+   */
+  silenceHoldMs?: number;
+  /**
    * Approximate radius (metres) of the host head this mouth will sit on.
    * Used to scale and position the stylised mouth mesh. Defaults to 0.1
    * to match netblocks `RemoteUserAvatar`'s head sphere; pass 0.18 (for
@@ -65,6 +77,8 @@ export class LipsyncMouth extends Script {
 
   private readonly stream: MediaStream;
   private readonly fftSize: number;
+  private readonly silenceThreshold: number;
+  private readonly silenceHoldMs: number;
   private readonly externalContext: boolean;
 
   private ctx?: AudioContext;
@@ -80,11 +94,15 @@ export class LipsyncMouth extends Script {
 
   private readonly mapper = new FormantVisemeMapper();
   private lastTime = 0;
+  /** Wall-clock ms when the most recent silence run started, or null. */
+  private silenceSinceMs: number | null = null;
 
   constructor(stream: MediaStream, opts: LipsyncMouthOptions = {}) {
     super();
     this.stream = stream;
     this.fftSize = opts.fftSize ?? 1024;
+    this.silenceThreshold = opts.silenceThreshold ?? 0.01;
+    this.silenceHoldMs = opts.silenceHoldMs ?? 150;
     this.externalContext = !!opts.audioContext;
     this.ctx = opts.audioContext;
     this.mouth = new StylizedMouth({
@@ -107,7 +125,10 @@ export class LipsyncMouth extends Script {
     this.source = this.ctx.createMediaStreamSource(this.stream);
     this.analyser = this.ctx.createAnalyser();
     this.analyser.fftSize = this.fftSize;
-    this.analyser.smoothingTimeConstant = 0.4;
+    // Higher smoothingTimeConstant = more time-averaging on the FFT
+    // magnitudes upstream of everything; cuts the per-frame bin jitter
+    // that destabilises formant peak picking on sustained vowels.
+    this.analyser.smoothingTimeConstant = 0.7;
     this.source.connect(this.analyser);
 
     this.freqData = new Uint8Array(
@@ -151,11 +172,17 @@ export class LipsyncMouth extends Script {
       this.ctx!.sampleRate
     );
 
-    // No silence bypass here: the mapper's voicing gate already drives
-    // every viseme target toward zero when RMS is small, and its
-    // exponential smoothing then closes the mouth gracefully over a
-    // few frames. Bypassing the mapper and snapping to ZERO_VISEME
-    // looks visibly aggressive on a mid-word mute or pause.
+    // Silence hysteresis: brief sub-threshold gaps (plosive stops,
+    // breaths, syllable boundaries) hold the previous visemes so the
+    // mouth doesn't jitter. Only after `silenceHoldMs` of continuous
+    // silence do we let the mapper's smoothing close the mouth.
+    if (features.rms < this.silenceThreshold) {
+      if (this.silenceSinceMs === null) this.silenceSinceMs = nowMs;
+      if (nowMs - this.silenceSinceMs < this.silenceHoldMs) return;
+    } else {
+      this.silenceSinceMs = null;
+    }
+
     const visemes = this.mapper.update(features, dt);
     this.mouth.setVisemes(visemes);
   }

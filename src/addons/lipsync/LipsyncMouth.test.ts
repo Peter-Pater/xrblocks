@@ -121,9 +121,10 @@ describe('LipsyncMouth', () => {
     expect(m.mouth.visemes.jawOpen).toBeLessThan(0.05);
   });
 
-  it('loud then silent: mouth decays smoothly back toward zero', async () => {
+  it('loud then silent: brief silence holds visemes; sustained silence decays them', async () => {
     const m = new LipsyncMouth(makeStream(), {
       audioContext: ctx as unknown as AudioContext,
+      // Default silenceHoldMs is 150; keep default for this test.
     });
     await m.init();
     const analyser = ctx.createAnalyser.mock.results[0]
@@ -133,22 +134,45 @@ describe('LipsyncMouth', () => {
     const peakJaw = m.mouth.visemes.jawOpen;
     expect(peakJaw).toBeGreaterThan(0.05);
 
-    // Go silent and let the mapper's smoothing pull the visemes down
-    // over a few frames. After one frame the decay should already be
-    // visible (no freeze, no instant snap); after enough frames every
-    // viseme should be near zero.
+    // First silent frames within the 150 ms hold window: mouth held in
+    // place, no decay started yet. Brief gaps (~one frame) between
+    // syllables should not cause any jitter.
     analyser.__setSilent();
     m.update(60 * 16 + 16);
-    const afterOne = m.mouth.visemes.jawOpen;
-    expect(afterOne).toBeLessThan(peakJaw);
-    expect(afterOne).toBeGreaterThan(0);
+    expect(m.mouth.visemes.jawOpen).toBe(peakJaw);
+    m.update(60 * 16 + 80);
+    expect(m.mouth.visemes.jawOpen).toBe(peakJaw);
 
-    for (let i = 2; i < 40; i++) m.update(60 * 16 + i * 16);
+    // Past the hold window: mapper smoothing starts pulling toward zero.
+    for (let i = 0; i < 40; i++) m.update(60 * 16 + 200 + i * 16);
     expect(m.mouth.visemes.jawOpen).toBeLessThan(0.02);
     expect(m.mouth.visemes.aa).toBeLessThan(0.02);
     expect(m.mouth.visemes.ee).toBeLessThan(0.02);
     expect(m.mouth.visemes.oo).toBeLessThan(0.02);
     expect(m.mouth.visemes.consonant).toBeLessThan(0.02);
+  });
+
+  it('voiced resumes mid-hold: silence timer resets, mouth never began decaying', async () => {
+    const m = new LipsyncMouth(makeStream(), {
+      audioContext: ctx as unknown as AudioContext,
+    });
+    await m.init();
+    const analyser = ctx.createAnalyser.mock.results[0]
+      .value as MockAnalyserNode;
+    analyser.__setLoudVoiced();
+    for (let i = 0; i < 60; i++) m.update(i * 16);
+    const peakJaw = m.mouth.visemes.jawOpen;
+
+    // 100 ms silent gap (within the 150 ms hold), then voiced again.
+    analyser.__setSilent();
+    m.update(60 * 16 + 50);
+    m.update(60 * 16 + 100);
+    expect(m.mouth.visemes.jawOpen).toBe(peakJaw);
+    analyser.__setLoudVoiced();
+    m.update(60 * 16 + 116);
+    // The mouth should still be active (mapper continued from where it
+    // left off; no decay happened during the brief gap).
+    expect(m.mouth.visemes.jawOpen).toBeGreaterThan(peakJaw * 0.8);
   });
 
   it('dispose() disconnects analyser + source and removes the mouth child', async () => {

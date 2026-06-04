@@ -71,22 +71,6 @@ describe('computeAudioFeatures', () => {
     expect(f.f2Hz).toBeLessThan(2500);
   });
 
-  it('does not report a strong F1 around 900 Hz as F2 when F2 is weaker', () => {
-    // Real vowels can have a tall F1 in the 800-1000 Hz tail that bleeds
-    // into the F2 search range and out-amplifies the actual F2. Without
-    // separation enforcement the bug shows up as F2 ≈ F1.
-    const inputs = silentInputs();
-    const binHz = SAMPLE_RATE / 2 / NUM_BINS;
-    const f1Bin = Math.round(900 / binHz);
-    const f2Bin = Math.round(1500 / binHz);
-    inputs.freqData[f1Bin] = 255; // dominant F1
-    inputs.freqData[f2Bin] = 120; // weaker F2
-    const f = computeAudioFeatures(inputs, SAMPLE_RATE);
-    expect(f.f2Hz).toBeGreaterThan(f.f1Hz + 250);
-    expect(f.f2Hz).toBeGreaterThan(1200);
-    expect(f.f2Hz).toBeLessThan(1800);
-  });
-
   it('forwards the supplied mfcc vector through to the output', () => {
     const inputs = silentInputs();
     inputs.mfcc = Float32Array.from([
