@@ -72,7 +72,7 @@ describe('StylizedMouth', () => {
         set() {
           return true;
         },
-      },
+      }
     );
     const origGetContext = HTMLCanvasElement.prototype.getContext;
     (
@@ -109,7 +109,7 @@ describe('StylizedMouth', () => {
         set() {
           return true;
         },
-      },
+      }
     );
     const origGetContext = HTMLCanvasElement.prototype.getContext;
     (
@@ -126,6 +126,39 @@ describe('StylizedMouth', () => {
     } finally {
       HTMLCanvasElement.prototype.getContext = origGetContext;
     }
+  });
+
+  it('eyes blink: scale returns to 1 between blinks, dips during a blink', () => {
+    const m = new StylizedMouth();
+    type Internal = {
+      currentBlinkScale: (now: number) => number;
+      nextBlinkAt: number;
+      blinkStartAt: number;
+    };
+    const inner = m as unknown as Internal;
+    // Force a deterministic clock: schedule next blink at t=1000.
+    inner.nextBlinkAt = 1000;
+    inner.blinkStartAt = -Infinity;
+
+    // Before the scheduled blink: eyes fully open.
+    expect(inner.currentBlinkScale(500)).toBeCloseTo(1, 5);
+    expect(inner.currentBlinkScale(999)).toBeCloseTo(1, 5);
+
+    // Exactly at the schedule: blink starts (scale still 1 on the
+    // starting frame because t=0).
+    expect(inner.currentBlinkScale(1000)).toBeCloseTo(1, 5);
+    // Midway through the blink (~70 ms in): eyelid mostly closed.
+    expect(inner.currentBlinkScale(1070)).toBeLessThan(0.1);
+    // After the blink window: back to open.
+    expect(inner.currentBlinkScale(1200)).toBeCloseTo(1, 5);
+
+    // A new blink shouldn't start until at least the scheduled gap has
+    // passed (>=2.5s from blink start).
+    expect(inner.currentBlinkScale(1300)).toBeCloseTo(1, 5);
+    // After the maximum gap (6.5s), the next blink must have been
+    // scheduled and started.
+    inner.currentBlinkScale(1000 + 7000);
+    expect(inner.blinkStartAt).toBeGreaterThan(1000);
   });
 
   it('dispose() releases texture, geometry, and material', () => {

@@ -58,6 +58,16 @@ export class StylizedMouth extends THREE.Object3D {
   /** Computed lip metrics from the most recent setVisemes call. */
   metrics: LipMetrics = {width: 1, openHeight: 0};
 
+  // Schedule for the next blink (wall-clock ms via performance.now). The
+  // initial value is set in the constructor so the very first blink
+  // happens a few seconds after the avatar appears, not instantly.
+  private nextBlinkAt = 0;
+  // Wall-clock ms when the current blink started. -Infinity means "no
+  // blink in progress".
+  private blinkStartAt = -Infinity;
+  // Total duration of one blink (eyelid down + back up).
+  private static readonly BLINK_MS = 140;
+
   constructor(opts: StylizedMouthOptions = {}) {
     super();
     this.headRadius = opts.headRadius ?? 0.1;
@@ -89,6 +99,7 @@ export class StylizedMouth extends THREE.Object3D {
     this.mesh.rotation.y = Math.PI;
     this.add(this.mesh);
 
+    this.nextBlinkAt = performance.now() + 2000 + Math.random() * 3000;
     this.setVisemes(this.visemes);
   }
 
@@ -134,17 +145,45 @@ export class StylizedMouth extends THREE.Object3D {
 
     if (this.showEyes) {
       // Two static dark eye dots above the mouth so the host head sphere
-      // reads as a face. Kept matte and unanimated — the only motion on
-      // this avatar is the mouth, and adding eye motion would compete
-      // with that signal.
-      const eyeY = h * 0.38;
-      const eyeOffset = w * 0.14;
-      const eyeR = w * 0.045;
-      ctx.beginPath();
-      ctx.ellipse(cx - eyeOffset, eyeY, eyeR, eyeR, 0, 0, Math.PI * 2);
-      ctx.ellipse(cx + eyeOffset, eyeY, eyeR, eyeR, 0, 0, Math.PI * 2);
-      ctx.fill();
+      // reads as a face. Eyes occasionally blink (eyelid squish on the
+      // Y axis) at a random interval; otherwise they're fixed so they
+      // don't compete with the mouth's motion signal.
+      const eyeY = h * 0.36;
+      const eyeOffset = w * 0.16;
+      const eyeR = w * 0.07;
+      const blinkScale = this.currentBlinkScale(performance.now());
+      for (const ex of [cx - eyeOffset, cx + eyeOffset]) {
+        ctx.beginPath();
+        ctx.ellipse(ex, eyeY, eyeR, eyeR * blinkScale, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
+  }
+
+  /**
+   * Returns the vertical scale (0..1) for the eyes at the given wall
+   * clock time. 1 = fully open; near 0 = mid-blink. Also advances the
+   * blink schedule as a side effect (starts a new blink when due).
+   *
+   * Exposed (`private` in TS but exported for testing via `__test_*`
+   * helpers in the test file) for deterministic time-injection tests.
+   */
+  private currentBlinkScale(now: number): number {
+    const t = (now - this.blinkStartAt) / StylizedMouth.BLINK_MS;
+    if (t >= 0 && t < 1) {
+      // Triangle wave 0..1..0 across the blink; scale 1 - 0.95 * tri
+      // means eyelid drops to ~5% open at midpoint, never fully zero so
+      // the eye doesn't visually disappear.
+      const tri = 4 * t * (1 - t);
+      return 1 - 0.95 * tri;
+    }
+    if (now >= this.nextBlinkAt) {
+      this.blinkStartAt = now;
+      // Random interval between blinks: 2.5–6.5 seconds, in the
+      // ballpark of natural human blink rate (15–20 per minute).
+      this.nextBlinkAt = now + 2500 + Math.random() * 4000;
+    }
+    return 1;
   }
 }
 
