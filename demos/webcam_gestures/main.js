@@ -1,6 +1,5 @@
 import 'xrblocks/addons/simulator/SimulatorAddons.js';
 
-import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import {
   DrawingUtils,
@@ -46,49 +45,6 @@ const GESTURE_TO_SIMULATOR_POSE = {
   rock: xb.SimulatorHandPose.ROCK,
   'open-palm': xb.SimulatorHandPose.RELAXED,
 };
-
-const MEDIAPIPE_JOINT_INDEX = {
-  wrist: 0,
-  'thumb-metacarpal': 1,
-  'thumb-phalanx-proximal': 2,
-  'thumb-phalanx-distal': 3,
-  'thumb-tip': 4,
-  'index-finger-phalanx-proximal': 5,
-  'index-finger-phalanx-intermediate': 6,
-  'index-finger-phalanx-distal': 7,
-  'index-finger-tip': 8,
-  'middle-finger-phalanx-proximal': 9,
-  'middle-finger-phalanx-intermediate': 10,
-  'middle-finger-phalanx-distal': 11,
-  'middle-finger-tip': 12,
-  'ring-finger-phalanx-proximal': 13,
-  'ring-finger-phalanx-intermediate': 14,
-  'ring-finger-phalanx-distal': 15,
-  'ring-finger-tip': 16,
-  'pinky-finger-phalanx-proximal': 17,
-  'pinky-finger-phalanx-intermediate': 18,
-  'pinky-finger-phalanx-distal': 19,
-  'pinky-finger-tip': 20,
-};
-
-const ESTIMATED_METACARPALS = {
-  'index-finger-metacarpal': 5,
-  'middle-finger-metacarpal': 9,
-  'ring-finger-metacarpal': 13,
-  'pinky-finger-metacarpal': 17,
-};
-
-class WebcamHandContext {
-  constructor(joints) {
-    this.handedness = WEBCAM_HAND;
-    this.handLabel = WEBCAM_HAND_LABEL;
-    this.joints = joints;
-  }
-
-  getJoint(jointName) {
-    return this.joints.get(jointName);
-  }
-}
 
 class WebcamMediaPipeSource {
   constructor() {
@@ -202,7 +158,11 @@ class WebcamMediaPipePoseEstimator {
     if (handedness !== WEBCAM_HAND) return null;
     const landmarks = this.source.getLandmarks();
     if (!landmarks) return null;
-    return new WebcamHandContext(createJointMapFromLandmarks(landmarks));
+    return new xb.MediaPipeHandContext(
+      WEBCAM_HAND,
+      WEBCAM_HAND_LABEL,
+      landmarks
+    );
   }
 
   getHandContexts() {
@@ -354,27 +314,6 @@ class GestureToSimulatorBridge extends xb.Script {
     );
     gestureRecognition.removeEventListener('gestureend', this.onGestureEnd);
   }
-}
-
-function createJointMapFromLandmarks(landmarks) {
-  const joints = new Map();
-  for (const [jointName, index] of Object.entries(MEDIAPIPE_JOINT_INDEX)) {
-    joints.set(jointName, landmarkToVector(landmarks[index]));
-  }
-  for (const [jointName, index] of Object.entries(ESTIMATED_METACARPALS)) {
-    const wrist = landmarkToVector(landmarks[0]);
-    const knuckle = landmarkToVector(landmarks[index]);
-    joints.set(jointName, wrist.lerp(knuckle, 0.65));
-  }
-  return joints;
-}
-
-function landmarkToVector(landmark) {
-  return new THREE.Vector3(
-    0.5 - landmark.x,
-    0.5 - landmark.y,
-    -(landmark.z ?? 0)
-  );
 }
 
 function createEmptyScores() {
