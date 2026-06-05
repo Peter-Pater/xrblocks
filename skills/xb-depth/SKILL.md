@@ -20,7 +20,7 @@ reticles, and an optional depth-mesh collider for physics. See `samples/depthmap
 
 ```js
 const options = new xb.Options();
-options.enableDepth(); // depth sensing + depth mesh; virtual content is occluded by the world
+options.enableDepth(); // depth sensing + depth mesh
 xb.init(options);
 ```
 
