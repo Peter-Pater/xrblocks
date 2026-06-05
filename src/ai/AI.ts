@@ -258,7 +258,15 @@ export class AI extends Script {
     systemInstruction = 'Generate an image',
     model = undefined
   ) {
-    return this.model!.generate(prompt, type, systemInstruction, model);
+    if (!this.isAvailable()) {
+      throw new Error(
+        "AI is not available. Check if it's enabled and properly initialized."
+      );
+    }
+    if (this.model instanceof Gemini) {
+      return this.model.generate(prompt, type, systemInstruction, model);
+    }
+    throw new Error(`${this.options.model} does not support generate().`);
   }
 
   /**
