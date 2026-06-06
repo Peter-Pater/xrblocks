@@ -14,7 +14,7 @@ Single-user mic into any `Object3D` head:
 
 ```ts
 import * as xb from 'xrblocks';
-import {LipsyncMouth} from 'xrblocks/addons/lipsync';
+import {LipsyncMouth} from 'xrblocks/addons/lipsync/index.js';
 
 const face = new xb.StylizedFace({showEyes: false});
 headPivot.add(face);
@@ -32,7 +32,7 @@ Netblocks's `RemoteUserAvatar` already attaches a `face` (a `StylizedFace`) to e
 
 ```ts
 import * as THREE from 'three';
-import {LipsyncMouth} from 'xrblocks/addons/lipsync';
+import {LipsyncMouth} from 'xrblocks/addons/lipsync/index.js';
 
 protected override onSession(session) {
   const sharedCtx = THREE.AudioContext.getContext();
