@@ -20,7 +20,8 @@
     "test:watch": "vitest"
   },
   "files": [
-    "build"
+    "build",
+    "skills"
   ],
   "repository": {
     "type": "git",
