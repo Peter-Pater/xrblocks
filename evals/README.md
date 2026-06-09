@@ -11,6 +11,9 @@ This mirrors the Canvas Gem deployment ("XR Blocks for Gemini Canvas"), which ba
 ## Quick start
 
 ```bash
+# One-time setup. Use a venv if you don't want the deps on your system Python.
+pip install -r evals/requirements.txt
+
 export GEMINI_API_KEY=...
 
 # Run every task × {with-skill, without-skill}, then summarize.
@@ -19,15 +22,18 @@ export GEMINI_API_KEY=...
 # Same plus an llm-judge column.
 ./evals/run_all.sh --judge
 
+# Pick a different model.
+GEMINI_MODEL=gemini-2.5-flash ./evals/run_all.sh
+
 # Only a subset.
 TASKS="netblocks-presence ui-button-hud" ./evals/run_all.sh
 ```
 
-Results land under `evals/results/`:
+Results land under `evals/results/<model>/`:
 
-- `gem-api-with-skill/<task>.json` — score for the with-skill run
-- `gem-api-without-skill/<task>.json` — score for the without-skill run
-- `judge/<task>-<mode>.json` — judge output (if `--judge`)
+- `<model>/with-skill/<task>.json` — score for the with-skill run
+- `<model>/without-skill/<task>.json` — score for the without-skill run
+- `<model>/judge/<task>-<mode>.json` — judge output (if `--judge`)
 - `_summary.md` — side-by-side table written by `summarize_proto.py`
 
 ## Scoring
@@ -80,9 +86,10 @@ Aim for prompts that are unambiguous on intent but open on implementation, so th
 ```
 evals/
 ├── README.md                   this file
-├── FINDINGS.md                 running design log + results
+├── requirements.txt            python deps for the runners + judge + plot
 ├── run_all.sh                  orchestrator: every task × 2 modes
 ├── summarize_proto.py          rolls results into a markdown table
+├── plot.py                     matplotlib charts from results
 ├── prototypes/
 │   ├── score_proto.py          binary scorer
 │   ├── judge.py                llm-as-judge (gemini-2.5-pro)
@@ -94,15 +101,17 @@ evals/
 │       └── <task_id>/
 │           ├── prompt.md
 │           └── spec.json
-└── results/                    gitignored, regenerable
+├── charts/                     committed PNGs from plot.py
+└── results/                    per-model results (gitignored, regenerable)
 ```
 
 ## What this is not
 
 - Not a runtime correctness check. `parse_ok` and `smoke.py` only
   catch some failure modes; a "passing" output may still be wrong.
-- Not a model comparison. We only run `gemini-2.5-pro`. Adding flash
-  or other models is a one-line change in `run_gem_api.py`.
+- Not a model comparison. Defaults to `gemini-2.5-pro` but `GEMINI_MODEL`
+  switches models for a sweep (e.g. `gemini-2.5-flash`). Results are
+  namespaced per model under `evals/results/<model>/`.
 - Not stable across runs. Even with `temperature=0.2`, gemini varies.
   For real signal repeat each cell 3-5 times and report the median.
 
