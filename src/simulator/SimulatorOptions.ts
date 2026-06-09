@@ -60,7 +60,8 @@ export class SimulatorOptions {
     element: 'xrblocks-simulator-settings',
   };
   instructions = {
-    enabled: false,
+    enabled: true,
+    showAutomatically: false,
     element: 'xrblocks-simulator-instructions',
     customInstructions: [] as SimulatorCustomInstruction[],
   };
