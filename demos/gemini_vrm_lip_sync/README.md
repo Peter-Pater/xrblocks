@@ -6,11 +6,11 @@ audio, and the avatar's mouth moves in sync with what Gemini says — driven by 
 
 ## How it works
 
-| Stage | What happens |
-| --- | --- |
-| Mic → Gemini | `xb.core.sound.enableAudio()` streams your mic to the live session. |
-| Gemini → audio | Each live message carries base64 PCM in `message.data`. `AIAudioPlayer` plays it to the speakers **and** exposes it as a `MediaStream`. |
-| audio → mouth | `LipsyncMouth` analyses that stream and writes visemes to `VRMVisemeTarget`, which drives the VRM's `aa`/`ih`/`ou`/`ee`/`oh` mouth presets. |
+| Stage          | What happens                                                                                                                                |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mic → Gemini   | `xb.core.sound.enableAudio()` streams your mic to the live session.                                                                         |
+| Gemini → audio | Each live message carries base64 PCM in `message.data`. `AIAudioPlayer` plays it to the speakers **and** exposes it as a `MediaStream`.     |
+| audio → mouth  | `LipsyncMouth` analyses that stream and writes visemes to `VRMVisemeTarget`, which drives the VRM's `aa`/`ih`/`ou`/`ee`/`oh` mouth presets. |
 
 The avatar (same model + idle animation as [`demos/vrm-avatar`](../vrm-avatar))
 also blinks and idles on its own.

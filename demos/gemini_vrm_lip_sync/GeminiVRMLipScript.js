@@ -67,7 +67,11 @@ export class GeminiVRMLipScript extends xb.Script {
 
     if (this._idleUrl) {
       console.log('[GeminiVRMLip] Loading idle animation…');
-      await this._avatar.loadGLBAnimation('idle', this._idleUrl, this._tposeUrl);
+      await this._avatar.loadGLBAnimation(
+        'idle',
+        this._idleUrl,
+        this._tposeUrl
+      );
     }
 
     this.add(this._avatar.root);
