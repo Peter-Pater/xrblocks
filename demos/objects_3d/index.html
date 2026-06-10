@@ -329,6 +329,40 @@
         return kept.length >= 6 ? kept : points;
       }
 
+      // Estimate a sensible 3D ball radius from the 2D detection extent.
+      // Back-project the 2D bbox onto the plane through `anchor` perpendicular
+      // to the view direction: at that distance, the bbox covers a real-world
+      // quad. Half the quad's diagonal is the smallest ball that contains
+      // every point that could plausibly belong to the object, so use that as
+      // the radius and add a multiplier for headroom (anchor isn't perfectly
+      // at object centre; objects extend a bit forward/back of the plane).
+      //
+      // Falls back to `fallback` when `box2d`, `camera`, or `anchor` is
+      // missing, and clamps to [minR, maxR] to bound runaway tiny / huge
+      // bboxes (a detection covering 80% of the frame is almost always a
+      // false positive that we don't want eating the whole room).
+      function radiusFromBbox(
+        box2d,
+        camera,
+        anchor,
+        {pad = 1.3, minR = 0.2, maxR = 2.0, fallback = 0.8} = {}
+      ) {
+        if (!box2d || !camera || !anchor) return fallback;
+        const dist = camera.position.distanceTo(anchor);
+        if (!isFinite(dist) || dist <= 0) return fallback;
+        const bw = Math.max(0, box2d.max.x - box2d.min.x);
+        const bh = Math.max(0, box2d.max.y - box2d.min.y);
+        if (bw <= 0 || bh <= 0) return fallback;
+        // Vertical world extent of the full frame at this distance.
+        const fovRad = (camera.fov * Math.PI) / 180;
+        const frameH = 2 * dist * Math.tan(fovRad / 2);
+        const frameW = frameH * camera.aspect;
+        const worldW = bw * frameW;
+        const worldH = bh * frameH;
+        const halfDiag = 0.5 * Math.hypot(worldW, worldH);
+        return Math.min(maxR, Math.max(minR, pad * halfDiag));
+      }
+
       // Drop points whose distance-to-camera differs by more than `tol`
       // metres from the median.
       function rejectByDepth(points, camera, tol) {
@@ -1056,17 +1090,40 @@
             if (cat === 'flat') {
               points = raw;
             } else if (cat === 'small') {
-              points = rejectByAnchor(raw, obj.position, 0.25);
+              // Wall switches / outlets / small fixtures: tight ball, but
+              // back off the bbox-derived size to under 0.3m for the truly
+              // tiny objects this category targets.
+              const r = radiusFromBbox(box2d, xb.core.camera, obj.position, {
+                pad: 1.1,
+                minR: 0.12,
+                maxR: 0.3,
+                fallback: 0.25,
+              });
+              points = rejectByAnchor(raw, obj.position, r);
             } else if (cat === 'light') {
-              // Drop cord/ceiling stragglers: 3D ball around the SDK anchor
-              // (which sits on the lampshade), then tight Y cluster.
-              points = rejectByY(rejectByAnchor(raw, obj.position, 0.5), 0.15);
+              // Hanging fixtures: bbox-derived ball, then tight Y cluster to
+              // drop cord/ceiling stragglers that share x/z with the shade.
+              const r = radiusFromBbox(box2d, xb.core.camera, obj.position, {
+                pad: 1.2,
+                minR: 0.2,
+                maxR: 0.7,
+                fallback: 0.5,
+              });
+              points = rejectByY(rejectByAnchor(raw, obj.position, r), 0.15);
             } else {
-              // Wide furniture (sofa, dining table, bed) routinely spans more
-              // than 0.7m from the anchor; tighter radii crop the box. 1.4m
-              // covers ~2.8m-wide pieces and is still selective against
-              // unrelated nearby geometry.
-              points = rejectByAnchor(raw, obj.position, 1.4);
+              // Furniture: ball radius scales with the 2D detection's
+              // angular extent projected to the anchor's depth. A small
+              // chair at 3 m and a long sofa at 1.5 m both get a radius
+              // matched to their on-screen size, instead of one fixed 1.4 m
+              // bucket that grabs walls in tight rooms and crops wide
+              // pieces in big ones.
+              const r = radiusFromBbox(box2d, xb.core.camera, obj.position, {
+                pad: 1.3,
+                minR: 0.4,
+                maxR: 2.0,
+                fallback: 1.0,
+              });
+              points = rejectByAnchor(raw, obj.position, r);
             }
             const obb = fitYawOBB(points, {
               category: cat,
