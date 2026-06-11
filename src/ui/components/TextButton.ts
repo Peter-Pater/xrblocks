@@ -120,22 +120,6 @@ export class TextButton extends TextView {
   }
 
   /**
-   * Handles behavior when the cursor hovers over the button.
-   */
-  onHoverOver() {
-    if (!this.ux) return;
-    this.update();
-  }
-
-  /**
-   * Handles behavior when the cursor moves off the button.
-   */
-  onHoverOut() {
-    if (!this.ux) return;
-    this.update();
-  }
-
-  /**
    * Updates the text color and background opacity for the hover and selection
    * states. The background never drops below its idle opacity, so buttons with
    * an opaque background only change text color.
