@@ -145,6 +145,9 @@ export * from './world/WorldOptions';
 export * from './world/humans/DetectedBodyPose';
 export * from './world/humans/HumanRecognizer';
 export * from './world/humans/HumansOptions';
+export * from './world/faces/DetectedFace';
+export * from './world/faces/FaceRecognizer';
+export * from './world/faces/FacesOptions';
 
 export type {IconButtonOptions} from './ui/components/IconButton';
 export type {IconViewOptions} from './ui/components/IconView';
