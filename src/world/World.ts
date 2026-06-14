@@ -14,6 +14,7 @@ import {placeOnHorizontalSurface} from './HorizontalPlacement';
 // Import other modules as they are implemented in future.
 // import { LightEstimation } from '/lighting/LightEstimation.js';
 import {HumanRecognizer} from './humans/HumanRecognizer';
+import {FaceRecognizer} from './faces/FaceRecognizer';
 
 /**
  * Manages all interactions with the real-world environment perceived by the XR
@@ -71,6 +72,11 @@ export class World extends Script {
    * The human recognition/pose module instance. Null if not enabled.
    */
   humans?: HumanRecognizer;
+
+  /**
+   * The face landmark detection module instance. Null if not enabled.
+   */
+  faces?: FaceRecognizer;
 
   /**
    * A Three.js Raycaster for performing intersection tests.
@@ -140,6 +146,11 @@ export class World extends Script {
     if (this.options.humans.enabled) {
       this.humans = new HumanRecognizer();
       this.add(this.humans);
+    }
+
+    if (this.options.faces.enabled) {
+      this.faces = new FaceRecognizer();
+      this.add(this.faces);
     }
 
     // TODO: Initialize other modules as they are available & implemented.
