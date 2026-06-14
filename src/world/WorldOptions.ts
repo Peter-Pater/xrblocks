@@ -6,6 +6,7 @@ import {ObjectsOptions} from './objects/ObjectsOptions';
 import {PlanesOptions} from './planes/PlanesOptions';
 import {SoundsOptions} from './sounds/SoundsOptions';
 import {HumansOptions} from './humans/HumansOptions';
+import {FacesOptions} from './faces/FacesOptions';
 
 export class WorldOptions {
   debugging = false;
@@ -16,6 +17,7 @@ export class WorldOptions {
   meshes = new MeshDetectionOptions();
   sounds = new SoundsOptions();
   humans = new HumansOptions();
+  faces = new FacesOptions();
 
   constructor(options?: DeepPartial<WorldOptions>) {
     if (options) {
@@ -65,6 +67,15 @@ export class WorldOptions {
   enableHumanDetection() {
     this.enabled = true;
     this.humans.enable();
+    return this;
+  }
+
+  /**
+   * Enables face landmark detection.
+   */
+  enableFaceDetection() {
+    this.enabled = true;
+    this.faces.enable();
     return this;
   }
 }
