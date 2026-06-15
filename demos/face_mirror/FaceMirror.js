@@ -388,16 +388,12 @@ export class FaceMirror extends xb.Script {
       // CSS-style `width: 50%` thing.
       const fill = new UIPanel({
         flexGrow: 0,
-        flexShrink: 0,
-        flexBasis: 0,
         height: '100%',
         fillColor: '#4796e3',
         cornerRadius: 5,
       });
       const spacer = new UIPanel({
         flexGrow: 1,
-        flexShrink: 0,
-        flexBasis: 0,
         height: '100%',
       });
       track.add(fill);
