@@ -149,18 +149,57 @@ export class FaceRecognizer extends Script {
     return backendPromise;
   }
 
+  // Cached depth-mesh snapshot (cloned geometry + BVH). We rebuild it
+  // only when the source depth geometry's position attribute bumps its
+  // version (three.js does this automatically whenever the depth mesh
+  // refreshes via needsUpdate = true). For a static desktop sim the
+  // BVH build therefore amortizes across all detections instead of
+  // running every detection.
+  private cachedDepthMeshSnapshot: THREE.Mesh | null = null;
+  private cachedDepthMeshSource: THREE.BufferGeometry | null = null;
+  private cachedDepthMeshVersion = -1;
+
   private getDepthMeshSnapshot() {
     const depthMesh = this.depth.depthMesh!;
     const geometry = this.depth.options.depthMesh.updateFullResolutionGeometry
       ? depthMesh.geometry
       : depthMesh.downsampledGeometry || depthMesh.geometry;
+    // Both BufferAttribute and InterleavedBufferAttribute carry a
+    // `version` field that three.js bumps on `needsUpdate = true`, but
+    // the type for the union doesn't expose it. Cast to read.
+    const positionAttr = geometry.attributes.position as unknown as {
+      version: number;
+    };
+    const version = positionAttr.version;
+    if (
+      this.cachedDepthMeshSnapshot &&
+      this.cachedDepthMeshSource === geometry &&
+      this.cachedDepthMeshVersion === version
+    ) {
+      // Source geometry hasn't been updated since last snapshot. Refresh
+      // the cached snapshot's world transform (cheap) and return it as
+      // is. The BVH built over the cloned positions is still valid
+      // because the source positions haven't changed.
+      depthMesh.getWorldPosition(this.cachedDepthMeshSnapshot.position);
+      depthMesh.getWorldQuaternion(this.cachedDepthMeshSnapshot.quaternion);
+      depthMesh.getWorldScale(this.cachedDepthMeshSnapshot.scale);
+      this.cachedDepthMeshSnapshot.updateMatrixWorld(true);
+      return this.cachedDepthMeshSnapshot;
+    }
+    // Source changed (or first call). Dispose the previous BVH so its
+    // backing buffers free, then clone + rebuild.
+    if (this.cachedDepthMeshSnapshot) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (this.cachedDepthMeshSnapshot.geometry as any).disposeBoundsTree?.();
+      this.cachedDepthMeshSnapshot.geometry.dispose();
+    }
     const clonedGeometry = geometry.clone();
     clonedGeometry.computeBoundingSphere();
     clonedGeometry.computeBoundingBox();
-    // Build a BVH over the cloned depth-mesh geometry once per detection
-    // so the per-landmark raycasts inside processFaceLandmarkerResult go
-    // through the BVH-accelerated path instead of walking every triangle
-    // 478 times. The clone is disposed by the GC at end of detection.
+    // Build a BVH over the cloned depth-mesh geometry so the per-
+    // landmark raycasts inside processFaceLandmarkerResult go through
+    // the BVH-accelerated path instead of walking every triangle 478
+    // times.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (clonedGeometry as any).computeBoundsTree();
     const depthMeshSnapshot = new THREE.Mesh(
@@ -171,6 +210,9 @@ export class FaceRecognizer extends Script {
     depthMesh.getWorldQuaternion(depthMeshSnapshot.quaternion);
     depthMesh.getWorldScale(depthMeshSnapshot.scale);
     depthMeshSnapshot.updateMatrixWorld(true);
+    this.cachedDepthMeshSnapshot = depthMeshSnapshot;
+    this.cachedDepthMeshSource = geometry;
+    this.cachedDepthMeshVersion = version;
     return depthMeshSnapshot;
   }
 }
