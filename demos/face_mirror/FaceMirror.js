@@ -378,29 +378,34 @@ export class FaceMirror extends xb.Script {
         height: 10,
         fillColor: 'rgba(255, 255, 255, 0.08)',
         cornerRadius: 5,
-        // The track is the positioning container for the absolutely
-        // positioned fill child below.
-        positionType: 'relative',
+        flexDirection: 'row',
+        alignItems: 'stretch',
       });
+      // Bar value drawn as a flex-grow pair: the fill grows by `value`
+      // and the spacer grows by `1 - value`, so they always split the
+      // track exactly and the fill anchors to the left edge. Avoids
+      // percentage-width quirks we kept hitting trying to do the
+      // CSS-style `width: 50%` thing.
       const fill = new UIPanel({
-        // Pin the fill to the track's left edge via absolute
-        // positioning. Without this Yoga centers a child with explicit
-        // width along the track's cross axis, so the bar visibly
-        // expands from the centre and bleeds past the left edge as the
-        // value grows.
-        positionType: 'absolute',
-        positionLeft: 0,
-        positionTop: 0,
-        width: '0%',
+        flexGrow: 0,
+        flexShrink: 0,
+        flexBasis: 0,
         height: '100%',
         fillColor: '#4796e3',
         cornerRadius: 5,
       });
+      const spacer = new UIPanel({
+        flexGrow: 1,
+        flexShrink: 0,
+        flexBasis: 0,
+        height: '100%',
+      });
       track.add(fill);
+      track.add(spacer);
       row.add(label);
       row.add(track);
       hudPanel.add(row);
-      this.spatialBars.set(name, fill);
+      this.spatialBars.set(name, {fill, spacer});
     }
     this.hudCard.add(hudPanel);
   }
@@ -498,8 +503,11 @@ export class FaceMirror extends xb.Script {
       const pct = (v * 100).toFixed(0) + '%';
       const htmlFill = this.barEls.get(name);
       if (htmlFill) htmlFill.style.width = pct;
-      const spatialFill = this.spatialBars.get(name);
-      if (spatialFill) spatialFill.setProperties({width: pct});
+      const spatial = this.spatialBars.get(name);
+      if (spatial) {
+        spatial.fill.setProperties({flexGrow: v});
+        spatial.spacer.setProperties({flexGrow: 1 - v});
+      }
     }
   }
 
@@ -507,8 +515,9 @@ export class FaceMirror extends xb.Script {
     for (const fill of this.barEls.values()) {
       fill.style.width = '0%';
     }
-    for (const fill of this.spatialBars.values()) {
-      fill.setProperties({width: '0%'});
+    for (const spatial of this.spatialBars.values()) {
+      spatial.fill.setProperties({flexGrow: 0});
+      spatial.spacer.setProperties({flexGrow: 1});
     }
   }
 }
