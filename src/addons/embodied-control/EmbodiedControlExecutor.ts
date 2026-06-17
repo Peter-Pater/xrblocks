@@ -45,7 +45,18 @@ function mergeOptions(
     applyHandRotationConstraints:
       options.applyHandRotationConstraints ??
       DEFAULT_EMBODIED_CONTROL_OPTIONS.applyHandRotationConstraints,
+    realTime: options.realTime ?? DEFAULT_EMBODIED_CONTROL_OPTIONS.realTime,
   };
+}
+
+function nextAnimationFrame() {
+  return new Promise<void>((resolve) => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve());
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
 }
 
 export class EmbodiedControlBusyError extends Error {
@@ -118,6 +129,9 @@ export class EmbodiedControlExecutor {
 
         this.dependencies.core.stepFrame(currentTickMs);
         elapsedMs += currentTickMs;
+        if (this.options.realTime && i < stepCount - 1) {
+          await nextAnimationFrame();
+        }
       }
 
       const observation = await this.createObservation(screenshotPromise);
@@ -204,6 +218,21 @@ export class EmbodiedControlExecutor {
 
     if (control.rotations) {
       this.applyHandRotations(handIndex, control.rotations);
+    }
+
+    if (control.selectStart) {
+      this.applyHandSelect(handIndex, true);
+    } else if (control.selectEnd) {
+      this.applyHandSelect(handIndex, false);
+    }
+  }
+
+  private applyHandSelect(handIndex: number, selected: boolean) {
+    const {simulator} = this.dependencies;
+    if (handIndex === 0) {
+      simulator.hands.setLeftHandPinching(selected);
+    } else {
+      simulator.hands.setRightHandPinching(selected);
     }
   }
 

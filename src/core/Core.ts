@@ -209,6 +209,7 @@ export class Core {
     );
 
     this.registry.register(this.registry);
+    this.registry.register(this);
     this.registry.register(this.waitFrame);
     this.registry.register(this.scene);
     this.registry.register(this.timer);

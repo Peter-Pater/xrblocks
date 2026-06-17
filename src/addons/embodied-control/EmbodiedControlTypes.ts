@@ -15,6 +15,10 @@ export type HandControl = {
   move?: Vec3Tuple;
   /** Degrees over the whole step, relative to the current local controller pose. */
   rotate?: Vec3Tuple;
+  /** Begin the hand's primary select gesture. In the simulator this starts a pinch. */
+  selectStart?: boolean;
+  /** End the hand's primary select gesture. In the simulator this releases a pinch. */
+  selectEnd?: boolean;
   /** Sparse angular joint targets in radians. */
   rotations?: SimulatorHandPoseRotations;
   visible?: boolean;
@@ -62,6 +66,8 @@ export type EmbodiedControlStepResult = {
 export type EmbodiedControlOptions = {
   /** Pause the core after initialization so only explicit steps advance time. */
   autoPause?: boolean;
+  /** Yield to animation frames while stepping so visual demos animate in real time. */
+  realTime?: boolean;
   /** Simulated frame length used while executing a step. */
   tickMs?: number;
   /** Step duration used when a step omits durationMs. */
@@ -79,12 +85,14 @@ export type EmbodiedControlExecutorOptions = Required<
     | 'defaultDurationMs'
     | 'includeScreenshot'
     | 'applyHandRotationConstraints'
+    | 'realTime'
   >
 >;
 
 export const DEFAULT_EMBODIED_CONTROL_OPTIONS: Required<EmbodiedControlOptions> =
   {
     autoPause: true,
+    realTime: false,
     tickMs: 16.67,
     defaultDurationMs: 250,
     includeScreenshot: true,
