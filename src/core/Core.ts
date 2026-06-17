@@ -173,7 +173,12 @@ export class Core {
   }
 
   stepFrame(dtMs = 16.67) {
-    const wasSteppingFrame = this.isSteppingFrame;
+    if (this.isSteppingFrame) {
+      throw new Error(
+        'Core.stepFrame() cannot be called while already stepping.'
+      );
+    }
+
     this.isSteppingFrame = true;
     try {
       this.manualStepTime += dtMs;
@@ -182,7 +187,7 @@ export class Core {
         this.physicsStep();
       }
     } finally {
-      this.isSteppingFrame = wasSteppingFrame;
+      this.isSteppingFrame = false;
     }
   }
 
