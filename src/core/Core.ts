@@ -112,6 +112,9 @@ export class Core {
   /** Whether the XR simulator is currently active. */
   simulatorRunning = false;
 
+  private _isPaused = false;
+  private isSteppingFrame = false;
+  private manualStepTime = 0;
   private _renderer?: THREE.WebGLRenderer;
   options!: Options;
   deviceCamera?: XRDeviceCamera;
@@ -155,6 +158,32 @@ export class Core {
 
   set renderer(renderer: THREE.WebGLRenderer) {
     this._renderer = renderer;
+  }
+
+  get isPaused() {
+    return this._isPaused;
+  }
+
+  pause() {
+    this._isPaused = true;
+  }
+
+  resume() {
+    this._isPaused = false;
+  }
+
+  stepFrame(dtMs = 16.67) {
+    const wasSteppingFrame = this.isSteppingFrame;
+    this.isSteppingFrame = true;
+    try {
+      this.manualStepTime += dtMs;
+      this.update(this.manualStepTime, undefined as unknown as XRFrame);
+      if (this.physics) {
+        this.physicsStep();
+      }
+    } finally {
+      this.isSteppingFrame = wasSteppingFrame;
+    }
   }
 
   /**
@@ -460,7 +489,12 @@ export class Core {
    * @param frame - The WebXR frame object, if in an XR session.
    */
   private update = (time: number, frame: XRFrame) => {
+    if (this._isPaused && !this.isSteppingFrame) {
+      return;
+    }
+
     this.currentFrame = frame;
+    this.manualStepTime = Math.max(this.manualStepTime, time);
     this.timer.update(time);
     if (this.simulatorRunning) {
       this.simulator.simulatorUpdate();
@@ -518,6 +552,10 @@ export class Core {
    * corresponding physics update on all active scripts.
    */
   private physicsStep = () => {
+    if (this._isPaused && !this.isSteppingFrame) {
+      return;
+    }
+
     this.physics!.physicsStep();
     this.scriptsManager.physicsStep();
   };
