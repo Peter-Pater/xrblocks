@@ -2,7 +2,6 @@ import * as THREE from 'three';
 
 import {Registry} from '../core/components/Registry';
 import {Script} from '../core/Script';
-import {User} from '../core/User';
 import {WaitFrame} from '../core/components/WaitFrame';
 import {placeObjectAtIntersectionFacingTarget} from '../utils/ObjectPlacement';
 
@@ -288,26 +287,5 @@ export class World extends Script {
   showDebugVisualizations(visible = true) {
     this.planes?.showDebugVisualizations(visible);
     this.objects?.showDebugVisualizations(visible);
-  }
-
-  /**
-   * Returns the object the user's primary controller / pinch / gaze ray is
-   * currently aimed at, or `undefined` if nothing is targeted.
-   *
-   * Sugar over {@link User.getReticleTarget}. Throws if no `User` is
-   * registered (i.e. before XRCore has booted).
-   *
-   * @param controllerId - Which controller to query. Defaults to `0`
-   *     (primary).
-   * @returns The targeted Object3D, or `undefined`.
-   */
-  lookingAt(controllerId = 0): THREE.Object3D | undefined {
-    const user = this.registry?.get(User);
-    if (!user) {
-      throw new Error(
-        'world.lookingAt: no User is registered. Call inside or after XRCore.start().'
-      );
-    }
-    return user.getReticleTarget(controllerId);
   }
 }
