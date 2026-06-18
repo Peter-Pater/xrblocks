@@ -505,13 +505,38 @@
             placeLabel._lastKey = callKey;
             placeLabel._lastAt = now;
 
+            // Object detection is non-deterministic and sometimes returns a
+            // sparse or unrelated set (e.g. just ["coffee table"]). Reuse a
+            // recent detection so a rapid second placeLabel doesn't re-roll the
+            // detector and contradict an earlier good result.
+            const DETECTION_TTL = 3500;
             let detected = [];
-            try {
-              if (xb.core.world?.objects) {
-                detected = await xb.core.world.objects.runDetection();
+            const detCache = placeLabel._detCache;
+            if (
+              detCache &&
+              now - detCache.at < DETECTION_TTL &&
+              detCache.objects.length
+            ) {
+              detected = detCache.objects;
+            } else {
+              try {
+                if (xb.core.world?.objects) {
+                  detected = await xb.core.world.objects.runDetection();
+                }
+              } catch (e) {
+                console.warn('[placeLabel] detection threw', e);
               }
-            } catch (e) {
-              console.warn('[placeLabel] detection threw', e);
+              // Keep the richer of fresh vs a still-recent cached detection so
+              // a degenerate re-detection doesn't clobber a good one.
+              if (
+                detCache &&
+                now - detCache.at < DETECTION_TTL &&
+                detCache.objects.length > detected.length
+              ) {
+                detected = detCache.objects;
+              } else {
+                placeLabel._detCache = {at: now, objects: detected};
+              }
             }
             // The detector returns names with leading articles ("the chair")
             // and trailing location phrases ("art piece on the left"), which
