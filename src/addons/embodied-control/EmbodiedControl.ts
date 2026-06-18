@@ -88,12 +88,13 @@ export class EmbodiedControl extends Script {
 
   pointTo(
     handIndex: number,
-    target: THREE.Object3D | THREE.Vector3 | [number, number, number]
+    target: THREE.Object3D | THREE.Vector3 | [number, number, number],
+    options?: {durationMs?: number}
   ): Promise<EmbodiedControlStepResult> {
     if (!this.executor) {
       throw new Error('EmbodiedControl is not initialized.');
     }
-    return this.executor.pointTo(handIndex, target);
+    return this.executor.pointTo(handIndex, target, options);
   }
 
   reachTo(

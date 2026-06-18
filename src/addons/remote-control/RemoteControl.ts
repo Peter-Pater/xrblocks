@@ -84,7 +84,11 @@ export class RemoteControl extends Script {
       }
       case 'POINT_TO': {
         const target = this.resolveTarget(message.target);
-        return this.embodiedControl.pointTo(message.handIndex, target);
+        return this.embodiedControl.pointTo(
+          message.handIndex,
+          target,
+          message.options
+        );
       }
       case 'REACH_TO': {
         const target = this.resolveTarget(message.target);

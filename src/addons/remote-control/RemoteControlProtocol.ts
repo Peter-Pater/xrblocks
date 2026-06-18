@@ -40,6 +40,7 @@ export type RemoteControlPointToMessage = {
   type: 'POINT_TO';
   handIndex: number;
   target: [number, number, number] | string;
+  options?: {durationMs?: number};
 };
 
 export type RemoteControlReachToMessage = {

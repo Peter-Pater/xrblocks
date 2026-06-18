@@ -425,9 +425,11 @@ export class EmbodiedControlExecutor {
 
   async pointTo(
     handIndex: number,
-    target: THREE.Object3D | THREE.Vector3 | [number, number, number]
+    target: THREE.Object3D | THREE.Vector3 | [number, number, number],
+    options: {durationMs?: number} = {}
   ): Promise<EmbodiedControlStepResult> {
     return this.executeAction(async () => {
+      const {durationMs} = options;
       const {camera, simulator, core} = this.dependencies;
       const targetWorldPos = new THREE.Vector3();
       this.getTargetWorldPosition(target, targetWorldPos);
@@ -443,13 +445,40 @@ export class EmbodiedControlExecutor {
         targetCamSpace,
         up
       );
+      const targetQuat = new THREE.Quaternion().setFromRotationMatrix(matrix);
 
-      simulator.simulatorControllerState.localControllerOrientations[
-        handIndex
-      ].setFromRotationMatrix(matrix);
+      if (durationMs === undefined) {
+        simulator.simulatorControllerState.localControllerOrientations[
+          handIndex
+        ].copy(targetQuat);
+        core.stepFrame(16.67);
+        return 16.67;
+      }
 
-      core.stepFrame(16.67);
-      return 16.67;
+      const startQuat =
+        simulator.simulatorControllerState.localControllerOrientations[
+          handIndex
+        ].clone();
+      let elapsedMs = 0;
+      const tickMs = this.options.tickMs;
+      const stepCount = Math.max(1, Math.ceil(durationMs / tickMs));
+      for (let i = 0; i < stepCount; i++) {
+        const remainingMs = Math.max(0, durationMs - elapsedMs);
+        const currentTickMs =
+          i === stepCount - 1
+            ? remainingMs || tickMs
+            : Math.min(tickMs, remainingMs);
+        elapsedMs += currentTickMs;
+        const u = durationMs > 0 ? elapsedMs / durationMs : 1;
+        simulator.simulatorControllerState.localControllerOrientations[
+          handIndex
+        ].slerpQuaternions(startQuat, targetQuat, u);
+        core.stepFrame(currentTickMs);
+        if (this.options.realTime && i < stepCount - 1) {
+          await nextAnimationFrame();
+        }
+      }
+      return durationMs;
     });
   }
 

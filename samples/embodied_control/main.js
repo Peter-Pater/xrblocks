@@ -73,7 +73,7 @@ const ACTION_GROUPS = [
           const cube = xb.core.scene.getObjectByName(
             'Embodied Control Draggable Cube'
           );
-          return embodied.pointTo(1, cube);
+          return embodied.pointTo(1, cube, {durationMs: 500});
         },
       },
       {
