@@ -21,6 +21,13 @@ const BACKDROP_PRESETS = [
   {name: 'passthrough', mode: Backdrop.Passthrough, a: '#000000', b: '#000000'},
 ];
 
+// Window sizing in metres. The feed plane is WINDOW_HEIGHT tall and as wide as
+// the camera's aspect ratio; the dark frame keeps a uniform WINDOW_MARGIN
+// around it. Defaults to 4:3 until the first camera frame arrives.
+const WINDOW_HEIGHT = 0.6;
+const WINDOW_MARGIN = 0.02;
+const DEFAULT_ASPECT = 4 / 3;
+
 const VERTEX_SHADER = /* glsl */ `
   varying vec2 vUv;
   void main() {
@@ -93,17 +100,20 @@ export class MagicWindow extends xb.Script {
     });
 
     // Thin dark frame behind the feed so the window reads as an object.
-    const frame = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.84, 0.64),
+    this.windowFrame_ = new THREE.Mesh(
+      new THREE.PlaneGeometry(
+        WINDOW_HEIGHT * DEFAULT_ASPECT + 2 * WINDOW_MARGIN,
+        WINDOW_HEIGHT + 2 * WINDOW_MARGIN
+      ),
       new THREE.MeshBasicMaterial({color: 0x0a0c10})
     );
-    frame.position.z = -0.002;
+    this.windowFrame_.position.z = -0.002;
 
     this.plane = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.8, 0.6),
+      new THREE.PlaneGeometry(WINDOW_HEIGHT * DEFAULT_ASPECT, WINDOW_HEIGHT),
       this.material
     );
-    this.plane.add(frame);
+    this.plane.add(this.windowFrame_);
     this.plane.position.set(0, 1.5, -1.2);
     this.add(this.plane);
 
@@ -181,9 +191,30 @@ export class MagicWindow extends xb.Script {
       this.cameraTexW_ = w;
       this.cameraTexH_ = h;
       this.material.uniforms.uCamera.value = this.cameraTexture;
+      // Resize the window to the camera's aspect so the person isn't
+      // stretched (the feed starts 4:3 but webcams are often 16:9).
+      if (h > 0) {
+        this.applyAspect_(w / h);
+      }
     } else {
       this.cameraTexture.needsUpdate = true;
     }
+  }
+
+  /**
+   * Resizes the feed plane and its frame to the given aspect ratio (width /
+   * height) so the camera image and segmentation mask are shown undistorted.
+   * @param {number} aspect - Camera frame aspect ratio (width / height).
+   */
+  applyAspect_(aspect) {
+    const w = WINDOW_HEIGHT * aspect;
+    this.plane.geometry.dispose();
+    this.plane.geometry = new THREE.PlaneGeometry(w, WINDOW_HEIGHT);
+    this.windowFrame_.geometry.dispose();
+    this.windowFrame_.geometry = new THREE.PlaneGeometry(
+      w + 2 * WINDOW_MARGIN,
+      WINDOW_HEIGHT + 2 * WINDOW_MARGIN
+    );
   }
 
   updateMask_() {
