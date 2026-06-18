@@ -26,7 +26,7 @@ export const DEVICE_CAMERA_PARAMETERS: {[key: string]: DeviceCameraParameters} =
       projectionMatrix: MOOHAN_PROJECTION_MATRIX,
       getCameraPose: getMoohanCameraPose,
     },
-    quest: {
+    quest3: {
       projectionMatrix: QUEST_3_PROJECTION_MATRIX,
       getCameraPose: getQuestCameraPose,
     },

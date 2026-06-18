@@ -78,7 +78,7 @@ export class ObjectDetector extends Script {
   /**
    * Target device profile used to look up RGB camera intrinsics and pose
    * for converting detection bounding boxes into world space. Defaults to
-   * `'galaxyxr'`; auto-overridden to `'quest'` in {@link init} when the
+   * `'galaxyxr'`; auto-overridden to `'quest3'` in {@link init} when the
    * Meta Quest browser is detected. Can be overridden manually before init.
    */
   targetDevice = 'galaxyxr';
@@ -117,7 +117,7 @@ export class ObjectDetector extends Script {
       typeof navigator !== 'undefined' &&
       /OculusBrowser|Quest/i.test(navigator.userAgent)
     ) {
-      this.targetDevice = 'quest';
+      this.targetDevice = 'quest3';
     }
 
     if (this.options.objects.showDebugVisualizations) {
