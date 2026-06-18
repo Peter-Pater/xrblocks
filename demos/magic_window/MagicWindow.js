@@ -269,8 +269,8 @@ export class MagicWindow extends xb.Script {
         THREE.RedFormat,
         THREE.UnsignedByteType
       );
-      this.maskTexture.minFilter = THREE.LinearFilter;
-      this.maskTexture.magFilter = THREE.LinearFilter;
+      this.maskTexture.minFilter = THREE.NearestFilter;
+      this.maskTexture.magFilter = THREE.NearestFilter;
       this.maskTexture.flipY = false;
       this.material.uniforms.uMask.value = this.maskTexture;
       this.material.uniforms.uHasMask.value = 1;
