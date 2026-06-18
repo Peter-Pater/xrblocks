@@ -43,6 +43,58 @@ const ACTION_GROUPS = [
     title: 'Right Hand',
     actions: handActions('rightHand'),
   },
+  {
+    title: 'High-Level Actions',
+    actions: [
+      {
+        label: 'Teleport to Cube',
+        isHighLevel: true,
+        run: () => {
+          const cube = xb.core.scene.getObjectByName(
+            'Embodied Control Draggable Cube'
+          );
+          return embodied.teleportTo(cube, {distance: 1.2});
+        },
+      },
+      {
+        label: 'Look at Cube',
+        isHighLevel: true,
+        run: () => {
+          const cube = xb.core.scene.getObjectByName(
+            'Embodied Control Draggable Cube'
+          );
+          return embodied.lookAtTarget(cube, {velocity: 1.0});
+        },
+      },
+      {
+        label: 'Point at Cube',
+        isHighLevel: true,
+        run: () => {
+          const cube = xb.core.scene.getObjectByName(
+            'Embodied Control Draggable Cube'
+          );
+          return embodied.pointTo(1, cube);
+        },
+      },
+      {
+        label: 'Reach to Cube',
+        isHighLevel: true,
+        run: () => {
+          const cube = xb.core.scene.getObjectByName(
+            'Embodied Control Draggable Cube'
+          );
+          return embodied.reachTo(1, cube, {durationMs: 500});
+        },
+      },
+      {
+        label: 'Click',
+        isHighLevel: true,
+        run: () => {
+          return embodied.click(1);
+        },
+      },
+    ],
+  },
 ];
 
 function step(label, control, durationMs = 250) {
@@ -232,11 +284,16 @@ function setBusy(busy) {
 async function runAction(action) {
   setBusy(true);
   try {
-    const durationMs = Number(durationInput.value) || action.durationMs;
-    await embodied.step({
-      durationMs,
-      control: action.control,
-    });
+    if (action.isHighLevel) {
+      const result = await action.run();
+      console.log('High-Level Action complete:', result);
+    } else {
+      const durationMs = Number(durationInput.value) || action.durationMs;
+      await embodied.step({
+        durationMs,
+        control: action.control,
+      });
+    }
   } catch (error) {
     console.error(error);
   } finally {
