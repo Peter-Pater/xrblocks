@@ -842,8 +842,12 @@
       }
       requestAnimationFrame(animateMarkers);
 
+      // Guards against a second start while the first is still opening (the
+      // XR and DOM buttons can both fire before isAIRunning flips true).
+      let starting = false;
       async function start() {
-        if (geminiManager.isAIRunning) return;
+        if (starting || geminiManager.isAIRunning) return;
+        starting = true;
         startBtn.disabled = true;
         setStatus('opening session...');
         turns = [];
@@ -874,6 +878,8 @@
           setStatus('error: ' + err.message);
           startBtn.disabled = false;
           console.error(err);
+        } finally {
+          starting = false;
         }
       }
 
@@ -929,6 +935,14 @@
         appendTurn('user', e.message)
       );
       geminiManager.addEventListener('turnComplete', () => finalizeTurns());
+      // Reset the controls if the session ends on its own (server-side close)
+      // so it doesn't stay stuck showing "listening" with Stop enabled.
+      geminiManager.addEventListener('close', () => {
+        if (starting) return;
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        setStatus('disconnected');
+      });
       xb.add(geminiManager);
 
       // Immersive control panel built with uiblocks (preferred over the older
