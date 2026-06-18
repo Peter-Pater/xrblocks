@@ -506,7 +506,7 @@
             if (xrStatusText) {
               const want = list.map((it) => it.text).join(',');
               const got = detected.map((d) => d.label).join(',') || '(none)';
-              xrStatusText.text = `want: ${want} | got: ${got}`;
+              xrStatusText.setText(`want: ${want} | got: ${got}`);
             }
 
             const STOPWORDS = new Set([
