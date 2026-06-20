@@ -86,6 +86,7 @@ export class TestRunner {
 
     options.enableSimulator = true;
     options.xrButton.alwaysAutostartSimulator = true;
+    options.gestures.updateIntervalMs = 0; // Disable real-time throttle for headless tests.
 
     options.simulator.environments = [
       {

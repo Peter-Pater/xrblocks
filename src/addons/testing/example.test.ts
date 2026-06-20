@@ -1,15 +1,7 @@
 import {describe, it, expect} from 'vitest';
 import {TestRunner} from './TestRunner';
 import * as THREE from 'three';
-import {
-  Script,
-  type SelectEvent,
-  TextButton,
-  Options,
-  core,
-  HeuristicGestureRecognizer,
-  WebXRHandPoseEstimator,
-} from 'xrblocks';
+import {Script, type SelectEvent, TextButton, Options, core} from 'xrblocks';
 
 class SimpleRotationScript extends Script {
   speed = 1.0;
@@ -133,7 +125,7 @@ describe('TestRunner functional examples', () => {
     button.onTriggered = () => {
       game.spawnItem();
     };
-    button.position.set(0, 1.2, -1.2); // Positioned in front of camera
+    button.position.set(0, core.user.height, -core.user.height);
 
     const runner = await TestRunner.create({
       scripts: [game, button],
@@ -156,23 +148,39 @@ describe('TestRunner functional examples', () => {
   it('should run Example 5: End-to-End Heuristic Gesture Recognition', async () => {
     class TestGestureScript extends Script {
       pinchDetected = false;
-      confidence = 0;
+      private _onGestureStart?: (event: Event) => void;
+      private _onGestureEnd?: (event: Event) => void;
 
-      private recognizer = new HeuristicGestureRecognizer();
-      private estimator = new WebXRHandPoseEstimator(core.user);
+      override init() {
+        const gestures = core.gestureRecognition;
+        if (!gestures) return;
 
-      override update() {
-        const context = this.estimator.getHandContext(1);
-        if (!context) return;
+        this._onGestureStart = (event: Event) => {
+          const detail = (event as CustomEvent).detail;
+          if (detail && detail.name === 'pinch') {
+            this.pinchDetected = true;
+          }
+        };
+        this._onGestureEnd = (event: Event) => {
+          const detail = (event as CustomEvent).detail;
+          if (detail && detail.name === 'pinch') {
+            this.pinchDetected = false;
+          }
+        };
 
-        const scores = this.recognizer.recognize(context);
-        const pinch = scores['pinch'];
-        if (pinch) {
-          this.pinchDetected = pinch.confidence > 0.6;
-          this.confidence = pinch.confidence;
-        } else {
-          this.pinchDetected = false;
-          this.confidence = 0;
+        gestures.addEventListener('gesturestart', this._onGestureStart);
+        gestures.addEventListener('gestureend', this._onGestureEnd);
+      }
+
+      override dispose() {
+        const gestures = core.gestureRecognition;
+        if (gestures) {
+          if (this._onGestureStart) {
+            gestures.removeEventListener('gesturestart', this._onGestureStart);
+          }
+          if (this._onGestureEnd) {
+            gestures.removeEventListener('gestureend', this._onGestureEnd);
+          }
         }
       }
     }
@@ -180,6 +188,7 @@ describe('TestRunner functional examples', () => {
     const script = new TestGestureScript();
     const options = new Options();
     options.hands.enabled = true;
+    options.enableGestures(); // Boot the gesture recognition subsystem!
 
     const runner = await TestRunner.create({
       scripts: [script],
@@ -193,7 +202,6 @@ describe('TestRunner functional examples', () => {
       durationMs: 400,
     });
     expect(script.pinchDetected).toBe(true);
-    expect(script.confidence).toBeGreaterThan(0.6);
 
     await runner.actions.step({
       control: {rightHand: {selectEnd: true}},
