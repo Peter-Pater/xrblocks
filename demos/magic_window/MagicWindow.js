@@ -75,9 +75,10 @@ const FRAGMENT_SHADER = /* glsl */ `
     // The camera texture uses GL flipY; the mask DataTexture does not, so
     // flip the mask's v to line the two up.
     float id = texture2D(uMask, vec2(vUv.x, 1.0 - vUv.y)).r * 255.0;
-    // Until the first mask arrives, show the raw feed. Category 0 is the
-    // background; everything else is a person.
-    bool isPerson = (uHasMask < 0.5) || (id >= 0.5);
+    // Until the first mask arrives, treat the whole frame as background so we
+    // show the backdrop rather than flashing the raw camera (the room) during
+    // model warm-up. Category 0 is background; everything else is a person.
+    bool isPerson = (uHasMask >= 0.5) && (id >= 0.5);
     if (isPerson) {
       gl_FragColor = vec4(cam, 1.0);
       return;
