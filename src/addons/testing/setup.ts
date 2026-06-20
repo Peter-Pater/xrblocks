@@ -1,8 +1,16 @@
+/*
+Mock THREE and WebGL/WebAudio API for JSDOM/Vitest environments. 
+Runs globally before XRBlocks instantiates.
+
+Stubs WebGL/WebAudio APIs, mocks GLTFLoader to return
+hands with bones immediately under the root scene.
+*/
+
 import {vi} from 'vitest';
 import * as THREE from 'three';
 import {GLTFLoader, type GLTF} from 'three/addons/loaders/GLTFLoader.js';
 
-// 1. Stub AudioContext globally
+// Stub AudioContext globally.
 const globalRecord = globalThis as unknown as Record<string, unknown>;
 if (typeof globalRecord.AudioContext === 'undefined') {
   const mockAudioParam = {
@@ -41,7 +49,7 @@ if (typeof globalRecord.AudioContext === 'undefined') {
   };
 }
 
-// 2. Mock three WebGLRenderer for JSDOM headless testing
+// Mock three WebGLRenderer for JSDOM headless testing.
 vi.mock('three', async (importOriginal) => {
   const original = await importOriginal<typeof import('three')>();
 
@@ -99,7 +107,7 @@ vi.mock('three', async (importOriginal) => {
   };
 });
 
-// 3. Mock GLTFLoader to return a mock hand hierarchy with bones immediately under JSDOM
+// Mock GLTFLoader to return a mock hand hierarchy with bones immediately under JSDOM.
 const isWebGLSupported = () => {
   try {
     const canvas = document.createElement('canvas');

@@ -45,6 +45,7 @@ class LoadingSpinner extends HTMLElement {
     shadowRoot.innerHTML = LoadingSpinner.innerHTML;
   }
 }
+// Prevents errors in headless environments where the spinner isn't actually used.
 if (!customElements.get('xb-blocks-loading-spinner')) {
   customElements.define('xb-blocks-loading-spinner', LoadingSpinner);
 }
