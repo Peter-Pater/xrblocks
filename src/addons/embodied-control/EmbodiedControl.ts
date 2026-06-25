@@ -51,7 +51,6 @@ export class EmbodiedControl extends Script {
     this.afterRenderedFrame(() => {
       if (!this.core) return;
       this.core.pause();
-      this.core.stepFrame(0);
       this.autoPauseComplete = true;
     });
   }
