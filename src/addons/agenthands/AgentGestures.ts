@@ -28,6 +28,11 @@ export interface AgentGestureEvent {
   name: string;
   /** Character index in the cleaned text where the gesture occurs. */
   index: number;
+  /**
+   * Optional target label for a spatial gesture, e.g. the object to point at
+   * from markup like `[point:the table]`. Lowercased and trimmed.
+   */
+  target?: string;
 }
 
 /** The agent's reply with gesture markup stripped, plus the gestures found. */
@@ -38,7 +43,8 @@ export interface ParsedAgentSpeech {
   gestures: AgentGestureEvent[];
 }
 
-const GESTURE_MARKUP = /\[(?:gesture:)?\s*([a-zA-Z _-]+?)\s*\]/g;
+const GESTURE_MARKUP =
+  /\[(?:gesture:)?\s*([a-zA-Z _-]+?)\s*(?::\s*([^\]]+?)\s*)?\]/g;
 
 /**
  * Resolves a gesture name (e.g. "thumbs up", "point") to a hand pose.
@@ -73,10 +79,12 @@ export function parseAgentGestures(input: string): ParsedAgentSpeech {
     text += input.slice(lastIndex, match.index);
     const pose = gestureNameToPose(match[1]);
     if (pose) {
+      const target = match[2]?.trim().toLowerCase();
       gestures.push({
         pose,
         name: match[1].trim().toLowerCase(),
         index: text.length,
+        ...(target ? {target} : {}),
       });
     }
     lastIndex = match.index + match[0].length;

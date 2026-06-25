@@ -62,4 +62,25 @@ describe('parseAgentGestures', () => {
     expect(text).toBe('Just talking.');
     expect(gestures).toHaveLength(0);
   });
+
+  it('captures a point target from [point:label] markup', () => {
+    const {text, gestures} = parseAgentGestures(
+      'It is right [point:the table] there.'
+    );
+    expect(text).toBe('It is right there.');
+    expect(gestures).toHaveLength(1);
+    expect(gestures[0].pose).toBe(SimulatorHandPose.POINTING);
+    expect(gestures[0].target).toBe('the table');
+  });
+
+  it('captures a target from the gesture: prefixed form too', () => {
+    const {gestures} = parseAgentGestures('Over [gesture:point:sofa] here.');
+    expect(gestures[0].pose).toBe(SimulatorHandPose.POINTING);
+    expect(gestures[0].target).toBe('sofa');
+  });
+
+  it('leaves target undefined for gestures without one', () => {
+    const {gestures} = parseAgentGestures('Nice [gesture:thumbs_up]!');
+    expect(gestures[0].target).toBeUndefined();
+  });
 });
