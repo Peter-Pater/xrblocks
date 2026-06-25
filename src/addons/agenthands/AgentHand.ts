@@ -169,7 +169,10 @@ export class AgentHand {
   }
 
   // Snaps the bones to the pointing pose (with the root un-rotated) and returns
-  // the wrist-to-index-tip direction in the parent frame.
+  // the wrist-to-index-tip direction in the parent frame. The world positions
+  // are read while the root is still identity so the measured direction is
+  // independent of any current aim (otherwise re-aiming becomes a delta from
+  // the previous target rather than an absolute orientation).
   private measurePointDirection_(): THREE.Vector3 {
     const parent = this.root.parent!;
     const savedQuaternion = scratchQuaternionB.copy(this.root.quaternion);
@@ -183,11 +186,15 @@ export class AgentHand {
 
     const wrist = this.bones[WRIST_BONE_INDEX];
     const tip = this.bones[INDEX_TIP_BONE_INDEX];
-    this.root.quaternion.copy(savedQuaternion);
-    if (!wrist || !tip) return scratchDirB.set(0, 0, -1);
-
+    if (!wrist || !tip) {
+      this.root.quaternion.copy(savedQuaternion);
+      return scratchDirB.set(0, 0, -1);
+    }
+    // Read positions while the root is still un-rotated, then restore.
     wrist.getWorldPosition(scratchWrist);
     tip.getWorldPosition(scratchTip);
+    this.root.quaternion.copy(savedQuaternion);
+
     parent.worldToLocal(scratchWrist);
     parent.worldToLocal(scratchTip);
     return scratchDirB.copy(scratchTip).sub(scratchWrist).normalize();
