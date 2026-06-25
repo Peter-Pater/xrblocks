@@ -34,9 +34,6 @@ const SCRIPT = [
   'Got it [gesture:fist], let me handle that.',
 ];
 
-// Re-run object detection at most this often (ms); detection is a Gemini call.
-const DETECTION_TTL_MS = 12000;
-
 class AgentHandsDemo extends xb.Script {
   constructor() {
     super();
@@ -48,6 +45,7 @@ class AgentHandsDemo extends xb.Script {
     this.detector = null;
     this.detectedObjects = [];
     this.lastDetectAt = 0;
+    this.scanning_ = false;
   }
 
   async init() {
@@ -64,11 +62,14 @@ class AgentHandsDemo extends xb.Script {
     this.hands.right.root.position.set(0.16, 0, 0);
     xb.core.scene.add(this.hands);
 
+    this.interactive = !!xb.core.ai?.model?.options?.apiKey;
     this.buildSpatialPanel_();
 
-    this.interactive = !!xb.core.ai?.model?.options?.apiKey;
     if (this.interactive) {
       this.startInteractive_();
+      // Scan the room once up front (in the background) so questions never
+      // wait on detection. The user can re-scan from the panel.
+      this.scan_();
     } else {
       this.setStatus_('no key, playing a scripted demo. add ?key= to talk.');
       this.playLine_(0);
@@ -128,8 +129,12 @@ class AgentHandsDemo extends xb.Script {
       justifyContent: 'center',
       alignItems: 'center',
     });
-    row.add(this.makeXrButton_('mic', 'talk', () => this.onTalk_()));
-    row.add(this.makeXrButton_('replay', 'replay', () => this.replay_()));
+    if (this.interactive) {
+      row.add(this.makeXrButton_('mic', 'talk', () => this.onTalk_()));
+      row.add(this.makeXrButton_('search', 'scan', () => this.scan_()));
+    } else {
+      row.add(this.makeXrButton_('replay', 'replay', () => this.replay_()));
+    }
     panel.add(row);
     card.add(panel);
     card.addBehavior(
@@ -225,14 +230,13 @@ class AgentHandsDemo extends xb.Script {
   async respond_(userText) {
     if (this.busy) return;
     this.busy = true;
-    this.setStatus_(`you: "${userText}"  ·  looking around...`);
+    this.setStatus_(`you: "${userText}"  ·  thinking...`);
     try {
-      await this.ensureDetection_();
+      // Use whatever the last scan found; never block the reply on detection.
       const labels = this.detectedObjects.map((o) => o.label);
       const seen = labels.length
         ? `Visible objects you can point at: ${labels.join(', ')}.`
-        : 'You cannot identify any specific objects right now.';
-      this.setStatus_(`you: "${userText}"  ·  thinking...`);
+        : 'You have not scanned the room yet, so avoid pointing.';
       const result = await xb.core.ai.query({
         prompt: `${META_INSTRUCTION}\n\n${seen}\n\nUser: ${userText}\nAssistant:`,
       });
@@ -247,17 +251,31 @@ class AgentHandsDemo extends xb.Script {
     }
   }
 
-  // Runs 3D object detection if the cache is empty or stale. Detected objects
-  // are Detected3DObject with a `.label` and an oriented bounding box (`.obb`),
-  // so we can point at the box surface nearest the agent's hand.
+  // Scans the room for objects in the background. Detection (Gemini + SAM +
+  // depth fitting) is slow, so it runs off the conversation's critical path:
+  // the agent points at whatever the most recent scan found.
+  scan_() {
+    if (!this.detector || this.scanning_) return;
+    this.scanning_ = true;
+    const wasInteractive = this.interactive;
+    this.setStatus_('scanning the room for objects...');
+    this.ensureDetection_().finally(() => {
+      this.scanning_ = false;
+      if (!wasInteractive) return;
+      const n = this.detectedObjects.length;
+      this.setStatus_(
+        n
+          ? `found ${n} things i can point at. press talk.`
+          : 'press talk and say something to the agent.'
+      );
+    });
+  }
+
+  // Runs 3D object detection. Detected objects are Detected3DObject with a
+  // `.label` and an oriented bounding box (`.obb`), so we can point at the box
+  // surface nearest the agent's hand.
   async ensureDetection_() {
     if (!this.detector) return;
-    if (
-      this.detectedObjects.length &&
-      performance.now() - this.lastDetectAt < DETECTION_TTL_MS
-    ) {
-      return;
-    }
     try {
       const objects = await this.detector.detect();
       if (objects?.length) {
