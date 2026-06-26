@@ -53,6 +53,13 @@ class AgentHandsDemo extends xb.Script {
     this._scanCamPos = new THREE.Vector3();
     this._scanCamQuat = new THREE.Quaternion();
     this._lastScanAt = 0;
+    // Head-anchor + idle-life state.
+    this._anchored = false;
+    this._anchorQuat = new THREE.Quaternion();
+    this._anchorPos = new THREE.Vector3();
+    this._euler = new THREE.Euler(0, 0, 0, 'YXZ');
+    this._forward = new THREE.Vector3();
+    this._clock = 0;
   }
 
   async init() {
@@ -81,6 +88,41 @@ class AgentHandsDemo extends xb.Script {
       this.setStatus_('no key, playing a scripted demo. add ?key= to talk.');
       this.playLine_(0);
     }
+  }
+
+  // ---- embodiment: head-anchor + idle life ----
+
+  // Keeps the hands floating in front of the user (position + yaw) so they stay
+  // in view as the user walks/turns, with a gentle idle bob and sway.
+  anchorToHead_() {
+    const cam = xb.core.camera;
+    if (!cam) return;
+    cam.getWorldPosition(this._camPos);
+    cam.getWorldQuaternion(this._camQuat);
+    this._euler.setFromQuaternion(this._camQuat, 'YXZ');
+    const yaw = this._euler.y;
+
+    // Position: 0.7 m in front of the user at the yaw heading, a touch below
+    // eye level, with a slow breathing bob.
+    const bob = Math.sin(this._clock * 1.4) * 0.012;
+    this._forward.set(Math.sin(yaw), 0, Math.cos(yaw));
+    this._anchorPos
+      .copy(this._camPos)
+      .addScaledVector(this._forward, -0.7)
+      .add(new THREE.Vector3(0, -0.35 + bob, 0));
+    if (!this._anchored) {
+      this.hands.position.copy(this._anchorPos);
+      this._anchored = true;
+    } else {
+      this.hands.position.lerp(this._anchorPos, 0.08);
+    }
+
+    // Orientation: face the user (yaw) + the fingers-up tilt, plus a gentle
+    // idle sway.
+    const sway = Math.sin(this._clock * 0.8) * 0.02;
+    this._euler.set(Math.PI / 2, yaw + sway, 0, 'YXZ');
+    this._anchorQuat.setFromEuler(this._euler);
+    this.hands.quaternion.slerp(this._anchorQuat, 0.08);
   }
 
   // ---- spatial control panel (works in XR + simulator) ----
@@ -436,6 +478,7 @@ class AgentHandsDemo extends xb.Script {
   update() {
     const dt = xb.getDeltaTime?.() ?? 0.016;
     this.timer += dt;
+    this._clock += dt;
     while (this.queue.length && this.timer >= this.queue[0].at) {
       const step = this.queue.shift();
       if (step.point) {
@@ -447,6 +490,7 @@ class AgentHandsDemo extends xb.Script {
       }
       if (step.next !== undefined) this.playLine_(step.next);
     }
+    this.anchorToHead_();
     this.hands.update();
     this.maybeAutoScan_();
   }
