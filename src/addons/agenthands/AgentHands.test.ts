@@ -74,4 +74,52 @@ describe('AgentHands', () => {
     expect(left).toHaveBeenCalledOnce();
     expect(right).not.toHaveBeenCalled();
   });
+
+  it('count() holds up the matching pose', () => {
+    const hands = new AgentHands();
+    hands.count(1);
+    expect(hands.right.currentPose).toBe(SimulatorHandPose.POINTING);
+    hands.count(2);
+    expect(hands.right.currentPose).toBe(SimulatorHandPose.VICTORY);
+    hands.count(5);
+    expect(hands.right.currentPose).toBe(SimulatorHandPose.RELAXED);
+  });
+
+  it('beat() bobs both hands down over its duration', () => {
+    const hands = new AgentHands();
+    hands.updateMatrixWorld(true);
+    hands.beat('both');
+    // Drive the internal motion timer by stubbing the clock the update reads.
+    let now = 1000;
+    const spy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    let maxDrop = 0;
+    for (let i = 0; i < 20; i++) {
+      now += 30;
+      hands.update();
+      maxDrop = Math.max(maxDrop, Math.abs(hands.left.motionOffset.y));
+    }
+    spy.mockRestore();
+    expect(maxDrop).toBeGreaterThan(0.02);
+  });
+
+  it('showSize() spreads the two hands apart then settles', () => {
+    const hands = new AgentHands();
+    hands.left.root.position.set(-0.16, 0, 0);
+    hands.right.root.position.set(0.16, 0, 0);
+    hands.updateMatrixWorld(true);
+    hands.showSize(0.5);
+    let now = 2000;
+    const spy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    let maxSpread = 0;
+    for (let i = 0; i < 40; i++) {
+      now += 30;
+      hands.update();
+      maxSpread = Math.max(
+        maxSpread,
+        hands.left.motionOffset.distanceTo(hands.right.motionOffset)
+      );
+    }
+    spy.mockRestore();
+    expect(maxSpread).toBeGreaterThan(0.2);
+  });
 });
