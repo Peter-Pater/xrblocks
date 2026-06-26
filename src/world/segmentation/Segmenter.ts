@@ -71,7 +71,7 @@ export class Segmenter extends Script {
    *
    * Called every frame by `ScriptsManager` (via `Core.update → scriptsManager.update`).
    * Kicks off a fresh inference pass at most once per
-   * `options.segmentation.intervalMs` milliseconds. The in-flight guard
+   * `options.segmentation.pollingIntervalMs` milliseconds. The in-flight guard
    * prevents stacking: if a previous inference is still running the tick is
    * silently skipped rather than launching a second one.
    *
@@ -84,7 +84,8 @@ export class Segmenter extends Script {
    */
   override update(time: number) {
     if (this._inferenceInFlight) return;
-    if (time - this._lastRunMs < this.options.segmentation.intervalMs) return;
+    if (time - this._lastRunMs < this.options.segmentation.pollingIntervalMs)
+      return;
     this._lastRunMs = time;
     void this.runSegmentation();
   }

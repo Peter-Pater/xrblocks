@@ -23,7 +23,10 @@ import type {SegmentationMask} from './SegmentationMask';
 
 /** Minimal stand-ins for the two injected dependencies. */
 const fakeOptions = {
-  segmentation: {backendConfig: {activeBackend: 'mediapipe'}, intervalMs: 66},
+  segmentation: {
+    backendConfig: {activeBackend: 'mediapipe'},
+    pollingIntervalMs: 66,
+  },
 } as Parameters<Segmenter['init']>[0]['options'];
 
 const fakeCamera = {} as Parameters<Segmenter['init']>[0]['deviceCamera'];
@@ -167,8 +170,8 @@ describe('Segmenter', () => {
       expect(backend.run).toHaveBeenCalledTimes(1);
     });
 
-    it('does not trigger a second inference within the intervalMs window', async () => {
-      const segmenter = makeSegmenter(); // intervalMs = 66
+    it('does not trigger a second inference within the pollingIntervalMs window', async () => {
+      const segmenter = makeSegmenter(); // pollingIntervalMs = 66
       const backend = injectMockBackend(segmenter, () =>
         Promise.resolve(makeMask())
       );
@@ -185,7 +188,7 @@ describe('Segmenter', () => {
     });
 
     it('triggers a fresh inference after the interval elapses', async () => {
-      const segmenter = makeSegmenter(); // intervalMs = 66
+      const segmenter = makeSegmenter(); // pollingIntervalMs = 66
       const backend = injectMockBackend(segmenter, () =>
         Promise.resolve(makeMask())
       );
@@ -233,14 +236,14 @@ describe('Segmenter', () => {
       expect(segmenter.latestMask).toBe(mask);
     });
 
-    it('respects a custom intervalMs set in options', async () => {
+    it('respects a custom pollingIntervalMs set in options', async () => {
       const segmenter = new Segmenter();
       // Custom 200 ms cadence.
       segmenter.init({
         options: {
           segmentation: {
             backendConfig: {activeBackend: 'mediapipe'},
-            intervalMs: 200,
+            pollingIntervalMs: 200,
           },
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any,

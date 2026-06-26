@@ -9,12 +9,12 @@ export class SegmentationOptions {
   enabled = false;
 
   /**
-   * Minimum time between successive inference passes in milliseconds.
-   * The continuous loop started by `Segmenter.update()` will not dispatch a
-   * new inference until at least this many milliseconds have elapsed since the
-   * previous one was kicked off.  Default ~15 fps.
+   * Minimum delay in milliseconds between continuous segmentation runs.
+   * A value of 0 runs again as soon as the previous inference finishes.
+   * Defaults to 66 (~15 fps), the rate the magic_window grab loop used before
+   * segmentation moved onto its own polling loop.
    */
-  intervalMs = 66;
+  pollingIntervalMs = 66;
 
   /**
    * Configuration options for the active segmentation backend.
