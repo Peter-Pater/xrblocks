@@ -530,47 +530,39 @@ class AgentHandsDemo extends xb.Script {
     return steps;
   }
 
-  // Speaks `text` and plays its gestures. Uses the SDK speech synthesizer (so
-  // the voice is the nicely-selected one) and fires gestures on its reported
-  // word boundaries; falls back to a time-based queue if speech is unavailable.
+  // Speaks `text` and plays its gestures. The timed queue is the guaranteed
+  // driver of gestures/points/rest (it works regardless of the TTS voice), and
+  // we additionally use the synthesizer's word boundaries to tighten timing
+  // when the chosen voice emits them (many remote voices do not).
   speakWithGestures_(text, gestures) {
     this.setStatus_(`agent: "${text}"`);
     const duration = Math.max(1.2, text.length * 0.06);
     const steps = this.buildGestureSteps_(text, gestures, duration);
+
+    // Timed queue: fires each gesture/point at its estimated time, then rests.
+    this.queue = [...steps, {at: duration + 0.8, rest: true}];
+    this.timer = 0;
+
     const synth = xb.core.sound?.speechSynthesizer;
-
-    const fire = (step) => {
-      if (step.point) this.pointAtTarget_(step.point);
-      else if (step.pose) this.hands.gesture(step.pose);
-    };
-
     if (synth?.speak) {
-      // Drive gestures from the synthesizer's word boundaries for tight sync.
+      // If the voice emits boundaries, fire pending gestures a touch early for
+      // tighter sync. Firing is idempotent with the timed queue (a pose set
+      // twice is harmless), so this never causes a missed or doubled gesture.
       const pending = [...steps];
       synth.onBoundaryCallback = (charIndex) => {
         while (pending.length && pending[0].charIndex <= charIndex) {
-          fire(pending.shift());
+          const step = pending.shift();
+          if (step.point) this.pointAtTarget_(step.point);
+          else if (step.pose) this.hands.gesture(step.pose);
         }
       };
-      // No timed gesture steps; just schedule the closing rest as a safety net.
-      this.queue = [{at: duration + 1.5, rest: true}];
-      this.timer = 0;
       synth
         .speak(text)
-        .then(() => {
-          while (pending.length) fire(pending.shift());
-          this.restHands_();
-        })
         .catch(() => {})
         .finally(() => {
           synth.onBoundaryCallback = undefined;
         });
-      return;
     }
-
-    // Fallback: time-based queue (no speech engine available).
-    this.queue = [...steps, {at: duration + 0.8, rest: true}];
-    this.timer = 0;
   }
 
   // ---- scripted (no-key) mode ----
