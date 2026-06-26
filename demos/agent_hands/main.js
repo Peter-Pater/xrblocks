@@ -26,15 +26,19 @@ import * as xb from 'xrblocks';
 // Scratch vector reused when updating the pointer-ray visualization.
 const scratchTip_ = new THREE.Vector3();
 
-const META_INSTRUCTION = `You are a friendly assistant with a visible pair of hands you gesture with. Reply in one or two short sentences. Embed gesture markup inline using [gesture:NAME] right before the word it emphasizes, where NAME is one of: point, thumbs_up, thumbs_down, fist, victory, rock, open. Use a gesture or two per reply.
+const META_INSTRUCTION = `You are a friendly assistant with a visible pair of hands you gesture with. Reply in one or two short sentences. Embed gesture markup inline right before the word it emphasizes. Use a few gestures per reply.
+
+Static gestures: [gesture:NAME] where NAME is thumbs_up, thumbs_down, fist, victory, rock, or open.
+Motion gestures: [wave] to greet, [beat] for rhythmic emphasis on a stressed word, [size:small|big] to show how big something is, [count:N] to enumerate (1 or 2).
 
 You can physically point at real things in the room. When the user asks where something is, or you refer to a real object, point at it with [point:LABEL] where LABEL is one of the visible objects listed below. Only point at objects from that list. If the user asks about something that is not in the list, say you cannot see it from here and do not point. Do not mention the markup.`;
 
 const SCRIPT = [
-  'Hi there! [gesture:thumbs_up] great to see you.',
+  'Hi there! [wave] great to see you.',
   'Look at that [gesture:point] over on the shelf.',
+  'It was about [size:big] this big!',
   'Two options [gesture:victory] to choose from.',
-  'Got it [gesture:fist], let me handle that.',
+  'Got it [beat] done, let me handle that.',
 ];
 
 class AgentHandsDemo extends xb.Script {
@@ -536,7 +540,13 @@ class AgentHandsDemo extends xb.Script {
     const steps = [];
     for (const gesture of gestures) {
       const at = (gesture.index / Math.max(1, text.length)) * duration;
-      const step = {at, charIndex: gesture.index, pose: gesture.pose};
+      const step = {
+        at,
+        charIndex: gesture.index,
+        pose: gesture.pose,
+        motion: gesture.motion,
+        param: gesture.param,
+      };
       // A point gesture with a resolvable target aims at that object's
       // grounded 3D point.
       if (gesture.target) {
@@ -546,6 +556,33 @@ class AgentHandsDemo extends xb.Script {
       steps.push(step);
     }
     return steps;
+  }
+
+  // Plays one gesture step on the hands (point, motion, or static pose).
+  fireGesture_(step) {
+    if (step.point) {
+      this.pointAtTarget_(step.point);
+    } else if (step.motion) {
+      this.playMotion_(step.motion, step.param);
+    } else if (step.pose) {
+      this.hands.gesture(step.pose);
+    }
+  }
+
+  // Dispatches a motion gesture (beat/wave/size/count) to the hands.
+  playMotion_(motion, param) {
+    if (motion === 'beat') this.hands.beat();
+    else if (motion === 'wave') this.hands.wave();
+    else if (motion === 'size') this.hands.showSize(this.sizeWidth_(param));
+    else if (motion === 'count') this.hands.count(parseInt(param, 10) || 1);
+  }
+
+  // Maps a size word/number to a separation in metres.
+  sizeWidth_(param) {
+    if (param === 'small') return 0.18;
+    if (param === 'big' || param === 'large') return 0.55;
+    const n = parseFloat(param);
+    return Number.isFinite(n) ? Math.max(0.1, Math.min(0.8, n)) : 0.35;
   }
 
   // Speaks `text` and plays its gestures. The timed queue is the guaranteed
@@ -570,9 +607,7 @@ class AgentHandsDemo extends xb.Script {
       const pending = [...steps];
       synth.onBoundaryCallback = (charIndex) => {
         while (pending.length && pending[0].charIndex <= charIndex) {
-          const step = pending.shift();
-          if (step.point) this.pointAtTarget_(step.point);
-          else if (step.pose) this.hands.gesture(step.pose);
+          this.fireGesture_(pending.shift());
         }
       };
       synth
@@ -606,12 +641,10 @@ class AgentHandsDemo extends xb.Script {
     this._clock += dt;
     while (this.queue.length && this.timer >= this.queue[0].at) {
       const step = this.queue.shift();
-      if (step.point) {
-        this.pointAtTarget_(step.point);
-      } else if (step.rest) {
+      if (step.rest) {
         this.restHands_();
-      } else if (step.pose) {
-        this.hands.gesture(step.pose);
+      } else {
+        this.fireGesture_(step);
       }
       if (step.next !== undefined) this.playLine_(step.next);
     }
