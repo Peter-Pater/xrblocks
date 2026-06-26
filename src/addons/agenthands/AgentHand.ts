@@ -18,9 +18,12 @@ const WRIST_BONE_INDEX = 0;
 const INDEX_TIP_BONE_INDEX = 10;
 
 // How far the hand reaches toward a target it points at: a fraction of the
-// distance, capped so it stays a believable arm's reach from its rest spot.
+// distance, capped so it stays a believable arm's reach from its rest spot,
+// and always stopping a standoff distance short of the target so the hand
+// points from a stable angle instead of crowding (and mis-aiming at) it.
 const REACH_FRACTION = 0.45;
 const MAX_REACH = 0.35;
+const MIN_STANDOFF = 0.55;
 
 const scratchPosition = new THREE.Vector3();
 const scratchQuaternion = new THREE.Quaternion();
@@ -32,6 +35,7 @@ const scratchWrist = new THREE.Vector3();
 const scratchTip = new THREE.Vector3();
 const scratchGoal = new THREE.Vector3();
 const scratchGoalQuat = new THREE.Quaternion();
+const scratchPivot = new THREE.Vector3();
 
 /**
  * Smoothly moves a hand's bones toward a target set of joint transforms.
@@ -161,20 +165,41 @@ export class AgentHand {
     this.setPose(SimulatorHandPose.POINTING);
     this.captureHome_();
 
-    // Target in the parent frame, and the capped reach position toward it.
+    // Target in the parent frame, and the reach position toward it. Reach a
+    // fraction of the way (capped), but always stop `MIN_STANDOFF` short of the
+    // target so the finger points from a stable distance rather than crowding
+    // the object (which makes the aim direction ill-conditioned).
     parent.worldToLocal(scratchTarget.copy(targetWorld));
     scratchDir.copy(scratchTarget).sub(this.homePosition);
     const distance = scratchDir.length();
     if (distance > 1e-4) {
-      scratchDir.multiplyScalar(Math.min(REACH_FRACTION, MAX_REACH / distance));
+      const reach = Math.max(
+        0,
+        Math.min(REACH_FRACTION * distance, MAX_REACH, distance - MIN_STANDOFF)
+      );
+      scratchDir.multiplyScalar(reach / distance);
+    } else {
+      scratchDir.set(0, 0, 0);
     }
     this.reachPosition.copy(this.homePosition).add(scratchDir);
     this.reaching = true;
 
+    // The finger pivots at the wrist, which is offset ~0.1 m from the root.
+    // For close targets that offset dominates the aim angle, so compute the
+    // direction from the wrist's current world position (re-aimed each frame,
+    // it converges) rather than from the root/reach position.
+    const wrist = this.bones[WRIST_BONE_INDEX];
+    if (wrist) {
+      wrist.getWorldPosition(scratchPivot);
+      parent.worldToLocal(scratchPivot);
+    } else {
+      scratchPivot.copy(this.reachPosition);
+    }
+
     // Direction the posed index finger points, with the root un-rotated.
     const localDir = this.measurePointDirection_();
-    // Aim from where the hand will end up toward the target.
-    scratchDir.copy(scratchTarget).sub(this.reachPosition).normalize();
+    // Aim the finger from the wrist toward the target.
+    scratchDir.copy(scratchTarget).sub(scratchPivot).normalize();
     this.targetQuaternion.setFromUnitVectors(localDir, scratchDir);
   }
 
