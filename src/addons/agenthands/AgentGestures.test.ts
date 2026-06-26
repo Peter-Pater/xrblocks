@@ -8,7 +8,11 @@ vi.hoisted(() => {
 
 import {SimulatorHandPose} from 'xrblocks';
 
-import {gestureNameToPose, parseAgentGestures} from './AgentGestures';
+import {
+  gestureNameToMotion,
+  gestureNameToPose,
+  parseAgentGestures,
+} from './AgentGestures';
 
 describe('gestureNameToPose', () => {
   it('maps direct names', () => {
@@ -94,5 +98,29 @@ describe('parseAgentGestures', () => {
     expect(gestures[0].index).toBeLessThanOrEqual(text.length);
     // "Look over " -> index 10 in the normalized string.
     expect(text.slice(0, gestures[0].index)).toBe('Look over ');
+  });
+
+  it('parses motion gestures with and without a parameter', () => {
+    const {text, gestures} = parseAgentGestures(
+      'Hi [wave] it was [size:big] huge and [count:2] options [beat] done.'
+    );
+    expect(text).toBe('Hi it was huge and options done.');
+    expect(gestures.map((g) => g.motion)).toEqual([
+      'wave',
+      'size',
+      'count',
+      'beat',
+    ]);
+    expect(gestures[1].param).toBe('big');
+    expect(gestures[2].param).toBe('2');
+    // Motion events carry no pose.
+    expect(gestures[0].pose).toBeUndefined();
+  });
+
+  it('maps motion synonyms', () => {
+    expect(gestureNameToMotion('hello')).toBe('wave');
+    expect(gestureNameToMotion('emphasize')).toBe('beat');
+    expect(gestureNameToMotion('this big')).toBe('size');
+    expect(gestureNameToMotion('thumbs_up')).toBeUndefined();
   });
 });

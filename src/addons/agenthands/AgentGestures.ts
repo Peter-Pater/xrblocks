@@ -20,10 +20,35 @@ export const GESTURE_POSE_MAP: Readonly<Record<string, SimulatorHandPose>> = {
   open: SimulatorHandPose.RELAXED,
 };
 
+/** Motion gesture kinds the agent can emit (animated, not static poses). */
+export type AgentMotionKind = 'beat' | 'wave' | 'size' | 'count';
+
+/** Maps gesture names to animated motion kinds. */
+export const GESTURE_MOTION_MAP: Readonly<Record<string, AgentMotionKind>> = {
+  beat: 'beat',
+  emphasize: 'beat',
+  emphasis: 'beat',
+  wave: 'wave',
+  hi: 'wave',
+  hello: 'wave',
+  hey: 'wave',
+  greet: 'wave',
+  size: 'size',
+  big: 'size',
+  this_big: 'size',
+  measure: 'size',
+  count: 'count',
+  number: 'count',
+};
+
 /** A gesture the agent emitted, located within its (cleaned) reply text. */
 export interface AgentGestureEvent {
-  /** The hand pose to play. */
-  pose: SimulatorHandPose;
+  /** The hand pose to play, for static-pose gestures. */
+  pose?: SimulatorHandPose;
+  /** The animated motion to play, for motion gestures (beat/wave/size/count). */
+  motion?: AgentMotionKind;
+  /** Optional parameter for a motion gesture, e.g. `big` for size, `2` for count. */
+  param?: string;
   /** The raw gesture name from the markup. */
   name: string;
   /** Character index in the cleaned text where the gesture occurs. */
@@ -63,6 +88,19 @@ export function gestureNameToPose(name: string): SimulatorHandPose | undefined {
 }
 
 /**
+ * Resolves a gesture name (e.g. "wave", "this big") to a motion kind.
+ * @param name - The gesture name from the markup.
+ * @returns The matching motion kind, or undefined if it is not a motion.
+ */
+export function gestureNameToMotion(name: string): AgentMotionKind | undefined {
+  const normalized = name
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  return GESTURE_MOTION_MAP[normalized];
+}
+
+/**
  * Parses an agent reply containing gesture markup such as
  * `"That one [gesture:point] over there."` into clean speech text plus the
  * gestures to play, each anchored to where it appeared in the text.
@@ -77,17 +115,19 @@ export function parseAgentGestures(input: string): ParsedAgentSpeech {
   let match: RegExpExecArray | null;
   while ((match = GESTURE_MARKUP.exec(input)) !== null) {
     text += input.slice(lastIndex, match.index);
-    const pose = gestureNameToPose(match[1]);
-    if (pose) {
-      const target = match[2]?.trim().toLowerCase();
-      gestures.push({
-        pose,
-        name: match[1].trim().toLowerCase(),
-        // Index into the final normalized text so timing aligns with what the
-        // caller schedules against `text` (which is whitespace-collapsed).
-        index: text.replace(/\s+/g, ' ').replace(/^\s/, '').length,
-        ...(target ? {target} : {}),
-      });
+    const name = match[1].trim().toLowerCase();
+    // Index into the final normalized text so timing aligns with what the
+    // caller schedules against `text` (which is whitespace-collapsed).
+    const index = text.replace(/\s+/g, ' ').replace(/^\s/, '').length;
+    const param = match[2]?.trim().toLowerCase();
+    const motion = gestureNameToMotion(match[1]);
+    if (motion) {
+      gestures.push({motion, name, index, ...(param ? {param} : {})});
+    } else {
+      const pose = gestureNameToPose(match[1]);
+      if (pose) {
+        gestures.push({pose, name, index, ...(param ? {target: param} : {})});
+      }
     }
     lastIndex = match.index + match[0].length;
   }
