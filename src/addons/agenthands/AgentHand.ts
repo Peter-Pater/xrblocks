@@ -160,6 +160,20 @@ export class AgentHand {
     this.reaching = false;
   }
 
+  /**
+   * Writes the world-space position of the index fingertip into `out` (falls
+   * back to the hand root if the bone is missing). Useful for drawing a pointer
+   * ray from the fingertip.
+   * @param out - Vector to write into.
+   * @returns The same `out` vector.
+   */
+  getIndexTipWorld(out = new THREE.Vector3()): THREE.Vector3 {
+    const tip = this.bones[INDEX_TIP_BONE_INDEX];
+    if (tip) tip.getWorldPosition(out);
+    else this.root.getWorldPosition(out);
+    return out;
+  }
+
   // Captures the current root position as "home" the first time it is needed.
   private captureHome_() {
     if (this.homeCaptured) return;
