@@ -119,7 +119,9 @@ class AgentHandsDemo extends xb.Script {
     // Resting in front of the user in a neutral, level pose; the head-anchor
     // keeps this each frame.
     this.hands.position.set(0, 1.25, -0.7);
-    this.hands.rotation.set(REST_TILT_X, 0, REST_ROLL_Z);
+    // Half-turn about vertical so the hands face the user (the model's neutral
+    // orientation faces away).
+    this.hands.rotation.set(REST_TILT_X, Math.PI, REST_ROLL_Z);
     this.hands.left.root.position.set(-0.16, 0, 0);
     this.hands.right.root.position.set(0.16, 0, 0);
     xb.core.scene.add(this.hands);
@@ -228,9 +230,15 @@ class AgentHandsDemo extends xb.Script {
       leanX = THREE.MathUtils.clamp(-this._forward.y * 0.25, -0.25, 0.25);
     }
     const sway = Math.sin(this._clock * 0.8) * 0.02;
-    // Level rest orientation (REST_TILT_X / REST_ROLL_Z are 0); lean adds a
-    // gentle tilt toward the pointing target and an idle sway.
-    this._euler.set(REST_TILT_X + leanX, yaw + lean + sway, REST_ROLL_Z, 'YXZ');
+    // Level rest orientation (REST_TILT_X / REST_ROLL_Z are 0), plus a half-turn
+    // about vertical (Math.PI) so the hands face the user. Lean adds a gentle
+    // tilt toward the pointing target and an idle sway.
+    this._euler.set(
+      REST_TILT_X + leanX,
+      yaw + lean + sway + Math.PI,
+      REST_ROLL_Z,
+      'YXZ'
+    );
     this._anchorQuat.setFromEuler(this._euler);
     this.hands.quaternion.slerp(this._anchorQuat, 0.08);
   }
