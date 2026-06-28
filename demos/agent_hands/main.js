@@ -603,10 +603,29 @@ class AgentHandsDemo extends xb.Script {
       if (step.motion === 'wave') {
         this.hands.gesture(xb.SimulatorHandPose.NEUTRAL, 'right');
       }
+    } else if (step.pose === xb.SimulatorHandPose.POINTING) {
+      // A point gesture with no grounded object: aim outward into the room.
+      // Without this the bare pose points the finger back at the user.
+      this.pointAtTarget_(this.defaultPointTarget_());
     } else if (step.pose) {
       this.hands.gesture(step.pose);
       this.hands.clearOrientation();
     }
+  }
+
+  // A point target ~1.5 m ahead of the user (into the room, slightly down) for
+  // point gestures that did not resolve to a detected object.
+  defaultPointTarget_() {
+    const cam = xb.core.camera;
+    cam.getWorldPosition(this._camPos);
+    cam.getWorldQuaternion(this._camQuat);
+    this._euler.setFromQuaternion(this._camQuat, 'YXZ');
+    const yaw = this._euler.y;
+    this._forward.set(Math.sin(yaw), 0, Math.cos(yaw));
+    return this._camPos
+      .clone()
+      .addScaledVector(this._forward, -1.5)
+      .add(new THREE.Vector3(0, -0.2, 0));
   }
 
   // Dispatches a motion gesture (beat/wave/size/count) to the hands.
