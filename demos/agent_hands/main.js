@@ -26,10 +26,10 @@ import * as xb from 'xrblocks';
 // Scratch vector reused when updating the pointer-ray visualization.
 const scratchTip_ = new THREE.Vector3();
 
-// Resting orientation of the hand pair: palms open toward the ceiling, fingers
-// forward, a relaxed offering pose. X tilts the
-// open palms up to face the ceiling; no roll is needed.
-const REST_TILT_X = Math.PI / 2;
+// Resting orientation of the hand pair: level, no tilt. The hands rest in front
+// of the user in a neutral, relaxed pose rather than the old palms-up "offering"
+// tilt.
+const REST_TILT_X = 0;
 const REST_ROLL_Z = 0;
 
 // Emblematic gestures read as upside-down if they inherit the palms-up rest
@@ -116,8 +116,8 @@ class AgentHandsDemo extends xb.Script {
     xb.core.scene.add(key);
 
     await this.hands.load();
-    // Resting in front of the user, palms open toward the ceiling and fingers
-    // forward (a relaxed offering pose); the head-anchor keeps this each frame.
+    // Resting in front of the user in a neutral, level pose; the head-anchor
+    // keeps this each frame.
     this.hands.position.set(0, 1.25, -0.7);
     this.hands.rotation.set(REST_TILT_X, 0, REST_ROLL_Z);
     this.hands.left.root.position.set(-0.16, 0, 0);
@@ -228,8 +228,8 @@ class AgentHandsDemo extends xb.Script {
       leanX = THREE.MathUtils.clamp(-this._forward.y * 0.25, -0.25, 0.25);
     }
     const sway = Math.sin(this._clock * 0.8) * 0.02;
-    // Rest is palms-up toward the ceiling (REST_TILT_X / REST_ROLL_Z); lean adds
-    // a gentle tilt toward the pointing target and an idle sway.
+    // Level rest orientation (REST_TILT_X / REST_ROLL_Z are 0); lean adds a
+    // gentle tilt toward the pointing target and an idle sway.
     this._euler.set(REST_TILT_X + leanX, yaw + lean + sway, REST_ROLL_Z, 'YXZ');
     this._anchorQuat.setFromEuler(this._euler);
     this.hands.quaternion.slerp(this._anchorQuat, 0.08);
