@@ -598,6 +598,11 @@ class AgentHandsDemo extends xb.Script {
     if (step.motion) {
       this.hands.clearOrientation();
       this.playMotion_(step.motion, step.param);
+      // A wave reads better with flat, open fingers; the wave's RELAXED pose
+      // curls them slightly.
+      if (step.motion === 'wave') {
+        this.hands.gesture(xb.SimulatorHandPose.NEUTRAL, 'right');
+      }
     } else if (step.pose) {
       this.hands.gesture(step.pose);
       this.hands.clearOrientation();
