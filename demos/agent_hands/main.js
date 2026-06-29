@@ -63,6 +63,8 @@ class AgentHandsDemo extends xb.Script {
     // Accumulated speech + silence timer so a pause doesn't cut the user off.
     this._speech = '';
     this._speechTimer = null;
+    // Push-to-talk: only accept mic input between a talk press and the reply.
+    this._listening = false;
     this.detectedObjects = [];
     this.lastDetectAt = 0;
     this.scanning_ = false;
@@ -395,12 +397,16 @@ class AgentHandsDemo extends xb.Script {
     const recognizer = xb.core.sound?.speechRecognizer;
     if (button) {
       button.style.display = 'block';
-      button.addEventListener('click', () => recognizer?.start());
+      button.addEventListener('click', () => {
+        this._listening = true;
+        recognizer?.start();
+      });
     }
     recognizer?.addEventListener('result', (event) => {
-      // Ignore the mic while the agent is talking/replying, otherwise it hears
-      // its own TTS (continuous mode) and answers itself.
-      if (this.busy || this._speaking) {
+      // Push-to-talk: only listen between a talk press and the reply. Continuous
+      // mode keeps the mic open, so without this it hears its own TTS / ambient
+      // sound and replies to itself.
+      if (!this._listening || this.busy || this._speaking) {
         this._speech = '';
         clearTimeout(this._speechTimer);
         return;
@@ -417,6 +423,7 @@ class AgentHandsDemo extends xb.Script {
       this._speechTimer = setTimeout(() => {
         const said = (this._speech || text).trim();
         this._speech = '';
+        this._listening = false;
         recognizer.stop?.();
         if (said) this.respond_(said);
       }, SPEECH_SILENCE_MS);
