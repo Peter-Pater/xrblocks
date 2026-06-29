@@ -419,9 +419,9 @@ class AgentHandsDemo extends xb.Script {
         prompt: `${META_INSTRUCTION}\n\n${seen}\n\nUser: ${userText}\nAssistant:`,
       });
       const reply = typeof result === 'string' ? result : (result?.text ?? '');
-      // Safety net: if a detection JSON reply still slips through, don't read
-      // it aloud.
-      const clean = /^\s*[[{]/.test(reply.trim()) ? '' : reply;
+      // Safety net: drop a detection-JSON reply that slips through ("[{...}]" or
+      // "{...}"), but not a normal reply that opens with a gesture tag ("[wave]").
+      const clean = /^\s*(\[\s*\{|\{)/.test(reply.trim()) ? '' : reply;
       const {text, gestures} = parseAgentGestures(clean);
       this.speakWithGestures_(
         text || 'Sorry, could you say that again?',
