@@ -37,6 +37,8 @@ Timing. The paper aligns each gesture to the onset and span of its trigger word,
 
 Grounding. The paper builds an object registry by having the user look at each object and confirm it ("register this"), casting an eye-gaze ray into a scene-understanding module that returns a semantic label and an estimated 3D bounding box per object. Its own limitation section notes this pre-scan constrains the agent to relatively static scenes. This demo takes a different trade-off: it detects the whole room in a single pass and keeps re-grounding in the background as you move, so it is not tied to a one-time scan, but the grounding is coarser (a single depth-mesh point per object rather than a region-level oriented box) and there is no per-object gaze confirmation step.
 
+Movement. In the paper the agent relocates through the space to reach a target, moving toward the object it is discussing and taking freeform paths (for example passing through a table on the way). This demo keeps the hands and orb anchored in front of you and points from there; they follow you as you walk but do not travel out to the object.
+
 User gaze. The paper reads where the user is looking, both to register objects and as conversational input. This demo does not read user gaze at all: the orb gazes at whatever the agent is pointing at, but nothing is driven by where you look.
 
 Maturity. Most of the tuning happened in the desktop simulator, so the in-headset path is wired but less exercised. The scripted no-key mode is a lightweight preview that plays a few static poses so you can see the hands move without a Gemini key; the full gesture range only runs in the interactive loop.
