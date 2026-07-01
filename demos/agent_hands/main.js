@@ -16,6 +16,7 @@ import {
   AgentSpeechConductor,
   AgentWorld,
   buildGestureSteps,
+  estimateSpeechDuration,
   parseAgentGestures,
 } from 'xrblocks/addons/agenthands/index.js';
 import * as xb from 'xrblocks';
@@ -44,6 +45,28 @@ const SPEECH_SILENCE_MS = 1000;
 // so the agent has something to point at immediately on reload (a fresh scan
 // replaces it).
 const STORAGE_KEY = 'agent_hands.objects';
+
+// Head-anchor tuning: where the hands and orb sit relative to the user, and how
+// quickly they follow as the user walks and turns.
+const HANDS_FORWARD_M = 0.7; // distance in front of the user
+const HANDS_HEIGHT_M = -0.35; // below eye level
+const HEAD_FORWARD_M = 0.75; // orb sits a touch further out
+const HEAD_HEIGHT_M = 0.02; // orb near eye level
+const ANCHOR_LERP = 0.08; // per-frame follow smoothing
+const BOB_FREQ = 1.4; // idle breathing bob
+const BOB_AMP_M = 0.012;
+const SWAY_FREQ = 0.8; // idle side-to-side sway
+const SWAY_AMP = 0.02;
+const LEAN_CLAMP = 0.5; // max yaw lean toward a pointing target (rad)
+const LEAN_X_GAIN = 0.25; // pitch lean per unit target height
+const LEAN_X_CLAMP = 0.25; // max pitch lean (rad)
+
+// Scripted (no-key) pacing, in seconds: the gap before the first pose, between
+// poses, before the closing rest, and before advancing to the next line.
+const SCRIPT_START_S = 0.4;
+const SCRIPT_STEP_S = 1.2;
+const SCRIPT_REST_S = 0.4;
+const SCRIPT_ADVANCE_S = 2.2;
 
 const META_INSTRUCTION = `You are a friendly assistant with a visible pair of hands you gesture with. Reply in one or two short sentences. Embed gesture markup inline right before the word it emphasizes. Use a few gestures per reply.
 
@@ -207,26 +230,26 @@ class AgentHandsDemo extends xb.Script {
 
     // Position: 0.7 m in front of the user at the yaw heading, a touch below
     // eye level, with a slow breathing bob.
-    const bob = Math.sin(this._clock * 1.4) * 0.012;
+    const bob = Math.sin(this._clock * BOB_FREQ) * BOB_AMP_M;
     this._forward.set(Math.sin(yaw), 0, Math.cos(yaw));
     this._anchorPos
       .copy(this._camPos)
-      .addScaledVector(this._forward, -0.7)
-      .add(new THREE.Vector3(0, -0.35 + bob, 0));
+      .addScaledVector(this._forward, -HANDS_FORWARD_M)
+      .add(new THREE.Vector3(0, HANDS_HEIGHT_M + bob, 0));
     if (!this._anchored) {
       this.hands.position.copy(this._anchorPos);
       this._anchored = true;
     } else {
-      this.hands.position.lerp(this._anchorPos, 0.08);
+      this.hands.position.lerp(this._anchorPos, ANCHOR_LERP);
     }
 
     // The orb sits above and between the hands, near eye level.
     this._forward.set(Math.sin(yaw), 0, Math.cos(yaw));
     this._headPos
       .copy(this._camPos)
-      .addScaledVector(this._forward, -0.75)
-      .add(new THREE.Vector3(0, 0.02 + bob, 0));
-    this.head.root.position.lerp(this._headPos, 0.08);
+      .addScaledVector(this._forward, -HEAD_FORWARD_M)
+      .add(new THREE.Vector3(0, HEAD_HEIGHT_M + bob, 0));
+    this.head.root.position.lerp(this._headPos, ANCHOR_LERP);
 
     // Orientation: face the user (yaw) + the fingers-up tilt, plus a small
     // lean toward the pointing target and a gentle idle sway.
@@ -236,12 +259,16 @@ class AgentHandsDemo extends xb.Script {
       this._forward.copy(this.animator.target).sub(this.hands.position);
       lean = THREE.MathUtils.clamp(
         Math.atan2(this._forward.x, -this._forward.z) - yaw,
-        -0.5,
-        0.5
+        -LEAN_CLAMP,
+        LEAN_CLAMP
       );
-      leanX = THREE.MathUtils.clamp(-this._forward.y * 0.25, -0.25, 0.25);
+      leanX = THREE.MathUtils.clamp(
+        -this._forward.y * LEAN_X_GAIN,
+        -LEAN_X_CLAMP,
+        LEAN_X_CLAMP
+      );
     }
-    const sway = Math.sin(this._clock * 0.8) * 0.02;
+    const sway = Math.sin(this._clock * SWAY_FREQ) * SWAY_AMP;
     // Level rest orientation (REST_TILT_X / REST_ROLL_Z are 0), plus a half-turn
     // about vertical (Math.PI) so the hands face the user. Lean adds a gentle
     // tilt toward the pointing target and an idle sway.
@@ -252,7 +279,7 @@ class AgentHandsDemo extends xb.Script {
       'YXZ'
     );
     this._anchorQuat.setFromEuler(this._euler);
-    this.hands.quaternion.slerp(this._anchorQuat, 0.08);
+    this.hands.quaternion.slerp(this._anchorQuat, ANCHOR_LERP);
   }
 
   // Updates the pointer ray + ring while pointing; hides it otherwise.
@@ -515,7 +542,7 @@ class AgentHandsDemo extends xb.Script {
   // the timeline and syncs it to the spoken words.
   speak_(text, gestures) {
     this.setStatus_(`agent: "${text}"`);
-    const duration = Math.max(1.2, text.length * 0.06);
+    const duration = estimateSpeechDuration(text);
     const steps = buildGestureSteps(text, gestures, duration, (label) =>
       this.world.pointFor(label)
     );
@@ -528,16 +555,20 @@ class AgentHandsDemo extends xb.Script {
     const {text, gestures} = parseAgentGestures(SCRIPT[index % SCRIPT.length]);
     this.setStatus_(`agent: "${text}"`);
     const entries = [];
-    let t = 0.4;
+    let t = SCRIPT_START_S;
     for (const gesture of gestures) {
       entries.push({at: t, step: {at: t, charIndex: 0, pose: gesture.pose}});
-      t += 1.2;
+      t += SCRIPT_STEP_S;
     }
     entries.push({
-      at: t + 0.4,
-      step: {at: t + 0.4, charIndex: 0, pose: xb.SimulatorHandPose.RELAXED},
+      at: t + SCRIPT_REST_S,
+      step: {
+        at: t + SCRIPT_REST_S,
+        charIndex: 0,
+        pose: xb.SimulatorHandPose.RELAXED,
+      },
     });
-    entries.push({at: t + 2.2, next: (index + 1) % SCRIPT.length});
+    entries.push({at: t + SCRIPT_ADVANCE_S, next: (index + 1) % SCRIPT.length});
     this.conductor.playTimeline(entries);
   }
 
