@@ -1,5 +1,24 @@
 import type {GestureStep} from './AgentGestures';
 
+// Extra time after the estimated speech duration before the hands rest, so the
+// last gesture holds briefly rather than snapping back the instant TTS ends.
+const REST_DELAY_S = 0.8;
+
+// Speech-duration estimate: a per-character rate with a floor so even a very
+// short reply leaves time for its gestures to play.
+const MIN_SPEECH_DURATION_S = 1.2;
+const SECONDS_PER_CHAR = 0.06;
+
+/**
+ * Estimates how long `text` takes to speak, in seconds. Used to schedule the
+ * gesture timeline when the synthesizer does not report its own duration.
+ * @param text - The text to be spoken.
+ * @returns The estimated duration in seconds.
+ */
+export function estimateSpeechDuration(text: string): number {
+  return Math.max(MIN_SPEECH_DURATION_S, text.length * SECONDS_PER_CHAR);
+}
+
 /**
  * The minimal speech-synthesizer surface the conductor uses: speak some text,
  * and (optionally) report word boundaries as they are spoken.
@@ -77,7 +96,7 @@ export class AgentSpeechConductor {
   speak(text: string, steps: GestureStep[], duration: number) {
     this.queue = [
       ...steps.map((step) => ({at: step.at, step})),
-      {at: duration + 0.8, rest: true},
+      {at: duration + REST_DELAY_S, rest: true},
     ];
     this.timer = 0;
     this.fired.clear();
