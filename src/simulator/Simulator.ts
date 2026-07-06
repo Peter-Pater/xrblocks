@@ -9,7 +9,6 @@ import {Options} from '../core/Options';
 import {Script} from '../core/Script';
 import {Depth} from '../depth/Depth';
 import {Input} from '../input/Input';
-import {Handedness} from '../input/Hands';
 
 import {SimulatorCamera} from './SimulatorCamera';
 import {AVERAGE_IPD_METERS, SimulatorRenderMode} from './SimulatorConstants';
@@ -306,25 +305,5 @@ export class Simulator extends Script {
     }
     this.renderer.render(this.simulatorScene, camera);
     this.renderer.clearDepth();
-  }
-
-  isReachable(
-    object: THREE.Object3D | THREE.Vector3,
-    handIndex?: Handedness
-  ): boolean {
-    if (!this.options?.reachDistance?.enabled) {
-      return true;
-    }
-    const pos = object instanceof THREE.Vector3 ? object : object.position;
-    const radius = this.options.reachDistance.radius;
-    const leftDist = pos.distanceTo(this.hands.leftController.position);
-    const rightDist = pos.distanceTo(this.hands.rightController.position);
-
-    if (handIndex === Handedness.LEFT) {
-      return leftDist <= radius;
-    } else if (handIndex === Handedness.RIGHT) {
-      return rightDist <= radius;
-    }
-    return leftDist <= radius || rightDist <= radius;
   }
 }

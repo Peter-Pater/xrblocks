@@ -198,10 +198,19 @@ export class SimulatorControlMode {
         vector3.set(originObj.x, originObj.y, originObj.z);
         const localPos =
           this.simulatorControllerState.localControllerPositions[i];
-        if (localPos.distanceTo(vector3) > radius) {
+        const dist = localPos.distanceTo(vector3);
+        if (i === 0) {
+          this.hands.leftHandAtMaxRange = dist >= radius;
+        } else {
+          this.hands.rightHandAtMaxRange = dist >= radius;
+        }
+        if (dist > radius) {
           localPos.sub(vector3).clampLength(0, radius).add(vector3);
         }
       }
+    } else {
+      this.hands.leftHandAtMaxRange = false;
+      this.hands.rightHandAtMaxRange = false;
     }
     this.camera.updateMatrixWorld();
     for (let i = 0; i < 2 && i < this.input.controllers.length; i++) {

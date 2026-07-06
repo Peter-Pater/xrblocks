@@ -5,6 +5,7 @@ import {Keycodes} from '../../utils/Keycodes';
 import {SimulatorControlMode} from './SimulatorControlMode';
 
 const vector3 = new THREE.Vector3();
+const originVec = new THREE.Vector3();
 const {A_CODE, D_CODE, E_CODE, Q_CODE, S_CODE, SPACE_CODE, T_CODE, W_CODE} =
   Keycodes;
 
@@ -31,10 +32,9 @@ export class SimulatorControllerMode extends SimulatorControlMode {
   updateControllerPositions() {
     const deltaTime = this.timer.getDelta();
     const downKeys = this.downKeys;
+    const idx = this.simulatorControllerState.currentControllerIndex;
     const localPos =
-      this.simulatorControllerState.localControllerPositions[
-        this.simulatorControllerState.currentControllerIndex
-      ];
+      this.simulatorControllerState.localControllerPositions[idx];
     vector3
       .set(
         Number(downKeys.has(D_CODE)) - Number(downKeys.has(A_CODE)),
@@ -42,6 +42,17 @@ export class SimulatorControllerMode extends SimulatorControlMode {
         Number(downKeys.has(S_CODE)) - Number(downKeys.has(W_CODE))
       )
       .multiplyScalar(deltaTime);
+    if (this.simulatorOptions?.reachDistance.enabled) {
+      const {radius, leftHandOrigin, rightHandOrigin} =
+        this.simulatorOptions.reachDistance;
+      const originObj = idx === 0 ? leftHandOrigin : rightHandOrigin;
+      originVec.set(originObj.x, originObj.y, originObj.z);
+      const currentDist = localPos.distanceTo(originVec);
+      const newDist = localPos.clone().add(vector3).distanceTo(originVec);
+      if (currentDist >= radius && newDist >= currentDist) {
+        vector3.set(0, 0, 0);
+      }
+    }
     localPos.add(vector3);
 
     // Gamepad: left stick moves hand on XZ; configurable buttons on Y.
@@ -53,6 +64,17 @@ export class SimulatorControllerMode extends SimulatorControlMode {
       const downVal = gp.getButtonValue(gp.bindings.getBinding('moveDown'));
       const upVal = gp.getButtonValue(gp.bindings.getBinding('moveUp'));
       vector3.set(lx, upVal - downVal, ly).multiplyScalar(deltaTime);
+      if (this.simulatorOptions?.reachDistance.enabled) {
+        const {radius, leftHandOrigin, rightHandOrigin} =
+          this.simulatorOptions.reachDistance;
+        const originObj = idx === 0 ? leftHandOrigin : rightHandOrigin;
+        originVec.set(originObj.x, originObj.y, originObj.z);
+        const currentDist = localPos.distanceTo(originVec);
+        const newDist = localPos.clone().add(vector3).distanceTo(originVec);
+        if (currentDist >= radius && newDist >= currentDist) {
+          vector3.set(0, 0, 0);
+        }
+      }
       localPos.add(vector3);
     }
 
