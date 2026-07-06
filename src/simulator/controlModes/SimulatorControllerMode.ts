@@ -6,6 +6,9 @@ import {SimulatorControlMode} from './SimulatorControlMode';
 
 const vector3 = new THREE.Vector3();
 const originVec = new THREE.Vector3();
+const forwardVec = new THREE.Vector3(0, 0, -1);
+const currentOffsetVec = new THREE.Vector3();
+const newOffsetVec = new THREE.Vector3();
 const {A_CODE, D_CODE, E_CODE, Q_CODE, S_CODE, SPACE_CODE, T_CODE, W_CODE} =
   Keycodes;
 
@@ -42,14 +45,26 @@ export class SimulatorControllerMode extends SimulatorControlMode {
         Number(downKeys.has(S_CODE)) - Number(downKeys.has(W_CODE))
       )
       .multiplyScalar(deltaTime);
-    if (this.simulatorOptions?.reachDistance.enabled) {
+    const distanceEnabled = !!this.simulatorOptions?.reachDistance.enabled;
+    const angleEnabled = !!this.simulatorOptions?.reachAngle.enabled;
+    if (distanceEnabled || angleEnabled) {
       const {radius, leftHandOrigin, rightHandOrigin} =
-        this.simulatorOptions.reachDistance;
+        this.simulatorOptions!.reachDistance;
+      const angle = this.simulatorOptions!.reachAngle.angle;
       const originObj = idx === 0 ? leftHandOrigin : rightHandOrigin;
       originVec.set(originObj.x, originObj.y, originObj.z);
-      const currentDist = localPos.distanceTo(originVec);
-      const newDist = localPos.clone().add(vector3).distanceTo(originVec);
-      if (currentDist >= radius && newDist >= currentDist) {
+      currentOffsetVec.copy(localPos).sub(originVec);
+      newOffsetVec.copy(currentOffsetVec).add(vector3);
+      const currentDist = currentOffsetVec.length();
+      const newDist = newOffsetVec.length();
+      const currentAngle = currentOffsetVec.angleTo(forwardVec);
+      const newAngle = newOffsetVec.angleTo(forwardVec);
+      const maxAngleRad = THREE.MathUtils.degToRad(angle / 2);
+      const atRadiusEdge =
+        distanceEnabled && currentDist >= radius && newDist >= currentDist;
+      const atAngleEdge =
+        angleEnabled && currentAngle >= maxAngleRad && newAngle >= currentAngle;
+      if (atRadiusEdge || atAngleEdge) {
         vector3.set(0, 0, 0);
       }
     }
@@ -64,14 +79,28 @@ export class SimulatorControllerMode extends SimulatorControlMode {
       const downVal = gp.getButtonValue(gp.bindings.getBinding('moveDown'));
       const upVal = gp.getButtonValue(gp.bindings.getBinding('moveUp'));
       vector3.set(lx, upVal - downVal, ly).multiplyScalar(deltaTime);
-      if (this.simulatorOptions?.reachDistance.enabled) {
+      const distanceEnabled = !!this.simulatorOptions?.reachDistance.enabled;
+      const angleEnabled = !!this.simulatorOptions?.reachAngle.enabled;
+      if (distanceEnabled || angleEnabled) {
         const {radius, leftHandOrigin, rightHandOrigin} =
-          this.simulatorOptions.reachDistance;
+          this.simulatorOptions!.reachDistance;
+        const angle = this.simulatorOptions!.reachAngle.angle;
         const originObj = idx === 0 ? leftHandOrigin : rightHandOrigin;
         originVec.set(originObj.x, originObj.y, originObj.z);
-        const currentDist = localPos.distanceTo(originVec);
-        const newDist = localPos.clone().add(vector3).distanceTo(originVec);
-        if (currentDist >= radius && newDist >= currentDist) {
+        currentOffsetVec.copy(localPos).sub(originVec);
+        newOffsetVec.copy(currentOffsetVec).add(vector3);
+        const currentDist = currentOffsetVec.length();
+        const newDist = newOffsetVec.length();
+        const currentAngle = currentOffsetVec.angleTo(forwardVec);
+        const newAngle = newOffsetVec.angleTo(forwardVec);
+        const maxAngleRad = THREE.MathUtils.degToRad(angle / 2);
+        const atRadiusEdge =
+          distanceEnabled && currentDist >= radius && newDist >= currentDist;
+        const atAngleEdge =
+          angleEnabled &&
+          currentAngle >= maxAngleRad &&
+          newAngle >= currentAngle;
+        if (atRadiusEdge || atAngleEdge) {
           vector3.set(0, 0, 0);
         }
       }
