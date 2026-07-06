@@ -7,6 +7,7 @@ import {SimulatorRenderMode} from '../SimulatorConstants';
 import {SimulatorControllerState} from '../SimulatorControllerState';
 import {SimulatorHands} from '../SimulatorHands.js';
 import {SimulatorHandPose} from '../handPoses/HandPoses';
+import {SimulatorOptions} from '../SimulatorOptions';
 
 const {A_CODE, D_CODE, E_CODE, Q_CODE, S_CODE, W_CODE} = Keycodes;
 const vector3 = new THREE.Vector3();
@@ -18,6 +19,7 @@ export class SimulatorControlMode {
   input!: Input;
   timer!: THREE.Timer;
   domElement?: HTMLCanvasElement;
+  simulatorOptions?: SimulatorOptions;
 
   /**
    * Create a SimulatorControlMode
@@ -39,16 +41,19 @@ export class SimulatorControlMode {
     input,
     timer,
     domElement,
+    simulatorOptions,
   }: {
     camera: THREE.Camera;
     input: Input;
     timer: THREE.Timer;
     domElement?: HTMLCanvasElement;
+    simulatorOptions?: SimulatorOptions;
   }) {
     this.camera = camera;
     this.input = input;
     this.timer = timer;
     this.domElement = domElement;
+    this.simulatorOptions = simulatorOptions;
     input.gamepadController.init({camera});
   }
 
@@ -185,6 +190,19 @@ export class SimulatorControlMode {
   }
 
   updateControllerPositions() {
+    if (this.simulatorOptions?.reachDistance.enabled) {
+      const {radius, leftHandOrigin, rightHandOrigin} =
+        this.simulatorOptions.reachDistance;
+      for (let i = 0; i < 2; i++) {
+        const originObj = i === 0 ? leftHandOrigin : rightHandOrigin;
+        vector3.set(originObj.x, originObj.y, originObj.z);
+        const localPos =
+          this.simulatorControllerState.localControllerPositions[i];
+        if (localPos.distanceTo(vector3) > radius) {
+          localPos.sub(vector3).clampLength(0, radius).add(vector3);
+        }
+      }
+    }
     this.camera.updateMatrixWorld();
     for (let i = 0; i < 2 && i < this.input.controllers.length; i++) {
       const controller = this.input.controllers[i];

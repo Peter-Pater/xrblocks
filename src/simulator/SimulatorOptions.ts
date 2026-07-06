@@ -86,6 +86,12 @@ export class SimulatorOptions {
   renderToRenderTexture = true;
   // Blending mode when rendering the virtual scene.
   blendingMode: 'normal' | 'screen' = 'normal';
+  reachDistance = {
+    enabled: false,
+    radius: 0.75,
+    leftHandOrigin: {x: -0.2, y: -0.2, z: 0},
+    rightHandOrigin: {x: 0.2, y: -0.2, z: 0},
+  };
 
   constructor(options?: DeepReadonly<DeepPartial<SimulatorOptions>>) {
     deepMerge(this, options);
