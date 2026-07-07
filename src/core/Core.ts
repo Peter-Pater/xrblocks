@@ -225,6 +225,7 @@ export class Core {
     this.registry.register(this.sound);
     this.registry.register(this.dragManager);
     this.registry.register(this.simulator);
+    this.registry.register(this.simulator.navigation);
     this.registry.register(this.scriptsManager);
     this.registry.register(this.depth);
     this.registry.register(this.world);

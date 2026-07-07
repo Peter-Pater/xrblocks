@@ -30,6 +30,7 @@ export interface SimulatorEnvironment {
   name: string;
   scenePath?: string | null;
   scenePlanesPath?: string | null;
+  navMeshPath?: string | null;
   videoPath?: string;
 }
 
@@ -75,6 +76,10 @@ export class SimulatorOptions {
   };
   stereo = {
     enabled: false,
+  };
+  navigation = {
+    enabled: false,
+    eyeHeight: 1.5,
   };
   deviceCamera = {
     // Whether to enable the simulator camera feed.

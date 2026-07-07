@@ -4,6 +4,7 @@ import {describe, it, expect, vi, beforeEach} from 'vitest';
 import {Input} from '../../input/Input';
 import {SimulatorControllerState} from '../SimulatorControllerState';
 import {SimulatorHands} from '../SimulatorHands';
+import {SimulatorNavigation} from '../SimulatorNavigation';
 import {SimulatorPointerLockMode} from './SimulatorPointerLockMode';
 
 describe('SimulatorPointerLockMode', () => {
@@ -41,6 +42,7 @@ describe('SimulatorPointerLockMode', () => {
       mockState,
       new Set(),
       mockHands,
+      new SimulatorNavigation(),
       vi.fn(),
       vi.fn(),
       vi.fn()

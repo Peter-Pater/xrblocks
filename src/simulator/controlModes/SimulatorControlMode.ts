@@ -3,13 +3,15 @@ import * as THREE from 'three';
 import {GamepadController} from '../../input/GamepadController.js';
 import {Input} from '../../input/Input.js';
 import {Keycodes} from '../../utils/Keycodes';
+import {SimulatorHandPose} from '../handPoses/HandPoses';
 import {SimulatorRenderMode} from '../SimulatorConstants';
 import {SimulatorControllerState} from '../SimulatorControllerState';
 import {SimulatorHands} from '../SimulatorHands.js';
-import {SimulatorHandPose} from '../handPoses/HandPoses';
+import {SimulatorNavigation} from '../SimulatorNavigation';
 
 const {A_CODE, D_CODE, E_CODE, Q_CODE, S_CODE, W_CODE} = Keycodes;
 const vector3 = new THREE.Vector3();
+const desiredCameraPosition = new THREE.Vector3();
 const euler = new THREE.Euler();
 const HAND_POSES = Object.values(SimulatorHandPose);
 
@@ -26,6 +28,7 @@ export class SimulatorControlMode {
     protected simulatorControllerState: SimulatorControllerState,
     protected downKeys: Set<Keycodes>,
     protected hands: SimulatorHands,
+    protected navigation: SimulatorNavigation,
     protected setStereoRenderMode: (_: SimulatorRenderMode) => void,
     protected toggleUserInterface: () => void,
     protected cycleSimulatorMode: () => void = () => {}
@@ -93,15 +96,20 @@ export class SimulatorControlMode {
     const cameraRotation = this.camera.quaternion;
     const cameraPosition = this.camera.position;
     const downKeys = this.downKeys;
-    vector3
-      .set(
-        Number(downKeys.has(D_CODE)) - Number(downKeys.has(A_CODE)),
-        Number(downKeys.has(Q_CODE)) - Number(downKeys.has(E_CODE)),
-        Number(downKeys.has(S_CODE)) - Number(downKeys.has(W_CODE))
-      )
-      .multiplyScalar(deltaTime)
-      .applyQuaternion(cameraRotation);
-    cameraPosition.add(vector3);
+    desiredCameraPosition.copy(cameraPosition);
+    desiredCameraPosition.add(
+      vector3
+        .set(
+          Number(downKeys.has(D_CODE)) - Number(downKeys.has(A_CODE)),
+          this.navigation.constrained
+            ? 0
+            : Number(downKeys.has(Q_CODE)) - Number(downKeys.has(E_CODE)),
+          Number(downKeys.has(S_CODE)) - Number(downKeys.has(W_CODE))
+        )
+        .multiplyScalar(deltaTime)
+        .applyQuaternion(cameraRotation)
+    );
+    this.navigation.applyUserMovement(this.camera, desiredCameraPosition);
 
     // Gamepad stick input (if connected). Skip while the tab isn't
     // focused — the Gamepad API delivers state to every tab, so without
@@ -112,11 +120,14 @@ export class SimulatorControlMode {
 
       // Left stick → move camera.
       if (lx !== 0 || ly !== 0) {
-        vector3
-          .set(lx, 0, ly)
-          .multiplyScalar(deltaTime)
-          .applyQuaternion(cameraRotation);
-        cameraPosition.add(vector3);
+        desiredCameraPosition.copy(cameraPosition);
+        desiredCameraPosition.add(
+          vector3
+            .set(lx, 0, ly)
+            .multiplyScalar(deltaTime)
+            .applyQuaternion(cameraRotation)
+        );
+        this.navigation.applyUserMovement(this.camera, desiredCameraPosition);
       }
 
       // Right stick → look (yaw + pitch).
@@ -131,11 +142,15 @@ export class SimulatorControlMode {
       }
 
       // Configurable vertical movement bindings (defaults LT/RT, analog).
-      const downVal = gp.getButtonValue(gp.bindings.getBinding('moveDown'));
-      const upVal = gp.getButtonValue(gp.bindings.getBinding('moveUp'));
-      const verticalDelta = (upVal - downVal) * deltaTime;
-      if (verticalDelta !== 0) {
-        cameraPosition.y += verticalDelta;
+      if (!this.navigation.constrained) {
+        const downVal = gp.getButtonValue(gp.bindings.getBinding('moveDown'));
+        const upVal = gp.getButtonValue(gp.bindings.getBinding('moveUp'));
+        const verticalDelta = (upVal - downVal) * deltaTime;
+        if (verticalDelta !== 0) {
+          desiredCameraPosition.copy(cameraPosition);
+          desiredCameraPosition.y += verticalDelta;
+          this.navigation.applyUserMovement(this.camera, desiredCameraPosition);
+        }
       }
     }
   }

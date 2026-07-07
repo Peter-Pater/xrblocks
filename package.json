@@ -88,5 +88,8 @@
     "rollup-plugin-dts": {
       "typescript": "$typescript"
     }
+  },
+  "dependencies": {
+    "three-pathfinding": "^1.3.0"
   }
 }
