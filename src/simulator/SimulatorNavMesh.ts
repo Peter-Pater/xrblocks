@@ -9,10 +9,7 @@ const RANDOM_PATH_SAMPLE_ATTEMPTS = 8;
 
 type PathfindingConstructor = {
   new (): PathfindingType;
-  createZone: (
-    geometry: THREE.BufferGeometry,
-    tolerance?: number
-  ) => unknown;
+  createZone: (geometry: THREE.BufferGeometry, tolerance?: number) => unknown;
 };
 type PathfindingNode = ReturnType<PathfindingType['getClosestNode']>;
 type PathfindingZone = {
