@@ -11,39 +11,13 @@ const PATH_Y_OFFSET = 0.04;
 const NAVIGATION_SPEED_METERS_PER_SECOND = 1.2;
 const WAYPOINT_THRESHOLD_METERS = 0.08;
 
-const triangleA = new THREE.Vector3();
-const triangleB = new THREE.Vector3();
-const triangleC = new THREE.Vector3();
-const triangleAB = new THREE.Vector3();
-const triangleAC = new THREE.Vector3();
 const pathStart = new THREE.Vector3();
 const currentFootPosition = new THREE.Vector3();
 const desiredCameraPosition = new THREE.Vector3();
 const waypointDelta = new THREE.Vector3();
 const remainingPathStart = new THREE.Vector3();
 
-function triangleArea(a, b, c) {
-  triangleAB.subVectors(b, a);
-  triangleAC.subVectors(c, a);
-  return triangleAB.cross(triangleAC).length() * 0.5;
-}
-
-function sampleTriangle(a, b, c) {
-  let u = Math.random();
-  let v = Math.random();
-  if (u + v > 1) {
-    u = 1 - u;
-    v = 1 - v;
-  }
-  return new THREE.Vector3()
-    .copy(a)
-    .addScaledVector(triangleAB.subVectors(b, a), u)
-    .addScaledVector(triangleAC.subVectors(c, a), v);
-}
-
 class NavMeshWireframe extends xb.Script {
-  triangles = [];
-  totalArea = 0;
   pathLine = null;
   targetMarker = null;
   pathButton = null;
@@ -76,7 +50,6 @@ class NavMeshWireframe extends xb.Script {
       if (!object.isMesh || !object.geometry) return;
       const geometry = object.geometry.clone();
       geometry.applyMatrix4(object.matrixWorld);
-      this.addNavMeshTriangles(geometry);
       const edges = new THREE.EdgesGeometry(geometry, 1);
       const wireframe = new THREE.LineSegments(
         edges,
@@ -96,31 +69,6 @@ class NavMeshWireframe extends xb.Script {
 
   update() {
     this.updateNavigation();
-  }
-
-  addNavMeshTriangles(geometry) {
-    const positions = geometry.attributes.position;
-    const index = geometry.index;
-    const triangleCount = index ? index.count / 3 : positions.count / 3;
-
-    for (let i = 0; i < triangleCount; i++) {
-      const aIndex = index ? index.getX(i * 3) : i * 3;
-      const bIndex = index ? index.getX(i * 3 + 1) : i * 3 + 1;
-      const cIndex = index ? index.getX(i * 3 + 2) : i * 3 + 2;
-      triangleA.fromBufferAttribute(positions, aIndex);
-      triangleB.fromBufferAttribute(positions, bIndex);
-      triangleC.fromBufferAttribute(positions, cIndex);
-
-      const area = triangleArea(triangleA, triangleB, triangleC);
-      if (area <= 0) continue;
-      this.totalArea += area;
-      this.triangles.push({
-        a: triangleA.clone(),
-        b: triangleB.clone(),
-        c: triangleC.clone(),
-        cumulativeArea: this.totalArea,
-      });
-    }
   }
 
   createPathButton() {
@@ -144,14 +92,10 @@ class NavMeshWireframe extends xb.Script {
   }
 
   showRandomPath() {
-    const target = this.sampleNavMeshPoint();
-    if (!target) return;
-
-    const path = xb.core.simulator.navigation.findPathTo(
-      xb.core.camera.position,
-      target
+    const result = xb.core.simulator.navigation.findRandomPathFrom(
+      xb.core.camera.position
     );
-    if (!path) {
+    if (!result) {
       this.pathButton.textContent = 'No Path';
       window.setTimeout(() => {
         this.pathButton.textContent = 'Random Path';
@@ -161,19 +105,10 @@ class NavMeshWireframe extends xb.Script {
 
     pathStart.copy(xb.core.camera.position);
     pathStart.y -= xb.core.options.simulator.navigation.eyeHeight;
-    this.routePoints = [...path, target];
+    this.routePoints = [...result.path, result.target];
     this.routeIndex = 0;
     this.pathButton.textContent = 'Navigating...';
     this.drawPath([pathStart, ...this.routePoints]);
-  }
-
-  sampleNavMeshPoint() {
-    if (this.triangles.length === 0) return null;
-    const targetArea = Math.random() * this.totalArea;
-    const triangle =
-      this.triangles.find((item) => item.cumulativeArea >= targetArea) ??
-      this.triangles[this.triangles.length - 1];
-    return sampleTriangle(triangle.a, triangle.b, triangle.c);
   }
 
   drawPath(points) {
