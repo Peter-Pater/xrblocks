@@ -1,0 +1,276 @@
+import 'xrblocks/addons/simulator/SimulatorAddons.js';
+
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import * as xb from 'xrblocks';
+
+const NAVMESH_PATH = './navmesh.glb';
+const EYE_HEIGHT = 1.5;
+const START_FOOT_POSITION = {x: 20, y: 0, z: 20};
+const PATH_Y_OFFSET = 0.04;
+const NAVIGATION_SPEED_METERS_PER_SECOND = 1.2;
+const WAYPOINT_THRESHOLD_METERS = 0.08;
+
+const triangleA = new THREE.Vector3();
+const triangleB = new THREE.Vector3();
+const triangleC = new THREE.Vector3();
+const triangleAB = new THREE.Vector3();
+const triangleAC = new THREE.Vector3();
+const pathStart = new THREE.Vector3();
+const currentFootPosition = new THREE.Vector3();
+const desiredCameraPosition = new THREE.Vector3();
+const waypointDelta = new THREE.Vector3();
+const remainingPathStart = new THREE.Vector3();
+
+function triangleArea(a, b, c) {
+  triangleAB.subVectors(b, a);
+  triangleAC.subVectors(c, a);
+  return triangleAB.cross(triangleAC).length() * 0.5;
+}
+
+function sampleTriangle(a, b, c) {
+  let u = Math.random();
+  let v = Math.random();
+  if (u + v > 1) {
+    u = 1 - u;
+    v = 1 - v;
+  }
+  return new THREE.Vector3()
+    .copy(a)
+    .addScaledVector(triangleAB.subVectors(b, a), u)
+    .addScaledVector(triangleAC.subVectors(c, a), v);
+}
+
+class NavMeshWireframe extends xb.Script {
+  triangles = [];
+  totalArea = 0;
+  pathLine = null;
+  targetMarker = null;
+  pathButton = null;
+  routePoints = [];
+  routeIndex = 0;
+
+  async init() {
+    this.add(new THREE.HemisphereLight(0xffffff, 0x666666, 3));
+
+    const loader = new GLTFLoader();
+    let gltf;
+    try {
+      gltf = await loader.loadAsync(NAVMESH_PATH);
+    } catch (error) {
+      console.warn(
+        `Failed to load navmesh wireframe at ${NAVMESH_PATH}.`,
+        error
+      );
+      return;
+    }
+    const group = new THREE.Group();
+
+    gltf.scene.position.set(
+      xb.core.options.simulator.initialScenePosition.x,
+      xb.core.options.simulator.initialScenePosition.y,
+      xb.core.options.simulator.initialScenePosition.z
+    );
+    gltf.scene.updateMatrixWorld(true);
+    gltf.scene.traverse((object) => {
+      if (!object.isMesh || !object.geometry) return;
+      const geometry = object.geometry.clone();
+      geometry.applyMatrix4(object.matrixWorld);
+      this.addNavMeshTriangles(geometry);
+      const edges = new THREE.EdgesGeometry(geometry, 1);
+      const wireframe = new THREE.LineSegments(
+        edges,
+        new THREE.LineBasicMaterial({
+          color: 0x00e5ff,
+          transparent: true,
+          opacity: 0.9,
+          depthTest: false,
+        })
+      );
+      wireframe.renderOrder = 1000;
+      group.add(wireframe);
+    });
+    this.add(group);
+    this.createPathButton();
+  }
+
+  update() {
+    this.updateNavigation();
+  }
+
+  addNavMeshTriangles(geometry) {
+    const positions = geometry.attributes.position;
+    const index = geometry.index;
+    const triangleCount = index ? index.count / 3 : positions.count / 3;
+
+    for (let i = 0; i < triangleCount; i++) {
+      const aIndex = index ? index.getX(i * 3) : i * 3;
+      const bIndex = index ? index.getX(i * 3 + 1) : i * 3 + 1;
+      const cIndex = index ? index.getX(i * 3 + 2) : i * 3 + 2;
+      triangleA.fromBufferAttribute(positions, aIndex);
+      triangleB.fromBufferAttribute(positions, bIndex);
+      triangleC.fromBufferAttribute(positions, cIndex);
+
+      const area = triangleArea(triangleA, triangleB, triangleC);
+      if (area <= 0) continue;
+      this.totalArea += area;
+      this.triangles.push({
+        a: triangleA.clone(),
+        b: triangleB.clone(),
+        c: triangleC.clone(),
+        cumulativeArea: this.totalArea,
+      });
+    }
+  }
+
+  createPathButton() {
+    this.pathButton = document.createElement('button');
+    this.pathButton.textContent = 'Random Path';
+    this.pathButton.style.position = 'fixed';
+    this.pathButton.style.left = '12px';
+    this.pathButton.style.bottom = '12px';
+    this.pathButton.style.zIndex = '10000';
+    this.pathButton.style.padding = '8px 12px';
+    this.pathButton.style.border = '1px solid rgba(255, 255, 255, 0.35)';
+    this.pathButton.style.borderRadius = '4px';
+    this.pathButton.style.background = 'rgba(8, 12, 18, 0.82)';
+    this.pathButton.style.color = '#ffffff';
+    this.pathButton.style.font = '13px system-ui, sans-serif';
+    this.pathButton.style.cursor = 'pointer';
+    this.pathButton.addEventListener('click', () => {
+      this.showRandomPath();
+    });
+    document.body.append(this.pathButton);
+  }
+
+  showRandomPath() {
+    const target = this.sampleNavMeshPoint();
+    if (!target) return;
+
+    const path = xb.core.simulator.navigation.findPathTo(
+      xb.core.camera.position,
+      target
+    );
+    if (!path) {
+      this.pathButton.textContent = 'No Path';
+      window.setTimeout(() => {
+        this.pathButton.textContent = 'Random Path';
+      }, 1200);
+      return;
+    }
+
+    pathStart.copy(xb.core.camera.position);
+    pathStart.y -= xb.core.options.simulator.navigation.eyeHeight;
+    this.routePoints = [...path, target];
+    this.routeIndex = 0;
+    this.pathButton.textContent = 'Navigating...';
+    this.drawPath([pathStart, ...this.routePoints]);
+  }
+
+  sampleNavMeshPoint() {
+    if (this.triangles.length === 0) return null;
+    const targetArea = Math.random() * this.totalArea;
+    const triangle =
+      this.triangles.find((item) => item.cumulativeArea >= targetArea) ??
+      this.triangles[this.triangles.length - 1];
+    return sampleTriangle(triangle.a, triangle.b, triangle.c);
+  }
+
+  drawPath(points) {
+    if (this.pathLine) {
+      this.remove(this.pathLine);
+      this.pathLine.geometry.dispose();
+      this.pathLine.material.dispose();
+    }
+    if (this.targetMarker) {
+      this.remove(this.targetMarker);
+      this.targetMarker.geometry.dispose();
+      this.targetMarker.material.dispose();
+    }
+
+    const liftedPoints = points.map((point) =>
+      point.clone().add(new THREE.Vector3(0, PATH_Y_OFFSET, 0))
+    );
+    const geometry = new THREE.BufferGeometry().setFromPoints(liftedPoints);
+    this.pathLine = new THREE.Line(
+      geometry,
+      new THREE.LineBasicMaterial({
+        color: 0xffd23f,
+        depthTest: false,
+      })
+    );
+    this.pathLine.renderOrder = 1001;
+    this.add(this.pathLine);
+
+    const targetPoint = liftedPoints[liftedPoints.length - 1];
+    this.targetMarker = new THREE.Mesh(
+      new THREE.SphereGeometry(0.06, 16, 8),
+      new THREE.MeshBasicMaterial({
+        color: 0xff5c7a,
+        depthTest: false,
+      })
+    );
+    this.targetMarker.position.copy(targetPoint);
+    this.targetMarker.renderOrder = 1002;
+    this.add(this.targetMarker);
+  }
+
+  updateNavigation() {
+    if (this.routeIndex >= this.routePoints.length) return;
+
+    const eyeHeight = xb.core.options.simulator.navigation.eyeHeight;
+    const target = this.routePoints[this.routeIndex];
+    currentFootPosition.copy(xb.core.camera.position);
+    currentFootPosition.y -= eyeHeight;
+    waypointDelta.subVectors(target, currentFootPosition);
+
+    const distance = waypointDelta.length();
+    if (distance <= WAYPOINT_THRESHOLD_METERS) {
+      this.routeIndex++;
+      if (this.routeIndex >= this.routePoints.length) {
+        this.pathButton.textContent = 'Random Path';
+      }
+      return;
+    }
+
+    const step = Math.min(
+      distance,
+      NAVIGATION_SPEED_METERS_PER_SECOND * xb.getDeltaTime()
+    );
+    waypointDelta.multiplyScalar(step / distance);
+    desiredCameraPosition.copy(xb.core.camera.position).add(waypointDelta);
+    desiredCameraPosition.y =
+      currentFootPosition.y + waypointDelta.y + eyeHeight;
+    xb.core.simulator.navigation.applyUserMovement(
+      xb.core.camera,
+      desiredCameraPosition
+    );
+
+    remainingPathStart.copy(xb.core.camera.position);
+    remainingPathStart.y -= eyeHeight;
+    this.drawPath([
+      remainingPathStart,
+      ...this.routePoints.slice(this.routeIndex),
+    ]);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const options = new xb.Options();
+  options.formFactor = 'desktop';
+  options.setAppTitle('Simulator Navmesh');
+  options.simulator.defaultMode = xb.SimulatorMode.POINTER_LOCK;
+  options.simulator.navigation.enabled = true;
+  options.simulator.navigation.eyeHeight = EYE_HEIGHT;
+  options.simulator.initialCameraPosition = {
+    x: START_FOOT_POSITION.x,
+    y: START_FOOT_POSITION.y + EYE_HEIGHT,
+    z: START_FOOT_POSITION.z,
+  };
+  options.simulator.environments[
+    options.simulator.activeEnvironmentIndex
+  ].navMeshPath = NAVMESH_PATH;
+
+  xb.add(new NavMeshWireframe());
+  xb.init(options);
+});
