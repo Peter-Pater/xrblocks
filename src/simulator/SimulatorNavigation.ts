@@ -5,6 +5,7 @@ import type {Pathfinding as PathfindingType} from 'three-pathfinding';
 import {SimulatorEnvironment, SimulatorOptions} from './SimulatorOptions';
 
 const DEFAULT_ZONE_ID = 'simulator';
+const RANDOM_PATH_SAMPLE_ATTEMPTS = 8;
 
 type PathfindingConstructor = typeof import('three-pathfinding').Pathfinding;
 type PathfindingNode = ReturnType<PathfindingType['getClosestNode']>;
@@ -187,27 +188,38 @@ export class SimulatorNavigation {
     const groupId = this.getGroup(start);
     if (groupId === null) return null;
 
-    const target = this.getRandomPointInGroup(groupId);
-    if (!target) return null;
-
-    const path = this.pathfinding.findPath(
-      start,
-      target,
-      this.zoneId,
-      groupId
-    );
-    if (!path) return null;
-    return {target, path};
+    for (let i = 0; i < RANDOM_PATH_SAMPLE_ATTEMPTS; i++) {
+      const target = this.getRandomPointInGroup(groupId);
+      if (!target) continue;
+      const path = this.pathfinding.findPath(
+        start,
+        target,
+        this.zoneId,
+        groupId
+      );
+      if (path) return {target, path};
+    }
+    return null;
   }
 
   isGroundPositionReachable(
     startCameraPosition: THREE.Vector3,
     targetGroundPosition: THREE.Vector3
   ) {
+    return this.isLocationReachable(startCameraPosition, targetGroundPosition);
+  }
+
+  isLocationReachable(
+    startCameraPosition: THREE.Vector3,
+    targetGroundPosition: THREE.Vector3
+  ) {
     return this.findPathTo(startCameraPosition, targetGroundPosition) !== null;
   }
 
-  isObjectReachable(startCameraPosition: THREE.Vector3, object: THREE.Object3D) {
+  isObjectReachable(
+    startCameraPosition: THREE.Vector3,
+    object: THREE.Object3D
+  ) {
     object.getWorldPosition(targetWorldPosition);
     return this.isGroundPositionReachable(
       startCameraPosition,
@@ -262,8 +274,14 @@ export class SimulatorNavigation {
 
     return new THREE.Vector3()
       .copy(randomTriangleA)
-      .addScaledVector(randomTriangleAB.subVectors(randomTriangleB, randomTriangleA), u)
-      .addScaledVector(randomTriangleAC.subVectors(randomTriangleC, randomTriangleA), v);
+      .addScaledVector(
+        randomTriangleAB.subVectors(randomTriangleB, randomTriangleA),
+        u
+      )
+      .addScaledVector(
+        randomTriangleAC.subVectors(randomTriangleC, randomTriangleA),
+        v
+      );
   }
 
   private async loadGeometry(
