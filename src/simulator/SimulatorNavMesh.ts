@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import type {GLTF} from 'three/addons/loaders/GLTFLoader.js';
 import type {Pathfinding as PathfindingType} from 'three-pathfinding';
 
 import {SimulatorEnvironment, SimulatorOptions} from './SimulatorOptions';
@@ -87,8 +88,11 @@ export class SimulatorNavMesh {
         environment.navMeshPath,
         initialScenePosition
       );
-      await this.setGeometry(geometry);
-      geometry.dispose();
+      try {
+        await this.setGeometry(geometry);
+      } finally {
+        geometry.dispose();
+      }
     } catch (error) {
       console.warn(
         `SimulatorNavMesh: failed to load navmesh at ${environment.navMeshPath}.`,
@@ -293,18 +297,48 @@ export class SimulatorNavMesh {
   ): Promise<THREE.BufferGeometry> {
     const loader = new GLTFLoader();
     const gltf = await loader.loadAsync(path);
-    gltf.scene.position.copy(sceneOffset);
-    gltf.scene.updateMatrixWorld(true);
+    try {
+      gltf.scene.position.copy(sceneOffset);
+      gltf.scene.updateMatrixWorld(true);
 
-    const navMesh = this.findFirstMesh(gltf.scene);
+      const navMesh = this.findFirstMesh(gltf.scene);
 
-    if (!navMesh) {
-      throw new Error('No mesh found in navmesh glTF/GLB.');
+      if (!navMesh) {
+        throw new Error('No mesh found in navmesh glTF/GLB.');
+      }
+
+      const geometry = navMesh.geometry.clone();
+      geometry.applyMatrix4(navMesh.matrixWorld);
+      return geometry;
+    } finally {
+      this.disposeGLTFResources(gltf);
     }
+  }
 
-    const geometry = navMesh.geometry.clone();
-    geometry.applyMatrix4(navMesh.matrixWorld);
-    return geometry;
+  private disposeGLTFResources(gltf: GLTF) {
+    gltf.scene.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.geometry?.dispose();
+      const materials = Array.isArray(mesh.material)
+        ? mesh.material
+        : [mesh.material];
+      for (const material of materials) {
+        this.disposeMaterial(material);
+      }
+    });
+  }
+
+  private disposeMaterial(material?: THREE.Material) {
+    if (!material) return;
+    for (const value of Object.values(
+      material as unknown as Record<string, unknown>
+    )) {
+      if (value instanceof THREE.Texture) {
+        value.dispose();
+      }
+    }
+    material.dispose();
   }
 
   private findFirstMesh(root: THREE.Object3D): THREE.Mesh | null {

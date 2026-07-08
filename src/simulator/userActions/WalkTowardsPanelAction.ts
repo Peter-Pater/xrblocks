@@ -70,9 +70,10 @@ export class WalkTowardsPanelAction extends SimulatorUserAction {
     const camera = this.camera;
     this.target.getWorldPosition(targetWorldPosition);
     cameraToTargetVector.copy(targetWorldPosition).sub(camera.position);
+    cameraToTargetVector.y = 0;
     return (
-      Math.abs(cameraToTargetVector.length() - NEAR_TARGET_DISTANCE) <
-      NEAR_TARGET_THRESHOLD
+      cameraToTargetVector.length() <=
+      NEAR_TARGET_DISTANCE + NEAR_TARGET_THRESHOLD
     );
   }
 
@@ -105,20 +106,20 @@ export class WalkTowardsPanelAction extends SimulatorUserAction {
     const deltaTime = this.timer.getDelta();
     this.target.getWorldPosition(targetWorldPosition);
     cameraToTargetVector.copy(targetWorldPosition).sub(camera.position);
-    closeToTargetPosition
-      .copy(targetWorldPosition)
-      .addScaledVector(cameraToTargetVector, -NEAR_TARGET_THRESHOLD);
-    const cameraToCloseToTarget = closeToTargetPosition.sub(camera.position);
+    cameraToTargetVector.y = 0;
+    const distanceToTarget = cameraToTargetVector.length();
     const movementDistance = clamp(
-      cameraToCloseToTarget.length(),
+      distanceToTarget - NEAR_TARGET_DISTANCE,
       0,
       MOVEMENT_SPEED_METERS_PER_SECOND * deltaTime
     );
+    if (movementDistance === 0 || distanceToTarget === 0) return;
+
     closeToTargetPosition
       .copy(camera.position)
       .addScaledVector(
-        cameraToCloseToTarget,
-        movementDistance / cameraToCloseToTarget.length()
+        cameraToTargetVector,
+        movementDistance / distanceToTarget
       );
     this.navMesh.applyUserMovement(camera, closeToTargetPosition);
   }

@@ -49,8 +49,9 @@ immersive applications with features like:
 - **Automation-Friendly Simulator:** Use `options.enableAutomationMode()` or
   `?xrAutomation=1` to start a desktop simulator preset for external remote runs.
 - **Constrained Simulator Navigation:** Opt into simulator navmesh grounding with
-  `options.simulator.navMesh.enabled = true` and an environment `navMeshPath`
-  pointing at a pregenerated glTF/GLB navmesh authored in the same local
+  `options.simulator.navMesh.enabled = true`. The default Living Room
+  environment includes a pregenerated glTF/GLB `navMeshPath`; custom
+  environments can provide their own navmesh authored in the same local
   coordinate space as the simulator scene.
 
 We welcome all contributors to foster an AI + XR community! Read our

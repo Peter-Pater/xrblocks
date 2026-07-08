@@ -4,9 +4,8 @@ import * as THREE from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import * as xb from 'xrblocks';
 
-const NAVMESH_PATH = './navmesh.glb';
 const EYE_HEIGHT = 1.5;
-const START_FOOT_POSITION = {x: 20, y: 0, z: 20};
+const START_FOOT_POSITION = {x: 0.49, y: 0.3, z: 2.31};
 const PATH_Y_OFFSET = 0.04;
 const NAVIGATION_SPEED_METERS_PER_SECOND = 1.2;
 const WAYPOINT_THRESHOLD_METERS = 0.08;
@@ -27,13 +26,22 @@ class NavMeshWireframe extends xb.Script {
   async init() {
     this.add(new THREE.HemisphereLight(0xffffff, 0x666666, 3));
 
+    const simulatorOptions = xb.core.options.simulator;
+    const activeEnvironment =
+      simulatorOptions.environments[simulatorOptions.activeEnvironmentIndex];
+    const navMeshPath = activeEnvironment?.navMeshPath;
+    if (!navMeshPath) {
+      console.warn('No navmesh path configured for the active environment.');
+      return;
+    }
+
     const loader = new GLTFLoader();
     let gltf;
     try {
-      gltf = await loader.loadAsync(NAVMESH_PATH);
+      gltf = await loader.loadAsync(navMeshPath);
     } catch (error) {
       console.warn(
-        `Failed to load navmesh wireframe at ${NAVMESH_PATH}.`,
+        `Failed to load navmesh wireframe at ${navMeshPath}.`,
         error
       );
       return;
@@ -41,9 +49,9 @@ class NavMeshWireframe extends xb.Script {
     const group = new THREE.Group();
 
     gltf.scene.position.set(
-      xb.core.options.simulator.initialScenePosition.x,
-      xb.core.options.simulator.initialScenePosition.y,
-      xb.core.options.simulator.initialScenePosition.z
+      simulatorOptions.initialScenePosition.x,
+      simulatorOptions.initialScenePosition.y,
+      simulatorOptions.initialScenePosition.z
     );
     gltf.scene.updateMatrixWorld(true);
     gltf.scene.traverse((object) => {
@@ -203,9 +211,6 @@ document.addEventListener('DOMContentLoaded', () => {
     y: START_FOOT_POSITION.y + EYE_HEIGHT,
     z: START_FOOT_POSITION.z,
   };
-  options.simulator.environments[
-    options.simulator.activeEnvironmentIndex
-  ].navMeshPath = NAVMESH_PATH;
 
   xb.add(new NavMeshWireframe());
   xb.init(options);

@@ -45,6 +45,9 @@ export class SimulatorOptions {
       scenePlanesPath:
         XR_BLOCKS_ASSETS_PATH +
         'simulator/scenes/XREmulatorsceneV5_livingRoom_planes.json',
+      navMeshPath:
+        XR_BLOCKS_ASSETS_PATH +
+        'simulator/scenes/XREmulatorsceneV5_livingRoom_navmesh.glb',
     },
   ];
   activeEnvironmentIndex = 0;
