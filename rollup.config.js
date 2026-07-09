@@ -10,6 +10,8 @@ import {dts} from 'rollup-plugin-dts';
 // Read the version from package.json
 const packageJson = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
 const version = packageJson.version;
+const buildTarget = process.env.XRBLOCKS_BUILD ?? 'all';
+const buildExamples = buildTarget !== 'sdk';
 
 // Get the current commit ID (short hash)
 let commitId = 'unknown';
@@ -86,7 +88,7 @@ const xrblocksPackages = [
   /xrblocks\/addons\//,
 ];
 
-export default [
+const sdkBuilds = [
   {
     input: 'src/xrblocks.ts',
     external: externalPackages,
@@ -171,72 +173,78 @@ export default [
       }),
     ],
   },
-  // Enable demo projects (excluding those with a custom build system) to use TypeScript
-  // and import it in their index.html via by referencing, e.g. `./build/main.js`.
-  ...globSync('demos/**/*.ts', {
-    ignore: [
-      'demos/**/node_modules/**',
-      'demos/**/build/**',
-      // Projects with a custom build system.
-    ],
-  }).map((file) => ({
-    input: file,
-    external: () => true,
-    output: {
-      file: path.join(
-        path.dirname(file),
-        'build',
-        path.basename(file).replace(/\.ts$/, '.js')
-      ),
-      format: 'esm',
-    },
-    plugins: [
-      typescript({
-        tsconfig: false,
-        include: [file],
-        compilerOptions: {
-          target: 'ES2022',
-          module: 'ESNext',
-          moduleResolution: 'bundler',
-          esModuleInterop: true,
-          forceConsistentCasingInFileNames: true,
-          strict: true,
-          skipLibCheck: true,
-          declaration: false,
-        },
-      }),
-    ],
-  })),
-  // Enable demo projects (excluding those with a custom build system) to use TypeScript
-  // and import it in their index.html via by referencing, e.g. `./build/main.js`.
-  ...globSync('samples/**/*.ts', {
-    ignore: ['samples/**/node_modules/**', 'samples/**/build/**'],
-  }).map((file) => ({
-    input: file,
-    external: () => true,
-    output: {
-      file: path.join(
-        path.dirname(file),
-        'build',
-        path.basename(file).replace(/\.ts$/, '.js')
-      ),
-      format: 'esm',
-    },
-    plugins: [
-      typescript({
-        tsconfig: false,
-        include: [file],
-        compilerOptions: {
-          target: 'ES2022',
-          module: 'ESNext',
-          moduleResolution: 'bundler',
-          esModuleInterop: true,
-          forceConsistentCasingInFileNames: true,
-          strict: true,
-          skipLibCheck: true,
-          declaration: false,
-        },
-      }),
-    ],
-  })),
 ];
+
+// Enable demo projects (excluding those with a custom build system) to use TypeScript
+// and import it in their index.html via by referencing, e.g. `./build/main.js`.
+const demoBuilds = globSync('demos/**/*.ts', {
+  ignore: [
+    'demos/**/node_modules/**',
+    'demos/**/build/**',
+    // Projects with a custom build system.
+  ],
+}).map((file) => ({
+  input: file,
+  external: () => true,
+  output: {
+    file: path.join(
+      path.dirname(file),
+      'build',
+      path.basename(file).replace(/\.ts$/, '.js')
+    ),
+    format: 'esm',
+  },
+  plugins: [
+    typescript({
+      tsconfig: false,
+      include: [file],
+      compilerOptions: {
+        target: 'ES2022',
+        module: 'ESNext',
+        moduleResolution: 'bundler',
+        esModuleInterop: true,
+        forceConsistentCasingInFileNames: true,
+        strict: true,
+        skipLibCheck: true,
+        declaration: false,
+      },
+    }),
+  ],
+}));
+
+// Enable sample projects to use TypeScript and import it in their index.html
+// via by referencing, e.g. `./build/main.js`.
+const sampleBuilds = globSync('samples/**/*.ts', {
+  ignore: ['samples/**/node_modules/**', 'samples/**/build/**'],
+}).map((file) => ({
+  input: file,
+  external: () => true,
+  output: {
+    file: path.join(
+      path.dirname(file),
+      'build',
+      path.basename(file).replace(/\.ts$/, '.js')
+    ),
+    format: 'esm',
+  },
+  plugins: [
+    typescript({
+      tsconfig: false,
+      include: [file],
+      compilerOptions: {
+        target: 'ES2022',
+        module: 'ESNext',
+        moduleResolution: 'bundler',
+        esModuleInterop: true,
+        forceConsistentCasingInFileNames: true,
+        strict: true,
+        skipLibCheck: true,
+        declaration: false,
+      },
+    }),
+  ],
+}));
+
+export default buildExamples
+  ? [...sdkBuilds, ...demoBuilds, ...sampleBuilds]
+  : sdkBuilds.slice(0, 3);
