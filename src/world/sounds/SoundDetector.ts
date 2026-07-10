@@ -103,9 +103,7 @@ export class SoundDetector extends Script<SoundDetectorEventMap> {
   override dispose() {
     this.stopListening();
     for (const backendPromise of this._detectorBackends.values()) {
-      void backendPromise
-        .then((backend) => backend.dispose())
-        .catch(() => {});
+      void backendPromise.then((backend) => backend.dispose()).catch(() => {});
     }
     this._detectorBackends.clear();
     this.audioListener = undefined;
