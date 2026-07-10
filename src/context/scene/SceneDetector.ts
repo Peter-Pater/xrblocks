@@ -23,6 +23,18 @@ type ContextSnapshot = {
   som?: SetOfMarkContext;
 };
 
+export type SceneContextDetectionOptions = {
+  semanticTree?: boolean;
+  visibleObjects?: boolean;
+  setOfMark?: boolean;
+};
+
+export type SceneContextDetectionResult = {
+  semanticTree?: SemanticTree;
+  visibleObjects?: VisibleObjectsContext;
+  setOfMark?: SetOfMarkContext;
+};
+
 export class SceneDetector extends Script {
   static dependencies = {
     options: ContextOptions,
@@ -44,7 +56,11 @@ export class SceneDetector extends Script {
   private currentVisibleObjectsPromise: Promise<VisibleObjectsContext> | null =
     null;
   private currentSetOfMarkPromise: Promise<SetOfMarkContext> | null = null;
+  private currentContextPromise: Promise<SceneContextDetectionResult> | null =
+    null;
+  private currentContextRequestKey = '';
   private lastContinuousDetectionStartedAtMs = -Infinity;
+  private disposed = false;
 
   /**
    * The latest semantic tree produced by scene context detection.
@@ -80,6 +96,7 @@ export class SceneDetector extends Script {
     this.screenshotSynthesizer = screenshotSynthesizer;
     this.deviceCamera = deviceCamera ?? this.deviceCamera;
     this.snapshot = null;
+    this.disposed = false;
   }
 
   setDeviceCamera(deviceCamera: XRDeviceCamera | undefined) {
@@ -141,10 +158,13 @@ export class SceneDetector extends Script {
       this.runContinuousDetection();
       return this.currentDetectionPromise!;
     }
-    this.beginSnapshot();
-    this.currentDetectionPromise = this.detectSemanticTree().finally(() => {
-      this.currentDetectionPromise = null;
-    });
+    this.currentDetectionPromise = this.runContextDetection({
+      semanticTree: true,
+    })
+      .then((result) => result.semanticTree!)
+      .finally(() => {
+        this.currentDetectionPromise = null;
+      });
     return this.currentDetectionPromise;
   }
 
@@ -152,12 +172,11 @@ export class SceneDetector extends Script {
     if (this.currentVisibleObjectsPromise) {
       return this.currentVisibleObjectsPromise;
     }
-    this.beginSnapshot();
-    this.currentVisibleObjectsPromise = this.getVisibleObjectsContext()
-      .then((result) => {
-        this.visibleObjects = result;
-        return result;
-      })
+    this.currentVisibleObjectsPromise = this.runContextDetection({
+      semanticTree: false,
+      visibleObjects: true,
+    })
+      .then((result) => result.visibleObjects!)
       .finally(() => {
         this.currentVisibleObjectsPromise = null;
       });
@@ -168,11 +187,53 @@ export class SceneDetector extends Script {
     if (this.currentSetOfMarkPromise) {
       return this.currentSetOfMarkPromise;
     }
-    this.beginSnapshot({preserveVisibleObjects: true});
-    this.currentSetOfMarkPromise = this.getSetOfMarkContext().finally(() => {
-      this.currentSetOfMarkPromise = null;
-    });
+    this.currentSetOfMarkPromise = this.runContextDetection(
+      {
+        semanticTree: false,
+        visibleObjects: true,
+        setOfMark: true,
+      },
+      {preserveVisibleObjects: true}
+    )
+      .then((result) => result.setOfMark!)
+      .finally(() => {
+        this.currentSetOfMarkPromise = null;
+      });
     return this.currentSetOfMarkPromise;
+  }
+
+  runContextDetection(
+    options: SceneContextDetectionOptions = {
+      semanticTree: true,
+      visibleObjects: true,
+      setOfMark: true,
+    },
+    snapshotOptions: {preserveVisibleObjects?: boolean} = {}
+  ): Promise<SceneContextDetectionResult> {
+    const request = {
+      semanticTree: options.semanticTree !== false,
+      visibleObjects: options.visibleObjects === true,
+      setOfMark: options.setOfMark === true,
+    };
+    const requestKey = JSON.stringify({
+      ...request,
+      preserveVisibleObjects: snapshotOptions.preserveVisibleObjects === true,
+    });
+    if (
+      this.currentContextPromise &&
+      this.currentContextRequestKey === requestKey
+    ) {
+      return this.currentContextPromise;
+    }
+    this.beginSnapshot(snapshotOptions);
+    this.currentContextRequestKey = requestKey;
+    this.currentContextPromise = this.detectSceneContext(request).finally(
+      () => {
+        this.currentContextPromise = null;
+        this.currentContextRequestKey = '';
+      }
+    );
+    return this.currentContextPromise;
   }
 
   private runContinuousDetection(): Promise<SemanticTree> | null {
@@ -181,8 +242,12 @@ export class SceneDetector extends Script {
     }
 
     this.lastContinuousDetectionStartedAtMs = performance.now();
-    this.beginSnapshot();
-    this.currentDetectionPromise = this.detectContinuousContext()
+    this.currentDetectionPromise = this.runContextDetection({
+      semanticTree: true,
+      visibleObjects: this.options.scene.visibleObjects.enabled,
+      setOfMark: this.options.scene.som.enabled,
+    })
+      .then((result) => result.semanticTree!)
       .then((result) => {
         this.tree = result;
         return result;
@@ -193,24 +258,33 @@ export class SceneDetector extends Script {
     return this.currentDetectionPromise;
   }
 
-  private async detectContinuousContext(): Promise<SemanticTree> {
-    const tree = await this.detectSemanticTree();
-
-    if (this.options.scene.visibleObjects.enabled) {
-      this.visibleObjects = await this.getVisibleObjectsContext();
+  private async detectSceneContext(
+    options: Required<SceneContextDetectionOptions>
+  ): Promise<SceneContextDetectionResult> {
+    if (this.disposed) {
+      return {};
     }
-
-    if (this.options.scene.som.enabled) {
-      this.setOfMark = await this.getSetOfMarkContext();
+    const result: SceneContextDetectionResult = {};
+    if (options.semanticTree) {
+      result.semanticTree = await this.getSemanticTree();
+      if (this.disposed) {
+        return {};
+      }
+      this.tree = result.semanticTree;
     }
-
-    return tree;
-  }
-
-  private async detectSemanticTree(): Promise<SemanticTree> {
-    const tree = await this.getSemanticTree();
-    this.tree = tree;
-    return tree;
+    if (options.visibleObjects || options.setOfMark) {
+      result.visibleObjects = await this.getVisibleObjectsContext();
+      if (this.disposed) {
+        return {};
+      }
+    }
+    if (options.setOfMark) {
+      result.setOfMark = await this.getSetOfMarkContext();
+      if (this.disposed) {
+        return {};
+      }
+    }
+    return this.disposed ? {} : result;
   }
 
   private beginSnapshot(options: {preserveVisibleObjects?: boolean} = {}) {
@@ -237,7 +311,9 @@ export class SceneDetector extends Script {
         semanticTree: snapshot.semanticInternal!,
       });
     }
-    this.visibleObjects = snapshot.visibleObjects;
+    if (!this.disposed) {
+      this.visibleObjects = snapshot.visibleObjects;
+    }
     return snapshot.visibleObjects;
   }
 
@@ -262,7 +338,9 @@ export class SceneDetector extends Script {
         matrixWorldInverse,
       });
     }
-    this.setOfMark = snapshot.som;
+    if (!this.disposed) {
+      this.setOfMark = snapshot.som;
+    }
     return snapshot.som;
   }
 
@@ -287,5 +365,20 @@ export class SceneDetector extends Script {
         this.snapshotPromise = null;
       });
     return this.snapshotPromise;
+  }
+
+  override dispose() {
+    this.disposed = true;
+    this.activeClients.clear();
+    this.snapshot = null;
+    this.snapshotPromise = null;
+    this.currentDetectionPromise = null;
+    this.currentVisibleObjectsPromise = null;
+    this.currentSetOfMarkPromise = null;
+    this.currentContextPromise = null;
+    this.currentContextRequestKey = '';
+    this.tree = null;
+    this.visibleObjects = null;
+    this.setOfMark = null;
   }
 }
