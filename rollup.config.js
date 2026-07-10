@@ -54,6 +54,7 @@ ${apache2License}
     "webgl-sdf-generator": "https://esm.sh/webgl-sdf-generator@1.1.1/es2022/webgl-sdf-generator.mjs",
     "lit": "https://cdn.jsdelivr.net/gh/lit/dist@3/core/lit-core.min.js",
     "lit/": "https://esm.run/lit@3/",
+    "three-pathfinding": "https://cdn.jsdelivr.net/npm/three-pathfinding@1.3.0/dist/three-pathfinding.module.js",
     2. If the app focus on standalone objects, spawn it in front of the user in
     WebXR and rescale to reasonable physical size. Wrap them with xb.ModelViewer
     and make sure users can drag the platform to move it around in XR.
@@ -78,6 +79,7 @@ const externalPackages = [
   '@preact/signals-core',
   'rapier3d',
   'three-mesh-bvh',
+  'three-pathfinding',
   'vitest',
 ];
 

@@ -100,6 +100,10 @@ XR Blocks is a **singleton engine driven by a script lifecycle**:
 - **Dependency injection over globals**: prefer `static dependencies = {...}` on a `Script`
   (resolved via `core.registry`) to reaching into singletons, so subsystems stay testable.
 - Keep PR diffs focused and add/adjust colocated tests for new branches.
+- Simulator navmesh constraints are opt-in. Use `options.simulator.navMesh.enabled = true`;
+  the default Living Room environment includes a pregenerated glTF/GLB `navMeshPath`.
+  Custom environments can provide their own walkable floor surface; the simulator
+  constrains the Simulator User, not hands/controllers.
 
 ## Adding a Feature / Subsystem
 

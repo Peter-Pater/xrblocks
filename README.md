@@ -48,6 +48,11 @@ immersive applications with features like:
   Chrome browsers.
 - **Automation-Friendly Simulator:** Use `options.enableAutomationMode()` or
   `?xrAutomation=1` to start a desktop simulator preset for external remote runs.
+- **Constrained Simulator Navigation:** Opt into simulator navmesh grounding with
+  `options.simulator.navMesh.enabled = true`. The default Living Room
+  environment includes a pregenerated glTF/GLB `navMeshPath`; custom
+  environments can provide their own navmesh authored in the same local
+  coordinate space as the simulator scene.
 
 We welcome all contributors to foster an AI + XR community! Read our
 [blog post](https://research.google/blog/xr-blocks-accelerating-ai-xr-innovation/)
@@ -84,6 +89,7 @@ code below:
         "imports": {
           "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
           "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/",
+          "three-pathfinding": "https://cdn.jsdelivr.net/npm/three-pathfinding@1.3.0/dist/three-pathfinding.module.js",
           "xrblocks": "https://cdn.jsdelivr.net/gh/google/xrblocks@build/xrblocks.js",
           "xrblocks/addons/": "https://cdn.jsdelivr.net/gh/google/xrblocks@build/addons/"
         }
