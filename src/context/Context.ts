@@ -65,6 +65,7 @@ export class Context extends Script {
 
   private removeDetectors() {
     if (this.scene) {
+      this.scene.dispose();
       this.remove(this.scene);
     }
     this.scene = undefined;

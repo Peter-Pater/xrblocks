@@ -205,7 +205,7 @@ class ContextBugtestScene extends xb.Script {
     const panel = new UIPanel({
       width: '100%',
       height: '100%',
-      fillColor: 'rgba(10, 14, 18, 0.82)',
+      fillColor: '#0a0e12',
       strokeWidth: 3,
       strokeColor: '#42d9ff',
       cornerRadius: 32,
@@ -283,16 +283,59 @@ class ContextOutputVisualizer {
     this.somEnabled = document.getElementById('somEnabled');
     this.running = false;
     this.refreshing = false;
+    this.handleToggleChange = () => this.syncRunner();
+    this.semanticTreeEnabled.addEventListener(
+      'change',
+      this.handleToggleChange
+    );
+    this.visibleObjectsEnabled.addEventListener(
+      'change',
+      this.handleToggleChange
+    );
+    this.somEnabled.addEventListener('change', this.handleToggleChange);
   }
 
   start() {
+    this.syncRunner();
+  }
+
+  hasEnabledVisualization() {
+    return (
+      this.semanticTreeEnabled.checked ||
+      this.visibleObjectsEnabled.checked ||
+      this.somEnabled.checked
+    );
+  }
+
+  syncRunner() {
+    if (!this.hasEnabledVisualization()) {
+      this.stop();
+      this.status.textContent = 'disabled';
+      this.semanticTreeOutput.textContent = 'disabled';
+      this.visibleObjectsOutput.textContent = 'disabled';
+      this.somOutput.textContent = 'disabled';
+      this.somImage.removeAttribute('src');
+      this.somImage.style.display = 'none';
+      return;
+    }
     if (this.running) return;
     this.running = true;
     this.refresh();
     this.interval = window.setInterval(() => this.refresh(), refreshMs);
   }
 
+  stop() {
+    if (!this.running) return;
+    window.clearInterval(this.interval);
+    this.interval = undefined;
+    this.running = false;
+  }
+
   async refresh() {
+    if (!this.hasEnabledVisualization()) {
+      this.stop();
+      return;
+    }
     if (this.refreshing) {
       this.status.textContent = 'skipping slow refresh';
       return;
@@ -300,18 +343,16 @@ class ContextOutputVisualizer {
     this.refreshing = true;
     this.status.textContent = 'running';
     try {
-      const semanticTree =
-        this.semanticTreeEnabled.checked && xb.context.scene
-          ? await xb.context.scene.runDetection()
-          : null;
-      const visibleObjects =
-        this.visibleObjectsEnabled.checked && xb.context.scene
-          ? await xb.context.scene.runVisibleObjectsDetection()
-          : null;
-      const som =
-        this.somEnabled.checked && xb.context.scene
-          ? await xb.context.scene.runSetOfMarkDetection()
-          : null;
+      const context = xb.context.scene
+        ? await xb.context.scene.runContextDetection({
+            semanticTree: this.semanticTreeEnabled.checked,
+            visibleObjects: this.visibleObjectsEnabled.checked,
+            setOfMark: this.somEnabled.checked,
+          })
+        : {};
+      const semanticTree = context.semanticTree ?? null;
+      const visibleObjects = context.visibleObjects ?? null;
+      const som = context.setOfMark ?? null;
 
       if (semanticTree) {
         writeJson(this.semanticTreeOutput, summarizeTree(semanticTree));
