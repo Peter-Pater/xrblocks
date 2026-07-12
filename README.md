@@ -42,6 +42,8 @@ immersive applications with features like:
 - **World Understanding:** Present samples with depth sensing, geometry-aware
   physics, and object recognition with Gemini in both XR and desktop
   simulator.
+- **Agent Context:** Expose an agent-facing scene context with semantic trees,
+  visible-object state, and Set-of-Mark screenshots through `xb.context`.
 - **AI Integration:** Seamlessly connect to Gemini for multimodal
   understanding and live conversational experiences.
 - **Cross-Platform:** Write once and deploy to both XR devices and desktop

@@ -85,6 +85,10 @@ options.enableStrokes(); // $1 unistroke recognition
 options.enableDepth(); // depth sensing + depth mesh
 options.enablePlaneDetection(); // detected planes in xb.world
 options.enableObjectDetection(); // object detection (also enables camera permission)
+options.enableContext(); // agent-facing scene context in xb.context
+options.enableSceneContext(); // semantic tree only
+options.enableVisibleObjectsContext(); // semantic tree + view visibility
+options.enableSetOfMarkContext(); // semantic tree + visible objects + SOM image
 options.enableCamera('environment'); // passthrough device camera
 options.enableAI(); // Gemini/OpenAI via xb.ai
 options.enableXRTransitions(); // fade transitions
@@ -100,8 +104,9 @@ options.physics.RAPIER = RAPIER; // enables physics
 
 ## Key Globals & Lifecycle
 
-- Globals: `xb.core`, `xb.scene`, `xb.user`, `xb.world`, `xb.ai`, `xb.depth`, `xb.sound`,
-  `xb.input`, `xb.camera`; helpers `xb.add()`, `xb.init()`, `xb.getDeltaTime()`.
+- Globals: `xb.core`, `xb.scene`, `xb.user`, `xb.world`, `xb.context`, `xb.ai`,
+  `xb.depth`, `xb.sound`, `xb.input`, `xb.camera`; helpers `xb.add()`, `xb.init()`,
+  `xb.getDeltaTime()`.
 - Lifecycle hooks: `init`, `update`, `initPhysics`/`physicsStep`, `onSelectStart/End`,
   `onSqueezeStart/End`, `onKeyDown/Up`, `onXRSessionStarted/Ended`, `onSimulatorStarted`.
 - Object-targeted hooks (return `true` to stop propagation): `onObjectSelectStart/End`,
@@ -121,5 +126,6 @@ add `?xrAutomation=1`.
 ## Task Recipes -> Skills/
 
 For "how do I do X", use the focused skills in [`skills/`](skills/): `xb-core`, `xb-ui`,
-`xb-uiblocks`, `xb-modelviewer`, `xb-hands`, `xb-gestures`, `xb-depth`, `xb-world`, `xb-ai`,
-`xb-physics`, `xb-simulator`, `xb-netblocks`, `xb-sound`, `xb-testing`.
+`xb-uiblocks`, `xb-modelviewer`, `xb-hands`, `xb-gestures`, `xb-depth`, `xb-world`,
+`xb-context`, `xb-ai`, `xb-physics`, `xb-simulator`, `xb-netblocks`, `xb-sound`,
+`xb-testing`.

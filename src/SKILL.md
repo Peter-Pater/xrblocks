@@ -96,6 +96,10 @@ options.enableStrokes(); // $1 unistroke recognition
 options.enableDepth(); // WebXR depth sensing + depth mesh
 options.enablePlaneDetection(); // detected planes in xb.world
 options.enableObjectDetection(); // object detection (also sets camera permission)
+options.enableContext(); // agent-facing semantic tree, visible objects, SOM
+options.enableSceneContext(); // semantic tree only
+options.enableVisibleObjectsContext(); // semantic tree + view visibility
+options.enableSetOfMarkContext(); // semantic tree + visible objects + SOM image
 options.enableCamera('environment'); // passthrough device camera ('environment'|'user')
 options.enableAI(); // Gemini/OpenAI via xb.ai
 options.enableXRTransitions(); // fade transitions
@@ -213,6 +217,7 @@ gradients, and shadows, use the **uiblocks addon** instead — see
 | [`core/`](core)                                                                      | `Core` singleton, `Script`, `Options`, `User`, DI `Registry`, `XRButton`, WebXR session mgmt                                                          |
 | [`input/`](input)                                                                    | controllers, hands, gaze, mouse, gamepad; `gestures/`; `strokes/`                                                                                     |
 | [`world/`](world)                                                                    | `World` + `planes/`, `mesh/`, `objects/` (Gemini & MediaPipe backends), `sounds/`                                                                     |
+| [`context/`](context)                                                                | Agent-facing scene context: semantic tree, visible objects, Set-of-Mark screenshots                                                                   |
 | [`depth/`](depth)                                                                    | depth sensing, depth mesh, `occlusion/` shaders & passes                                                                                              |
 | [`ai/`](ai)                                                                          | `AI` facade over `Gemini` + `OpenAI` (query / live / image gen)                                                                                       |
 | [`agent/`](agent)                                                                    | agent framework: tools, memory, context (WIP — see `agent/README.md`)                                                                                 |

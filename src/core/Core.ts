@@ -3,6 +3,9 @@ import * as THREE from 'three';
 import {AI} from '../ai/AI';
 import {AIOptions} from '../ai/AIOptions';
 import {XRDeviceCamera} from '../camera/XRDeviceCamera';
+import {Context} from '../context/Context';
+import {ContextOptions} from '../context/ContextOptions';
+import {SceneOptions} from '../context/scene/SceneOptions';
 import {UI_OVERLAY_LAYER} from '../constants';
 import {Depth} from '../depth/Depth';
 import {DepthOptions} from '../depth/DepthOptions';
@@ -103,6 +106,9 @@ export class Core {
 
   /** Manages real-world understanding: planes, meshes, objects, and sounds. */
   world = new World();
+
+  /** Manages agent-facing observations of the app/session. */
+  context = new Context();
 
   /** A shared texture loader. */
   textureLoader = new THREE.TextureLoader();
@@ -211,12 +217,14 @@ export class Core {
       this.dragManager,
       this.ui,
       this.sound,
-      this.world
+      this.world,
+      this.context
     );
 
     this.registry.register(this.registry);
     this.registry.register(this);
     this.registry.register(this.waitFrame);
+    this.registry.register(this.screenshotSynthesizer);
     this.registry.register(this.scene);
     this.registry.register(this.timer);
     this.registry.register(this.input);
@@ -229,6 +237,7 @@ export class Core {
     this.registry.register(this.scriptsManager);
     this.registry.register(this.depth);
     this.registry.register(this.world);
+    this.registry.register(this.context);
     this.registry.register(this.xrSystemsGroup);
   }
 
@@ -246,6 +255,8 @@ export class Core {
     this.registry.register(options.depth, DepthOptions);
     this.registry.register(options.simulator, SimulatorOptions);
     this.registry.register(options.world, WorldOptions);
+    this.registry.register(options.context, ContextOptions);
+    this.registry.register(options.context.scene, SceneOptions);
     this.registry.register(options.world.meshes, MeshDetectionOptions);
     this.registry.register(options.uikit, UIKitOptions);
     this.registry.register(options.ai, AIOptions);
@@ -330,6 +341,7 @@ export class Core {
       this.deviceCamera = new XRDeviceCamera(options.deviceCamera);
       this.deviceCamera.setRenderer(this.renderer);
       this.registry.register(this.deviceCamera);
+      this.context.setDeviceCamera(this.deviceCamera);
     }
 
     const webXRRequiredFeatures: string[] = options.webxrRequiredFeatures;
@@ -548,7 +560,6 @@ export class Core {
 
     // Updates renderings.
     this.scriptsManager.update(time, frame);
-
     this.renderSimulatorAndScene();
     this.screenshotSynthesizer.onAfterRender(
       this.renderer,
