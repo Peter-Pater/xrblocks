@@ -51,9 +51,11 @@ let snapshotCounter = 0;
 export function buildSemanticTree({
   scene,
   registry,
+  capturedAt,
 }: {
   scene: THREE.Scene;
   registry: SemanticIdRegistry;
+  capturedAt: number;
 }): SemanticTreeInternal {
   scene.updateMatrixWorld(true);
 
@@ -62,8 +64,6 @@ export function buildSemanticTree({
   const nodeObjects = new Map<string, THREE.Object3D>();
   const objectNodeIds = new WeakMap<THREE.Object3D, string>();
 
-  const capturedAt =
-    typeof performance !== 'undefined' ? performance.now() : Date.now();
   const snapshotId = `ctx_snapshot_${Math.round(capturedAt)}_${snapshotCounter++}`;
 
   const visit = (

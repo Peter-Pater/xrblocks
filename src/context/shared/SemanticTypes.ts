@@ -54,6 +54,7 @@ export interface SemanticNode {
 
 export interface SemanticTree {
   snapshotId: string;
+  /** Elapsed simulation time in milliseconds when the snapshot was captured. */
   capturedAt: number;
   rootIds: string[];
   nodes: Record<string, SemanticNode>;
@@ -80,6 +81,7 @@ export interface SetOfMark {
 
 export interface SetOfMarkContext {
   snapshotId: string;
+  /** Elapsed simulation time in milliseconds when the snapshot was captured. */
   capturedAt: number;
   image: string;
   marks: SetOfMark[];
