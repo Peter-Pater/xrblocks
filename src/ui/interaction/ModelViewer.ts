@@ -90,6 +90,16 @@ export class ModelViewer extends Script implements Draggable {
   protected timer!: THREE.Timer;
   protected animationMixer?: THREE.AnimationMixer;
   protected gltfMesh?: GLTF;
+
+  /** The loaded GLTF content's root object, if a model has been loaded via
+   * loadGLTFModel() -- public so external code (e.g. a scene-editor addon
+   * applying its own rotation gizmo) can read/transform the loaded
+   * content directly, independent of the ModelViewer's own
+   * position/scale. Exposes just the scene root, not the full GLTF
+   * (animations/cameras/etc.), to keep the rest of gltfMesh encapsulated. */
+  get contentScene(): THREE.Object3D | undefined {
+    return this.gltfMesh?.scene;
+  }
   protected splatMesh?: SplatMesh;
   // Anchor to act as a proxy for the splat mesh
   protected splatAnchor?: SplatAnchor;

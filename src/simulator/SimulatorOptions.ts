@@ -11,13 +11,15 @@ export enum SimulatorMode {
   POSE = 'Navigation',
   CONTROLLER = 'Hands',
   POINTER_LOCK = 'PointerLock',
+  EDITOR = 'Editor',
 }
 
 const DEFAULT_MODE_TOGGLE_ORDER = {
   [SimulatorMode.USER]: SimulatorMode.POSE,
   [SimulatorMode.POSE]: SimulatorMode.CONTROLLER,
   [SimulatorMode.CONTROLLER]: SimulatorMode.POINTER_LOCK,
-  [SimulatorMode.POINTER_LOCK]: SimulatorMode.USER,
+  [SimulatorMode.POINTER_LOCK]: SimulatorMode.EDITOR,
+  [SimulatorMode.EDITOR]: SimulatorMode.USER,
 };
 
 export interface SimulatorCustomInstruction {
