@@ -507,7 +507,7 @@ export class TransformGizmo extends xb.Script {
     const primary = this.selectionManager.primary;
     const content =
       this.selectionManager.space === 'local'
-        ? primary?.viewer.contentScene
+        ? primary?.viewer.modelScene
         : null;
     if (content) {
       this.quaternion.copy(content.quaternion);
@@ -724,7 +724,7 @@ export class TransformGizmo extends xb.Script {
 
     const targets = selectedList
       .map((instance): RotateTarget | null => {
-        const content = instance.viewer.contentScene;
+        const content = instance.viewer.modelScene;
         if (!content) return null;
         return {
           instance,

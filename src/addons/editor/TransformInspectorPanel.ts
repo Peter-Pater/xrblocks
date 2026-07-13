@@ -216,7 +216,7 @@ export class TransformInspectorPanel extends xb.Script {
 
     const commands: Command[] = [];
     for (const instance of list) {
-      const content = instance.viewer.contentScene;
+      const content = instance.viewer.modelScene;
       if (!content) continue;
       const before = content.quaternion.clone();
       const euler = new THREE.Euler().setFromQuaternion(
@@ -270,7 +270,7 @@ export class TransformInspectorPanel extends xb.Script {
     const duplicates: SceneInstance[] = [];
     for (const instance of list) {
       const viewer = instance.viewer;
-      const content = viewer.contentScene;
+      const content = viewer.modelScene;
       const fileName = instance.fileName;
       // Small offset so each copy isn't sitting exactly inside its
       // original.
@@ -334,7 +334,7 @@ export class TransformInspectorPanel extends xb.Script {
     const commands: Command[] = [];
     for (const instance of list) {
       const viewer = instance.viewer;
-      const content = viewer.contentScene;
+      const content = viewer.modelScene;
       const fileName = instance.fileName;
       const snapshotTransform = {
         position: viewer.position.clone(),
@@ -419,7 +419,7 @@ export class TransformInspectorPanel extends xb.Script {
       positionByAxis.y.push(position.y);
       positionByAxis.z.push(position.z);
 
-      const content = instance.viewer.contentScene;
+      const content = instance.viewer.modelScene;
       if (content) {
         const euler = new THREE.Euler().setFromQuaternion(
           content.quaternion,

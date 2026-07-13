@@ -97,7 +97,7 @@ export class ModelViewer extends Script implements Draggable {
    * content directly, independent of the ModelViewer's own
    * position/scale. Exposes just the scene root, not the full GLTF
    * (animations/cameras/etc.), to keep the rest of gltfMesh encapsulated. */
-  get contentScene(): THREE.Object3D | undefined {
+  get modelScene(): THREE.Object3D | undefined {
     return this.gltfMesh?.scene;
   }
   protected splatMesh?: SplatMesh;

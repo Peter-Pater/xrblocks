@@ -185,7 +185,7 @@ export class ScenePanel extends xb.Script {
     const objects: SerializedSceneObject[] = this.sceneManager
       .list()
       .map((instance) => {
-        const content = instance.viewer.contentScene;
+        const content = instance.viewer.modelScene;
         const quaternion = content
           ? content.quaternion
           : new THREE.Quaternion();

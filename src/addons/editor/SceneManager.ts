@@ -139,8 +139,8 @@ export class SceneManager extends xb.Script {
     // loadGLTFModel unconditionally marks the loaded content ROTATING for
     // ModelViewer's own drag affordance; override it so it never fights the
     // custom transform gizmo built on top of this registry.
-    if (viewer.contentScene) {
-      (viewer.contentScene as unknown as xb.HasDraggingMode).draggingMode =
+    if (viewer.modelScene) {
+      (viewer.modelScene as unknown as xb.HasDraggingMode).draggingMode =
         xb.DragMode.DO_NOT_DRAG;
     }
 
@@ -166,8 +166,8 @@ export class SceneManager extends xb.Script {
     if (transform) {
       if (transform.position) viewer.position.copy(transform.position);
       if (transform.scale) viewer.scale.copy(transform.scale);
-      if (transform.quaternion && viewer.contentScene) {
-        viewer.contentScene.quaternion.copy(transform.quaternion);
+      if (transform.quaternion && viewer.modelScene) {
+        viewer.modelScene.quaternion.copy(transform.quaternion);
       }
     }
     if (state?.visible === false) {
@@ -185,7 +185,7 @@ export class SceneManager extends xb.Script {
       const snapshotTransform: SpawnTransform = {
         position: instance.viewer.position.clone(),
         scale: instance.viewer.scale.clone(),
-        quaternion: instance.viewer.contentScene?.quaternion.clone(),
+        quaternion: instance.viewer.modelScene?.quaternion.clone(),
       };
       const snapshotState: SpawnState = {
         customName: instance.customName,
@@ -219,7 +219,7 @@ export class SceneManager extends xb.Script {
       const snapshotTransform: SpawnTransform = {
         position: instance.viewer.position.clone(),
         scale: instance.viewer.scale.clone(),
-        quaternion: instance.viewer.contentScene?.quaternion.clone(),
+        quaternion: instance.viewer.modelScene?.quaternion.clone(),
       };
       const snapshotState: SpawnState = {
         customName: instance.customName,
