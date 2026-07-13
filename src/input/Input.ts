@@ -30,6 +30,7 @@ export class Reticles extends THREE.Group {
 }
 
 export type HasIgnoreReticleRaycast = {
+  /** Excludes this object and its descendants from reticle targeting and context visibility occlusion. */
   ignoreReticleRaycast: boolean;
 };
 export type MaybeHasIgnoreReticleRaycast = Partial<HasIgnoreReticleRaycast>;
