@@ -15,8 +15,8 @@
  *
  * @file xrblocks.js
  * @version v0.17.0
- * @commitid 0c463b3
- * @builddate 2026-07-11T00:01:53.587Z
+ * @commitid 670ae4e
+ * @builddate 2026-07-13T16:52:02.477Z
  * @description XR Blocks SDK, built from source with the above commit ID.
  * @agent When using with Gemini to create XR apps, use **Gemini Canvas** mode,
  * and follow rules below:
@@ -54,7 +54,7 @@ import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js'
 /**
  * Builds the context to be sent to the AI for reasoning.
  */
-class Context {
+let Context$1 = class Context {
     constructor(instructions = 'You are a helpful assistant.') {
         this.instructions = instructions;
     }
@@ -88,7 +88,7 @@ class Context {
                 return `Tool Output: ${entry.content}`;
         }
     }
-}
+};
 
 /**
  * Manages the agent's memory, including short-term, long-term, and working
@@ -130,7 +130,7 @@ class Agent {
         this.ai = ai;
         this.tools = tools;
         this.memory = new Memory();
-        this.contextBuilder = new Context(instruction);
+        this.contextBuilder = new Context$1(instruction);
         this.lifecycleCallbacks = callbacks;
     }
     /**
@@ -2790,6 +2790,1719 @@ class XRDeviceCamera extends VideoStream {
     }
 }
 
+// Use a small canvas since a full size canvas can consume a lot of memory and
+// cause toDataUrl to be slow.
+const DEFAULT_CANVAS_WIDTH = 640;
+function flipBufferVertically(buffer, width, height) {
+    const bytesPerRow = width * 4;
+    const tempRow = new Uint8Array(bytesPerRow);
+    for (let y = 0; y < height / 2; y++) {
+        const topRowY = y;
+        const bottomRowY = height - 1 - y;
+        const topRowOffset = topRowY * bytesPerRow;
+        const bottomRowOffset = bottomRowY * bytesPerRow;
+        tempRow.set(buffer.subarray(topRowOffset, topRowOffset + bytesPerRow));
+        buffer.set(buffer.subarray(bottomRowOffset, bottomRowOffset + bytesPerRow), topRowOffset);
+        buffer.set(tempRow, bottomRowOffset);
+    }
+}
+class PendingScreenshotRequest {
+    constructor(resolve, reject, overlayOnCamera) {
+        this.resolve = resolve;
+        this.reject = reject;
+        this.overlayOnCamera = overlayOnCamera;
+    }
+}
+class ScreenshotSynthesizer {
+    constructor() {
+        this.pendingScreenshotRequests = [];
+        this.virtualBuffer = new Uint8Array();
+        this.virtualRealBuffer = new Uint8Array();
+        this.renderTargetWidth = DEFAULT_CANVAS_WIDTH;
+        this.virtualCaptureInFlight = false;
+        this.virtualRealCaptureInFlight = false;
+    }
+    async onAfterRender(renderer, renderSceneFn, deviceCamera) {
+        if (this.pendingScreenshotRequests.length == 0) {
+            return;
+        }
+        const haveVirtualOnlyRequests = this.pendingScreenshotRequests.every((request) => !request.overlayOnCamera);
+        if (haveVirtualOnlyRequests && !this.virtualCaptureInFlight) {
+            this.virtualCaptureInFlight = true;
+            this.createVirtualImageDataURL(renderer, renderSceneFn)
+                .then((virtualImageDataUrl) => {
+                this.resolveVirtualOnlyRequests(virtualImageDataUrl);
+            })
+                .catch((error) => {
+                this.rejectVirtualOnlyRequests(error);
+            })
+                .finally(() => {
+                this.virtualCaptureInFlight = false;
+            });
+        }
+        const haveVirtualAndRealReqeusts = this.pendingScreenshotRequests.some((request) => request.overlayOnCamera);
+        if (haveVirtualAndRealReqeusts &&
+            deviceCamera &&
+            !this.virtualRealCaptureInFlight) {
+            this.virtualRealCaptureInFlight = true;
+            this.createVirtualRealImageDataURL(renderer, renderSceneFn, deviceCamera)
+                .then((virtualRealImageDataUrl) => {
+                if (virtualRealImageDataUrl) {
+                    this.resolveVirtualRealRequests(virtualRealImageDataUrl);
+                }
+            })
+                .catch((error) => {
+                this.rejectVirtualRealRequests(error);
+            })
+                .finally(() => {
+                this.virtualRealCaptureInFlight = false;
+            });
+        }
+        else if (haveVirtualAndRealReqeusts && !deviceCamera) {
+            throw new Error('No device camera provided');
+        }
+    }
+    async createVirtualImageDataURL(renderer, renderSceneFn) {
+        const mainRenderTarget = renderer.getRenderTarget();
+        const isRenderingStereo = renderer.xr.isPresenting && renderer.xr.getCamera().cameras.length == 2;
+        const mainRenderTargetSingleViewWidth = isRenderingStereo
+            ? mainRenderTarget.width / 2
+            : mainRenderTarget.width;
+        const scaledHeight = Math.round(mainRenderTarget.height *
+            (this.renderTargetWidth / mainRenderTargetSingleViewWidth));
+        if (!this.virtualRenderTarget ||
+            this.virtualRenderTarget.width != this.renderTargetWidth) {
+            this.virtualRenderTarget?.dispose();
+            this.virtualRenderTarget = new THREE.WebGLRenderTarget(this.renderTargetWidth, scaledHeight, { colorSpace: THREE.SRGBColorSpace });
+        }
+        const xrIsPresenting = renderer.xr.isPresenting;
+        renderer.xr.isPresenting = false;
+        const virtualRenderTarget = this.virtualRenderTarget;
+        renderer.setRenderTarget(virtualRenderTarget);
+        renderer.clearColor();
+        renderer.clearDepth();
+        renderSceneFn();
+        renderer.setRenderTarget(mainRenderTarget);
+        renderer.xr.isPresenting = xrIsPresenting;
+        const expectedBufferLength = virtualRenderTarget.width * virtualRenderTarget.height * 4;
+        if (this.virtualBuffer.length != expectedBufferLength) {
+            this.virtualBuffer = new Uint8Array(expectedBufferLength);
+        }
+        const buffer = this.virtualBuffer;
+        await renderer.readRenderTargetPixelsAsync(virtualRenderTarget, 0, 0, virtualRenderTarget.width, virtualRenderTarget.height, buffer);
+        flipBufferVertically(buffer, virtualRenderTarget.width, virtualRenderTarget.height);
+        const canvas = this.virtualCanvas ||
+            (this.virtualCanvas = document.createElement('canvas'));
+        canvas.width = virtualRenderTarget.width;
+        canvas.height = virtualRenderTarget.height;
+        const context = canvas.getContext('2d');
+        if (!context) {
+            throw new Error('Failed to get 2D context');
+        }
+        const imageData = new ImageData(new Uint8ClampedArray(buffer), virtualRenderTarget.width, virtualRenderTarget.height);
+        context.putImageData(imageData, 0, 0);
+        return canvas.toDataURL();
+    }
+    resolveVirtualOnlyRequests(virtualImageDataUrl) {
+        let remainingRequests = 0;
+        for (let i = 0; i < this.pendingScreenshotRequests.length; i++) {
+            const request = this.pendingScreenshotRequests[i];
+            if (!request.overlayOnCamera) {
+                request.resolve(virtualImageDataUrl);
+            }
+            else {
+                this.pendingScreenshotRequests[remainingRequests++] = request;
+            }
+        }
+        this.pendingScreenshotRequests.length = remainingRequests;
+    }
+    rejectVirtualOnlyRequests(error) {
+        let remainingRequests = 0;
+        for (let i = 0; i < this.pendingScreenshotRequests.length; i++) {
+            const request = this.pendingScreenshotRequests[i];
+            if (!request.overlayOnCamera) {
+                request.reject(error);
+            }
+            else {
+                this.pendingScreenshotRequests[remainingRequests++] = request;
+            }
+        }
+        this.pendingScreenshotRequests.length = remainingRequests;
+    }
+    async createVirtualRealImageDataURL(renderer, renderSceneFn, deviceCamera) {
+        if (!deviceCamera.loaded) {
+            console.debug('Waiting for device camera to be loaded');
+            return null;
+        }
+        const mainRenderTarget = renderer.getRenderTarget();
+        const isRenderingStereo = renderer.xr.isPresenting && renderer.xr.getCamera().cameras.length == 2;
+        const mainRenderTargetSize = new THREE.Vector2();
+        if (mainRenderTarget) {
+            mainRenderTargetSize.set(mainRenderTarget.width, mainRenderTarget.height);
+        }
+        else {
+            renderer.getSize(mainRenderTargetSize);
+        }
+        const mainRenderTargetSingleViewWidth = isRenderingStereo
+            ? mainRenderTargetSize.x / 2
+            : mainRenderTargetSize.x;
+        const scaledHeight = Math.round(mainRenderTargetSize.y *
+            (this.renderTargetWidth / mainRenderTargetSingleViewWidth));
+        if (!this.virtualRealRenderTarget ||
+            this.virtualRealRenderTarget.height != scaledHeight) {
+            this.virtualRealRenderTarget?.dispose();
+            this.virtualRealRenderTarget = new THREE.WebGLRenderTarget(this.renderTargetWidth, scaledHeight, { colorSpace: THREE.SRGBColorSpace });
+        }
+        const renderTarget = this.virtualRealRenderTarget;
+        renderer.setRenderTarget(renderTarget);
+        const xrIsPresenting = renderer.xr.isPresenting;
+        renderer.xr.isPresenting = false;
+        const quad = this.getFullScreenQuad();
+        quad.material.map = deviceCamera.texture;
+        quad.render(renderer);
+        renderSceneFn();
+        renderer.xr.isPresenting = xrIsPresenting;
+        renderer.setRenderTarget(mainRenderTarget);
+        if (this.virtualRealBuffer.length !=
+            renderTarget.width * renderTarget.height * 4) {
+            this.virtualRealBuffer = new Uint8Array(renderTarget.width * renderTarget.height * 4);
+        }
+        const buffer = this.virtualRealBuffer;
+        await renderer.readRenderTargetPixelsAsync(renderTarget, 0, 0, renderTarget.width, renderTarget.height, buffer);
+        flipBufferVertically(buffer, renderTarget.width, renderTarget.height);
+        const canvas = this.virtualRealCanvas ||
+            (this.virtualRealCanvas = document.createElement('canvas'));
+        canvas.width = renderTarget.width;
+        canvas.height = renderTarget.height;
+        const context = canvas.getContext('2d');
+        if (!context) {
+            throw new Error('Failed to get 2D context');
+        }
+        const imageData = new ImageData(new Uint8ClampedArray(buffer), renderTarget.width, renderTarget.height);
+        context.putImageData(imageData, 0, 0);
+        return canvas.toDataURL();
+    }
+    resolveVirtualRealRequests(virtualRealImageDataUrl) {
+        let remainingRequests = 0;
+        for (let i = 0; i < this.pendingScreenshotRequests.length; i++) {
+            const request = this.pendingScreenshotRequests[i];
+            if (request.overlayOnCamera) {
+                request.resolve(virtualRealImageDataUrl);
+            }
+            else {
+                this.pendingScreenshotRequests[remainingRequests++] = request;
+            }
+        }
+        this.pendingScreenshotRequests.length = remainingRequests;
+    }
+    rejectVirtualRealRequests(error) {
+        let remainingRequests = 0;
+        for (let i = 0; i < this.pendingScreenshotRequests.length; i++) {
+            const request = this.pendingScreenshotRequests[i];
+            if (request.overlayOnCamera) {
+                request.reject(error);
+            }
+            else {
+                this.pendingScreenshotRequests[remainingRequests++] = request;
+            }
+        }
+        this.pendingScreenshotRequests.length = remainingRequests;
+    }
+    getFullScreenQuad() {
+        if (!this.fullScreenQuad) {
+            this.fullScreenQuad = new FullScreenQuad(new THREE.MeshBasicMaterial({ transparent: true }));
+        }
+        return this.fullScreenQuad;
+    }
+    /**
+     * Requests a screenshot from the scene as a DataURL.
+     * @param overlayOnCamera - If true, overlays the image on a camera image
+     *     without any projection or aspect ratio correction.
+     * @returns Promise which returns the screenshot as a data uri.
+     */
+    async getScreenshot(overlayOnCamera = false) {
+        return new Promise((resolve, reject) => {
+            this.pendingScreenshotRequests.push(new PendingScreenshotRequest(resolve, reject, overlayOnCamera));
+        });
+    }
+}
+
+class SceneDerivedContextOptions {
+    constructor(options) {
+        this.enabled = false;
+        if (options) {
+            deepMerge(this, options);
+        }
+    }
+    enable() {
+        this.enabled = true;
+        return this;
+    }
+}
+class SceneVisibilityOptions extends SceneDerivedContextOptions {
+    constructor() {
+        super(...arguments);
+        /**
+         * Raycast hits on materials with effective opacity less than or equal to this
+         * threshold are ignored for line-of-sight occlusion.
+         */
+        this.occlusionOpacityThreshold = 0;
+    }
+}
+class SceneSetOfMarkOptions extends SceneDerivedContextOptions {
+}
+class SceneOptions {
+    constructor(options) {
+        this.enabled = false;
+        this.pollingIntervalMs = 3000;
+        this.visibleObjects = new SceneVisibilityOptions();
+        this.som = new SceneSetOfMarkOptions();
+        if (options) {
+            deepMerge(this, options);
+        }
+    }
+    enable() {
+        this.enabled = true;
+        return this;
+    }
+    enableVisibleObjects() {
+        this.enabled = true;
+        this.visibleObjects.enable();
+        return this;
+    }
+    enableSetOfMark() {
+        this.enabled = true;
+        this.som.enable();
+        return this;
+    }
+}
+
+class ContextOptions {
+    constructor(options) {
+        this.debugging = false;
+        this.enabled = false;
+        this.scene = new SceneOptions();
+        if (options) {
+            deepMerge(this, options);
+        }
+    }
+    enable() {
+        this.enabled = true;
+        this.scene.enable();
+        this.scene.enableVisibleObjects();
+        this.scene.enableSetOfMark();
+        return this;
+    }
+    enableScene() {
+        this.enabled = true;
+        this.scene.enable();
+        return this;
+    }
+    enableVisibleObjects() {
+        this.enabled = true;
+        this.scene.enableVisibleObjects();
+        return this;
+    }
+    enableSetOfMark() {
+        this.enabled = true;
+        this.scene.enableSetOfMark();
+        return this;
+    }
+}
+
+/**
+ * A node to hold all XR Blocks Systems.
+ */
+class XRSystems extends THREE.Group {
+    constructor() {
+        super(...arguments);
+        this.type = 'XRSystems';
+        this.name = 'XR Blocks Systems';
+    }
+}
+
+const DepthMeshTexturedShader = {
+    vertexShader: /* glsl */ `
+varying vec3 vNormal;
+varying vec3 vViewPosition;
+varying vec2 vUv;
+
+void main() {
+  vUv = uv;
+  vNormal = normal;
+
+  // Computes the view position.
+  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+  vViewPosition = -mvPosition.xyz;
+
+  gl_Position = projectionMatrix * mvPosition;
+}
+`,
+    fragmentShader: /* glsl */ `
+#include <packing>
+
+uniform vec3 uColor;
+uniform sampler2D uDepthTexture;
+uniform sampler2DArray uDepthTextureArray;
+uniform vec3 uLightDirection;
+uniform vec2 uResolution;
+uniform float uRawValueToMeters;
+
+varying vec3 vNormal;
+varying vec3 vViewPosition;
+varying vec2 vUv;
+
+const highp float kMaxDepthInMeters = 8.0;
+const float kInvalidDepthThreshold = 0.01;
+uniform float uMinDepth;
+uniform float uMaxDepth;
+uniform float uDebug;
+uniform float uOpacity;
+uniform bool uUsingFloatDepth;
+uniform bool uIsTextureArray;
+uniform mat4 uNormDepthBufferFromNormView;
+
+float saturate(in float x) {
+  return clamp(x, 0.0, 1.0);
+}
+
+vec3 TurboColormap(in float x) {
+  const vec4 kRedVec4 = vec4(0.55305649, 3.00913185, -5.46192616, -11.11819092);
+  const vec4 kGreenVec4 = vec4(0.16207513, 0.17712472, 15.24091500, -36.50657960);
+  const vec4 kBlueVec4 = vec4(-0.05195877, 5.18000081, -30.94853351, 81.96403246);
+  const vec2 kRedVec2 = vec2(27.81927491, -14.87899417);
+  const vec2 kGreenVec2 = vec2(25.95549545, -5.02738237);
+  const vec2 kBlueVec2 = vec2(-86.53476570, 30.23299484);
+
+  // Adjusts color space via 6 degree poly interpolation to avoid pure red.
+  vec4 v4 = vec4( 1.0, x, x * x, x * x * x);
+  vec2 v2 = v4.zw * v4.z;
+  return vec3(
+    dot(v4, kRedVec4)   + dot(v2, kRedVec2),
+    dot(v4, kGreenVec4) + dot(v2, kGreenVec2),
+    dot(v4, kBlueVec4)  + dot(v2, kBlueVec2)
+  );
+}
+
+// Depth is packed into the luminance and alpha components of its texture.
+// The texture is in a normalized format, storing raw values that need to be
+// converted to meters.
+float DepthGetMeters(in sampler2D depth_texture, in vec2 depth_uv) {
+  if (uUsingFloatDepth) {
+    return texture2D(depth_texture, depth_uv).r * uRawValueToMeters;
+  }
+  vec2 packedDepthAndVisibility = texture2D(depth_texture, depth_uv).rg;
+  return dot(packedDepthAndVisibility, vec2(255.0, 256.0 * 255.0)) * uRawValueToMeters;
+}
+
+float DepthArrayGetMeters(in sampler2DArray depth_texture, in vec2 depth_uv) {
+  return uRawValueToMeters * texture(uDepthTextureArray, vec3 (depth_uv.x, depth_uv.y, 0)).r;
+}
+
+vec3 DepthGetColorVisualization(in float x) {
+  return step(kInvalidDepthThreshold, x) * TurboColormap(x);
+}
+
+void main() {
+  vec3 lightDirection = normalize(uLightDirection);
+
+  // Compute UV coordinates relative to resolution
+  // vec2 uv = gl_FragCoord.xy / uResolution;
+  vec2 uv = vUv;
+
+  // Ambient, diffuse, and specular terms
+  vec3 ambient = 0.1 * uColor;
+  float diff = max(dot(vNormal, lightDirection), 0.0);
+  vec3 diffuse = diff * uColor;
+
+  vec3 viewDir = normalize(vViewPosition);
+  vec3 reflectDir = reflect(-lightDirection, vNormal);
+  float spec = pow(max(dot(viewDir, reflectDir), 0.0), 16.0);
+  vec3 specular = vec3(0.5) * spec; // Adjust specular color/strength
+
+  // Combine Phong lighting
+  vec3 finalColor = ambient + diffuse + specular;
+  // finalColor = vec3(vNormal);
+
+  // Output color
+  gl_FragColor = uOpacity * vec4(finalColor, 1.0);
+
+  if (uDebug > 0.5) {
+    return;
+  }
+
+  vec2 view_uv = vec2(uv.x, 1.0 - uv.y);
+  vec2 depth_uv = (uNormDepthBufferFromNormView * vec4(view_uv, 0.0, 1.0)).xy;
+
+  float depth = (uIsTextureArray ? DepthArrayGetMeters(uDepthTextureArray, depth_uv) : DepthGetMeters(uDepthTexture, depth_uv)) * 8.0;
+  float normalized_depth =
+    saturate((depth - uMinDepth) / (uMaxDepth - uMinDepth));
+  gl_FragColor =  vec4(TurboColormap(normalized_depth), 1.0);
+}
+`,
+};
+
+class DepthMesh extends MeshScript {
+    static { this.dependencies = {
+        renderer: THREE.WebGLRenderer,
+    }; }
+    static { this.isDepthMesh = true; }
+    constructor(depthOptions, width, height, depthTextures) {
+        const options = depthOptions.depthMesh;
+        const depthResolution = options.depthFullResolution;
+        const ignoreEdgePixels = options.ignoreEdgePixels;
+        const activeRes = Math.max(2, depthResolution - 2 * ignoreEdgePixels);
+        const geometry = new THREE.PlaneGeometry(1, 1, activeRes - 1, activeRes - 1);
+        const minU = ignoreEdgePixels / (depthResolution - 1);
+        const maxU = (depthResolution - 1 - ignoreEdgePixels) / (depthResolution - 1);
+        const minV = ignoreEdgePixels / (depthResolution - 1);
+        const maxV = (depthResolution - 1 - ignoreEdgePixels) / (depthResolution - 1);
+        const uvs = geometry.attributes.uv.array;
+        for (let i = 0; i < uvs.length; i += 2) {
+            uvs[i] = minU + uvs[i] * (maxU - minU);
+            uvs[i + 1] = minV + uvs[i + 1] * (maxV - minV);
+        }
+        let material;
+        let uniforms;
+        if (options.useDepthTexture || options.showDebugTexture) {
+            uniforms = {
+                uDepthTexture: { value: null },
+                uDepthTextureArray: { value: null },
+                uIsTextureArray: { value: 0.0 },
+                uColor: { value: new THREE.Color(0xaaaaaa) },
+                uResolution: { value: new THREE.Vector2(width, height) },
+                uRawValueToMeters: { value: 1.0 },
+                uMinDepth: { value: 0.0 },
+                uMaxDepth: { value: 8.0 },
+                uOpacity: { value: options.opacity },
+                uDebug: { value: options.showDebugTexture ? 1.0 : 0.0 },
+                uLightDirection: { value: new THREE.Vector3(1.0, 1.0, 1.0).normalize() },
+                uUsingFloatDepth: {
+                    value: depthOptions.dataFormatPreference[0] === 'float32',
+                },
+                uNormDepthBufferFromNormView: { value: new THREE.Matrix4() },
+            };
+            material = new THREE.ShaderMaterial({
+                uniforms: uniforms,
+                vertexShader: DepthMeshTexturedShader.vertexShader,
+                fragmentShader: DepthMeshTexturedShader.fragmentShader,
+                side: THREE.DoubleSide,
+                transparent: true,
+            });
+        }
+        else {
+            material = new THREE.ShadowMaterial({ opacity: options.shadowOpacity });
+            material.depthWrite = false;
+        }
+        super(geometry, material);
+        this.depthOptions = depthOptions;
+        this.depthTextures = depthTextures;
+        this.ignoreReticleRaycast = false;
+        this.worldPosition = new THREE.Vector3();
+        this.worldQuaternion = new THREE.Quaternion();
+        this.updateVertexNormals = false;
+        this.minDepth = 8;
+        this.maxDepth = 0;
+        this.minDepthPrev = 8;
+        this.maxDepthPrev = 0;
+        this.colliders = [];
+        this.projectionMatrixInverse = new THREE.Matrix4();
+        this.lastColliderUpdateTime = 0;
+        this.colliderId = 0;
+        this.visible = options.showDebugTexture || options.renderShadow;
+        this.options = options;
+        this.lastColliderUpdateTime = performance.now();
+        this.updateVertexNormals = options.updateVertexNormals;
+        this.colliderUpdateFps = options.colliderUpdateFps;
+        this.depthTextureMaterialUniforms = uniforms;
+        if (options.renderShadow) {
+            this.receiveShadow = true;
+            this.castShadow = false;
+        }
+        // Create a downsampled geometry for raycasts and physics.
+        if (options.useDownsampledGeometry) {
+            this.downsampledGeometry = new THREE.PlaneGeometry(1, 1, 39, 39);
+            const dsUvs = this.downsampledGeometry.attributes.uv.array;
+            for (let i = 0; i < dsUvs.length; i += 2) {
+                dsUvs[i] = minU + dsUvs[i] * (maxU - minU);
+                dsUvs[i + 1] = minV + dsUvs[i + 1] * (maxV - minV);
+            }
+            this.downsampledMesh = new THREE.Mesh(this.downsampledGeometry, material);
+            this.downsampledMesh.visible = false;
+        }
+    }
+    /**
+     * Initialize the depth mesh.
+     */
+    init({ renderer }) {
+        this.renderer = renderer;
+    }
+    /**
+     * Updates the depth data and geometry positions based on the provided camera
+     * and depth data.
+     */
+    updateDepth(depthData, projectionMatrixInverse, depthDataFormat) {
+        this.projectionMatrixInverse = projectionMatrixInverse;
+        this.minDepth = 8;
+        this.maxDepth = 0;
+        if (this.options.updateFullResolutionGeometry) {
+            this.updateFullResolutionGeometry(depthData, depthDataFormat);
+        }
+        if (this.downsampledGeometry) {
+            this.updateGeometry(depthData, this.downsampledGeometry, depthDataFormat);
+            // The downsampled geometry's positions just changed, so bump its
+            // version. Consumers that cache work keyed on the position attribute's
+            // version (e.g. FaceRecognizer's depth-mesh snapshot + BVH) rely on this
+            // to invalidate; without it they reuse a stale clone from the first
+            // detection and every raycast misses.
+            this.downsampledGeometry.attributes.position.needsUpdate = true;
+        }
+        this.minDepthPrev = this.minDepth;
+        this.maxDepthPrev = this.maxDepth;
+        this.geometry.attributes.position.needsUpdate = true;
+        const depthTextureLeft = this.depthTextures?.get(0);
+        if (depthTextureLeft && this.depthTextureMaterialUniforms) {
+            this.depthTextureMaterialUniforms.uUsingFloatDepth.value =
+                depthDataFormat === 'float32';
+            if (depthData.normDepthBufferFromNormView) {
+                this.depthTextureMaterialUniforms.uNormDepthBufferFromNormView.value.fromArray(depthData.normDepthBufferFromNormView.matrix);
+            }
+            else {
+                this.depthTextureMaterialUniforms.uNormDepthBufferFromNormView.value.identity();
+            }
+            const isTextureArray = depthTextureLeft instanceof THREE.ExternalTexture;
+            this.depthTextureMaterialUniforms.uIsTextureArray.value = isTextureArray
+                ? 1.0
+                : 0;
+            if (isTextureArray)
+                this.depthTextureMaterialUniforms.uDepthTextureArray.value =
+                    depthTextureLeft;
+            else
+                this.depthTextureMaterialUniforms.uDepthTexture.value =
+                    depthTextureLeft;
+            this.depthTextureMaterialUniforms.uMinDepth.value = this.minDepth;
+            this.depthTextureMaterialUniforms.uMaxDepth.value = this.maxDepth;
+            this.depthTextureMaterialUniforms.uRawValueToMeters.value = this
+                .depthTextures.depthData.length
+                ? this.depthTextures.depthData[0].rawValueToMeters
+                : 1.0;
+        }
+        if (this.options.updateVertexNormals) {
+            this.geometry.computeVertexNormals();
+        }
+        this.updateColliderIfNeeded();
+    }
+    updatePose(translation, quaternion) {
+        this.position.copy(translation);
+        this.quaternion.copy(quaternion);
+        if (this.downsampledMesh) {
+            this.downsampledMesh.position.copy(translation);
+            this.downsampledMesh.quaternion.copy(quaternion);
+            this.downsampledMesh.updateMatrixWorld();
+        }
+    }
+    /**
+     * Method to manually update the full resolution geometry.
+     * Only needed if options.updateFullResolutionGeometry is false.
+     */
+    updateFullResolutionGeometry(depthData, depthDataFormat) {
+        this.updateGeometry(depthData, this.geometry, depthDataFormat);
+    }
+    /**
+     * Internal method to update the geometry of the depth mesh.
+     */
+    updateGeometry(depthData, geometry, depthDataFormat) {
+        const width = depthData.width;
+        const height = depthData.height;
+        const depthArray = depthDataFormat === 'float32'
+            ? new Float32Array(depthData.data)
+            : new Uint16Array(depthData.data);
+        const vertexPosition = new THREE.Vector3();
+        const normViewCoord = new THREE.Vector3();
+        const normDepthBufferFromNormView = depthData.normDepthBufferFromNormView
+            ? new THREE.Matrix4().fromArray(depthData.normDepthBufferFromNormView.matrix)
+            : new THREE.Matrix4().identity();
+        for (let i = 0; i < geometry.attributes.position.count; ++i) {
+            const u = geometry.attributes.uv.array[2 * i];
+            const v = geometry.attributes.uv.array[2 * i + 1];
+            let sampleU = u;
+            let sampleV = v;
+            if (depthData.normDepthBufferFromNormView) {
+                normViewCoord.set(u, 1.0 - v, 0);
+                normViewCoord.applyMatrix4(normDepthBufferFromNormView);
+                sampleU = normViewCoord.x;
+                sampleV = normViewCoord.y;
+            }
+            else {
+                sampleV = 1.0 - v;
+            }
+            // Grabs the nearest for now.
+            const depthX = Math.round(clamp$1(sampleU * (width - 1), 0, width - 1));
+            const depthY = Math.round(clamp$1(sampleV * (height - 1), 0, height - 1));
+            const rawDepth = depthArray[depthY * width + depthX];
+            let depth = depthData.rawValueToMeters * rawDepth;
+            // Finds global min/max.
+            if (depth > 0) {
+                if (depth < this.minDepth) {
+                    this.minDepth = depth;
+                }
+                else if (depth > this.maxDepth) {
+                    this.maxDepth = depth;
+                }
+            }
+            // This is a wrong algorithm to patch holes but working amazingly well.
+            // Per-row maximum may work better but haven't tried here.
+            // A proper local maximum takes another pass.
+            if (depth == 0 && this.options.patchHoles) {
+                depth = this.maxDepthPrev;
+            }
+            if (this.options.patchHolesUpper && v > 0.9) {
+                depth = this.minDepthPrev;
+            }
+            vertexPosition.set(2.0 * (u - 0.5), 2.0 * (v - 0.5), -1);
+            // This relates to camera.near
+            vertexPosition.applyMatrix4(this.projectionMatrixInverse);
+            vertexPosition.multiplyScalar(-depth / vertexPosition.z);
+            geometry.attributes.position.array[3 * i + 0] = vertexPosition.x;
+            geometry.attributes.position.array[3 * i + 1] = vertexPosition.y;
+            geometry.attributes.position.array[3 * i + 2] = vertexPosition.z;
+        }
+    }
+    /**
+     * Optimizes collider updates to run periodically based on the specified FPS.
+     */
+    updateColliderIfNeeded() {
+        const timeSinceLastUpdate = performance.now() - this.lastColliderUpdateTime;
+        if (this.RAPIER && timeSinceLastUpdate > 1000 / this.colliderUpdateFps) {
+            this.getWorldPosition(this.worldPosition);
+            this.getWorldQuaternion(this.worldQuaternion);
+            this.rigidBody.setTranslation(this.worldPosition, false);
+            this.rigidBody.setRotation(this.worldQuaternion, false);
+            const geometry = this.downsampledGeometry
+                ? this.downsampledGeometry
+                : this.geometry;
+            const vertices = geometry.attributes.position.array;
+            const indices = geometry.getIndex().array;
+            // Changing the density does not fix the issue.
+            const shape = this.RAPIER.ColliderDesc.trimesh(vertices, indices).setDensity(1.0);
+            // const convextHull = this.RAPIER.ColliderDesc.convexHull(vertices);
+            if (this.options.useDualCollider) {
+                this.colliderId = (this.colliderId + 1) % 2;
+                this.blendedWorld.removeCollider(this.colliders[this.colliderId], false);
+                this.colliders[this.colliderId] = this.blendedWorld.createCollider(shape, this.rigidBody);
+            }
+            else {
+                const newCollider = this.blendedWorld.createCollider(shape, this.rigidBody);
+                this.blendedWorld.removeCollider(this.collider, /*wakeUp=*/ false);
+                this.collider = newCollider;
+            }
+            this.lastColliderUpdateTime = performance.now();
+        }
+    }
+    initRapierPhysics(RAPIER, blendedWorld) {
+        this.getWorldPosition(this.worldPosition);
+        this.getWorldQuaternion(this.worldQuaternion);
+        const desc = RAPIER.RigidBodyDesc.fixed()
+            .setTranslation(this.worldPosition.x, this.worldPosition.y, this.worldPosition.z)
+            .setRotation(this.worldQuaternion);
+        this.rigidBody = blendedWorld.createRigidBody(desc);
+        const vertices = this.geometry.attributes.position.array;
+        const indices = this.geometry.getIndex().array;
+        const shape = RAPIER.ColliderDesc.trimesh(vertices, indices);
+        if (this.options.useDualCollider) {
+            this.colliders = [];
+            this.colliders.push(blendedWorld.createCollider(shape, this.rigidBody), blendedWorld.createCollider(shape, this.rigidBody));
+            this.colliderId = 0;
+        }
+        else {
+            this.collider = blendedWorld.createCollider(shape, this.rigidBody);
+        }
+        this.RAPIER = RAPIER;
+        this.blendedWorld = blendedWorld;
+        this.lastColliderUpdateTime = performance.now();
+    }
+    /**
+     * Customizes raycasting to compute normals for intersections.
+     * @param raycaster - The raycaster object.
+     * @param intersects - Array to store intersections.
+     * @returns - True if intersections are found.
+     */
+    raycast(raycaster, intersects) {
+        const intersections = [];
+        if (this.downsampledMesh) {
+            this.downsampledMesh.raycast(raycaster, intersections);
+        }
+        else {
+            super.raycast(raycaster, intersections);
+        }
+        intersections.forEach((intersect) => {
+            intersect.object = this;
+        });
+        if (!this.updateVertexNormals) {
+            // Use the face normals instead of attribute normals.
+            intersections.forEach((intersect) => {
+                if (intersect.normal && intersect.face) {
+                    intersect.normal.copy(intersect.face.normal);
+                }
+            });
+        }
+        intersects.push(...intersections);
+        return true;
+    }
+    getColliderFromHandle(handle) {
+        if (this.collider?.handle == handle) {
+            return this.collider;
+        }
+        for (const collider of this.colliders) {
+            if (collider?.handle == handle) {
+                return collider;
+            }
+        }
+        return undefined;
+    }
+}
+
+const boundsBox = new THREE.Box3();
+const boundsCorner = new THREE.Vector3();
+function isSemanticInternalObject(object) {
+    if (isInternalRoot(object)) {
+        return true;
+    }
+    let parent = object.parent;
+    while (parent) {
+        if (isInternalRoot(parent)) {
+            return true;
+        }
+        parent = parent.parent;
+    }
+    return false;
+}
+function isObjectVisible(object) {
+    let current = object;
+    while (current) {
+        if (!current.visible)
+            return false;
+        current = current.parent;
+    }
+    return true;
+}
+function hasRenderableDescendant(object) {
+    const stack = [...object.children];
+    while (stack.length > 0) {
+        const child = stack.pop();
+        if (isSemanticInternalObject(child)) {
+            continue;
+        }
+        if (child instanceof THREE.Mesh) {
+            return true;
+        }
+        stack.push(...child.children);
+    }
+    return false;
+}
+function isDescendantOf$1(object, ancestor) {
+    let current = object;
+    while (current) {
+        if (current === ancestor) {
+            return true;
+        }
+        current = current.parent;
+    }
+    return false;
+}
+function getObjectBounds(object, target) {
+    const uiBounds = getUIObjectBounds(object, target);
+    if (uiBounds) {
+        return uiBounds;
+    }
+    try {
+        boundsBox.setFromObject(object);
+    }
+    catch (_error) {
+        return null;
+    }
+    if (boundsBox.isEmpty()) {
+        return null;
+    }
+    return target ? target.copy(boundsBox) : boundsBox.clone();
+}
+function isInternalRoot(object) {
+    return (object instanceof XRSystems ||
+        object instanceof DepthMesh ||
+        object.constructor.isDepthMesh === true);
+}
+function getUIObjectBounds(object, target) {
+    const uiObject = object;
+    if (uiObject.isUI !== true ||
+        typeof uiObject.baseSizeX !== 'number' ||
+        typeof uiObject.baseSizeY !== 'number') {
+        return null;
+    }
+    object.updateMatrixWorld(true);
+    const halfWidth = uiObject.baseSizeX / 2;
+    const halfHeight = uiObject.baseSizeY / 2;
+    boundsBox.makeEmpty();
+    for (const x of [-halfWidth, halfWidth]) {
+        for (const y of [-halfHeight, halfHeight]) {
+            boundsCorner.set(x, y, 0).applyMatrix4(object.matrixWorld);
+            boundsBox.expandByPoint(boundsCorner);
+        }
+    }
+    return target ? target.copy(boundsBox) : boundsBox.clone();
+}
+
+const tempPosition = new THREE.Vector3();
+const tempBoundsCenter = new THREE.Vector3();
+const tempBoundsSize = new THREE.Vector3();
+const tempBoundsBox$2 = new THREE.Box3();
+let snapshotCounter = 0;
+function buildSemanticTree({ scene, registry, }) {
+    scene.updateMatrixWorld(true);
+    const nodes = {};
+    const rootIds = [];
+    const nodeObjects = new Map();
+    const objectNodeIds = new WeakMap();
+    const capturedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const snapshotId = `ctx_snapshot_${Math.round(capturedAt)}_${snapshotCounter++}`;
+    const visit = (object, semanticParentId) => {
+        if (shouldPruneObject(object)) {
+            return;
+        }
+        const semantic = describeSemanticObject(object);
+        let nextSemanticParentId = semanticParentId;
+        if (semantic) {
+            const id = registry.getNodeId(object);
+            const node = createSemanticNode(object, id, semantic, semanticParentId);
+            nodes[id] = node;
+            nodeObjects.set(id, object);
+            objectNodeIds.set(object, id);
+            if (semanticParentId) {
+                nodes[semanticParentId]?.children.push(id);
+            }
+            else {
+                rootIds.push(id);
+            }
+            nextSemanticParentId = id;
+        }
+        for (const child of object.children) {
+            visit(child, nextSemanticParentId);
+        }
+    };
+    for (const child of scene.children) {
+        visit(child, undefined);
+    }
+    return {
+        tree: {
+            snapshotId,
+            capturedAt,
+            rootIds,
+            nodes,
+        },
+        nodeObjects,
+        objectNodeIds,
+    };
+}
+function shouldPruneObject(object) {
+    const maybeSemantic = object.userData.semantic;
+    if (maybeSemantic?.hidden) {
+        return true;
+    }
+    return isSemanticInternalObject(object);
+}
+function describeSemanticObject(object) {
+    const semanticObject = object;
+    const override = semanticObject.userData.semantic;
+    const className = object.constructor.name;
+    if (override?.role || override?.name) {
+        return {
+            role: override.role ?? inferRole(object),
+            name: override.name ?? inferName(object),
+            source: override.source ?? 'app',
+            text: override.text ?? inferText(object),
+            traits: override.traits ?? inferTraits(object),
+            disabled: override.disabled ?? inferDisabled(object),
+        };
+    }
+    const role = inferRole(object);
+    if (!role) {
+        return null;
+    }
+    const isImplementationMesh = object instanceof THREE.Mesh && hasSemanticAncestor(object);
+    if (isImplementationMesh) {
+        return null;
+    }
+    if (isLayoutOnlyContainer(object, role)) {
+        return null;
+    }
+    return {
+        role,
+        name: inferName(object),
+        source: inferSource(object, className),
+        text: inferText(object),
+        traits: inferTraits(object),
+        disabled: inferDisabled(object),
+    };
+}
+function hasSemanticAncestor(object) {
+    let parent = object.parent;
+    while (parent) {
+        const role = inferRole(parent);
+        if (role && !isLayoutOnlyContainer(parent, role)) {
+            return true;
+        }
+        parent = parent.parent;
+    }
+    return false;
+}
+function inferRole(object) {
+    const semanticObject = object;
+    const className = object.constructor.name;
+    if (semanticObject.userData.semantic?.role) {
+        return semanticObject.userData.semantic.role;
+    }
+    if (className === 'SpatialPanel' || className === 'Panel')
+        return 'panel';
+    if (className === 'UICard' ||
+        className === 'AdditiveUICard' ||
+        isUiblocksCard(semanticObject)) {
+        return 'panel';
+    }
+    if (className === 'UIPanel') {
+        return typeof semanticObject.onClick === 'function'
+            ? 'button'
+            : 'panel';
+    }
+    if (semanticObject.isUI &&
+        typeof semanticObject.onClick === 'function') {
+        return 'button';
+    }
+    if (className === 'TextButton' || className === 'IconButton') {
+        return 'button';
+    }
+    if (className === 'TextView' ||
+        className === 'LabelView' ||
+        className === 'UIText' ||
+        className === 'ScrollingTroikaTextView' ||
+        (semanticObject.isUI && typeof semanticObject.text === 'string')) {
+        return 'text';
+    }
+    if (className === 'ImageView' || className === 'UIImage')
+        return 'image';
+    if (className === 'IconView' ||
+        className === 'MaterialSymbolsView' ||
+        className === 'UIIcon') {
+        return 'icon';
+    }
+    if (semanticObject.isPanel || semanticObject.isUI)
+        return 'panel';
+    if (semanticObject.isView)
+        return 'group';
+    if (object instanceof THREE.Mesh)
+        return 'object';
+    if (object instanceof THREE.Group && hasRenderableDescendant(object)) {
+        return object.name ? 'group' : '';
+    }
+    return '';
+}
+function isUiblocksCard(object) {
+    return (object.name === 'UICard' ||
+        object.name.endsWith(' Card') ||
+        (object.isUI === true &&
+            (typeof object.baseSizeX === 'number' ||
+                typeof object.baseSizeY === 'number' ||
+                Array.isArray(object.behaviors))));
+}
+function inferName(object) {
+    const semanticObject = object;
+    return (semanticObject.userData.semantic?.name ??
+        inferText(object) ??
+        object.name ??
+        `${object.type}_${object.id}`);
+}
+function inferText(object) {
+    const semanticObject = object;
+    return semanticObject.userData.semantic?.text ?? semanticObject.text;
+}
+function inferSource(object, className = object.constructor.name) {
+    if (object.userData.semantic?.source) {
+        return object.userData.semantic.source;
+    }
+    if (object.isUI ||
+        className.startsWith('UI') ||
+        className === 'UICard' ||
+        className === 'AdditiveUICard') {
+        return 'uiblocks';
+    }
+    if (object.isView || object.isPanel) {
+        return 'xrblocks';
+    }
+    return 'three';
+}
+function inferTraits(object) {
+    const semanticObject = object;
+    const traits = new Set(semanticObject.userData.semantic?.traits ?? []);
+    if (semanticObject.selectable)
+        traits.add('selectable');
+    if (semanticObject.draggable)
+        traits.add('draggable');
+    if (typeof semanticObject.onClick === 'function') {
+        traits.add('selectable');
+    }
+    return traits.size ? [...traits] : undefined;
+}
+function inferDisabled(object) {
+    const semanticObject = object;
+    return semanticObject.userData.semantic?.disabled ?? semanticObject.disabled;
+}
+function isLayoutOnlyContainer(object, role) {
+    const className = object.constructor.name;
+    if (role !== 'group') {
+        return false;
+    }
+    return (!object.name &&
+        (className === 'Row' ||
+            className === 'Col' ||
+            className === 'Grid' ||
+            className === 'Object3D' ||
+            className === 'Group'));
+}
+function createSemanticNode(object, id, semantic, parentId) {
+    object.updateMatrixWorld(true);
+    object.getWorldPosition(tempPosition);
+    const node = {
+        id,
+        role: semantic.role,
+        name: semantic.name,
+        visible: object.visible,
+        position: [tempPosition.x, tempPosition.y, tempPosition.z],
+        children: [],
+        objectId: object.id,
+        source: semantic.source,
+        type: object.constructor.name || object.type,
+    };
+    if (parentId)
+        node.parentId = parentId;
+    if (semantic.text)
+        node.text = semantic.text;
+    if (semantic.traits?.length)
+        node.traits = semantic.traits;
+    if (semantic.disabled !== undefined)
+        node.disabled = semantic.disabled;
+    const hovered = object.ux?.isHovered?.();
+    const selected = object.ux?.isSelected?.();
+    if (hovered !== undefined)
+        node.hovered = hovered;
+    if (selected !== undefined)
+        node.selected = selected;
+    const bounds = getSemanticBounds(object);
+    if (bounds)
+        node.bounds = bounds;
+    return node;
+}
+function getSemanticBounds(object) {
+    const bounds = getObjectBounds(object, tempBoundsBox$2);
+    if (!bounds) {
+        return undefined;
+    }
+    const center = bounds.getCenter(tempBoundsCenter);
+    const size = bounds.getSize(tempBoundsSize);
+    return {
+        center: [center.x, center.y, center.z],
+        size: [size.x, size.y, size.z],
+    };
+}
+
+const LABEL_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+function formatLabel(index) {
+    let value = index;
+    let label = '';
+    do {
+        label = LABEL_ALPHABET[value % LABEL_ALPHABET.length] + label;
+        value = Math.floor(value / LABEL_ALPHABET.length) - 1;
+    } while (value >= 0);
+    return label;
+}
+class SemanticIdRegistry {
+    constructor() {
+        this.nextNodeIndex = 1;
+        this.nextLabelIndex = 0;
+        this.nodeIds = new WeakMap();
+        this.labels = new WeakMap();
+    }
+    getNodeId(object) {
+        let id = this.nodeIds.get(object);
+        if (!id) {
+            id = `ctx_${this.nextNodeIndex++}`;
+            this.nodeIds.set(object, id);
+        }
+        return id;
+    }
+    getMarkLabel(object) {
+        let label = this.labels.get(object);
+        if (!label) {
+            label = formatLabel(this.nextLabelIndex++);
+            this.labels.set(object, label);
+        }
+        return label;
+    }
+}
+
+const tempCenter$1 = new THREE.Vector3();
+const tempBoundsBox$1 = new THREE.Box3();
+const tempProjection$1 = new THREE.Vector3();
+async function createSetOfMarkContext({ tree, image, nodeObjects, registry, projectionMatrix, matrixWorldInverse, }) {
+    const marks = [];
+    for (const node of Object.values(tree.nodes)) {
+        if (!node.view?.inLineOfSight) {
+            continue;
+        }
+        const object = nodeObjects.get(node.id);
+        if (!object) {
+            continue;
+        }
+        const screenPosition = projectObjectCenter(object, projectionMatrix, matrixWorldInverse);
+        if (!screenPosition) {
+            continue;
+        }
+        marks.push({
+            label: registry.getMarkLabel(object),
+            nodeId: node.id,
+            role: node.role,
+            name: node.name,
+            x: screenPosition.x,
+            y: screenPosition.y,
+        });
+    }
+    return {
+        snapshotId: tree.snapshotId,
+        capturedAt: tree.capturedAt,
+        image: await renderSetOfMarkImage(image, marks),
+        marks,
+    };
+}
+function projectObjectCenter(object, projectionMatrix, matrixWorldInverse) {
+    const box = getObjectBounds(object, tempBoundsBox$1);
+    if (box) {
+        box.getCenter(tempCenter$1);
+    }
+    else {
+        object.getWorldPosition(tempCenter$1);
+    }
+    const projected = tempProjection$1
+        .copy(tempCenter$1)
+        .applyMatrix4(matrixWorldInverse)
+        .applyMatrix4(projectionMatrix);
+    if (projected.x < -1 ||
+        projected.x > 1 ||
+        projected.y < -1 ||
+        projected.y > 1 ||
+        projected.z < -1 ||
+        projected.z > 1) {
+        return null;
+    }
+    return {
+        x: (projected.x + 1) / 2,
+        y: (1 - projected.y) / 2,
+    };
+}
+async function renderSetOfMarkImage(image, marks) {
+    if (typeof document === 'undefined' || !image || marks.length === 0) {
+        return image;
+    }
+    const img = new Image();
+    img.src = image;
+    await new Promise((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('Failed to load SOM screenshot.'));
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+        return image;
+    }
+    ctx.drawImage(img, 0, 0);
+    for (const mark of marks) {
+        const x = mark.x * canvas.width;
+        const y = mark.y * canvas.height;
+        ctx.beginPath();
+        ctx.arc(x, y, 14, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff0055';
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 14px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(mark.label, x, y);
+    }
+    return canvas.toDataURL('image/png');
+}
+
+const tempCenter = new THREE.Vector3();
+const tempProjection = new THREE.Vector3();
+const tempCameraPosition = new THREE.Vector3();
+const tempDirection = new THREE.Vector3();
+const tempBoundsBox = new THREE.Box3();
+const raycaster = new THREE.Raycaster();
+function createVisibleObjectsContext({ scene, camera, semanticTree, occlusionOpacityThreshold = 0, }) {
+    scene.updateMatrixWorld(true);
+    camera.updateMatrixWorld(true);
+    camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+    const nodes = { ...semanticTree.tree.nodes };
+    const raycastTargets = scene.children.filter((child) => child.visible && !isSemanticInternalObject(child));
+    for (const nodeId of Object.keys(nodes)) {
+        const node = nodes[nodeId];
+        const object = semanticTree.nodeObjects.get(nodeId);
+        nodes[nodeId] = {
+            ...node,
+            view: object
+                ? createSemanticViewData({
+                    camera,
+                    node,
+                    object,
+                    raycastTargets,
+                    occlusionOpacityThreshold,
+                })
+                : createNotRenderedViewData(),
+        };
+    }
+    return {
+        ...semanticTree.tree,
+        nodes,
+    };
+}
+function createSemanticViewData({ camera, node, object, raycastTargets, occlusionOpacityThreshold, }) {
+    if (!node.visible || !isObjectVisible(object)) {
+        return createNotRenderedViewData();
+    }
+    const box = getObjectBounds(object, tempBoundsBox);
+    const center = box?.getCenter(tempCenter) ?? object.getWorldPosition(tempCenter);
+    const projected = projectWorldPoint(center, camera);
+    const inFrame = isProjectedInFrame(projected);
+    if (!inFrame) {
+        return {
+            rendered: true,
+            inFrame: false,
+            inLineOfSight: false,
+            occlusion: 'outOfFrame',
+            ...projectedToScreenCoordinates(projected),
+        };
+    }
+    const inLineOfSight = isObjectInLineOfSight({
+        camera,
+        object,
+        targetPoint: center,
+        raycastTargets,
+        occlusionOpacityThreshold,
+    });
+    return {
+        rendered: true,
+        inFrame: true,
+        inLineOfSight,
+        occlusion: inLineOfSight ? 'none' : 'occluded',
+        ...projectedToScreenCoordinates(projected),
+    };
+}
+function createNotRenderedViewData() {
+    return {
+        rendered: false,
+        inFrame: false,
+        inLineOfSight: false,
+        occlusion: 'notRendered',
+    };
+}
+function projectWorldPoint(point, camera) {
+    return tempProjection
+        .copy(point)
+        .applyMatrix4(camera.matrixWorldInverse)
+        .applyMatrix4(camera.projectionMatrix);
+}
+function isProjectedInFrame(projected) {
+    return (projected.x >= -1 &&
+        projected.x <= 1 &&
+        projected.y >= -1 &&
+        projected.y <= 1 &&
+        projected.z >= -1 &&
+        projected.z <= 1);
+}
+function projectedToScreenCoordinates(projected) {
+    return {
+        x: (projected.x + 1) / 2,
+        y: (1 - projected.y) / 2,
+    };
+}
+function isObjectInLineOfSight({ camera, object, targetPoint, raycastTargets, occlusionOpacityThreshold, }) {
+    camera.getWorldPosition(tempCameraPosition);
+    tempDirection.copy(targetPoint).sub(tempCameraPosition);
+    const targetDistance = tempDirection.length();
+    if (targetDistance <= 0) {
+        return true;
+    }
+    raycaster.set(tempCameraPosition, tempDirection.normalize());
+    raycaster.near = 0;
+    raycaster.far = targetDistance;
+    const hits = raycaster.intersectObjects(raycastTargets, true);
+    const occludingHit = hits.find((hit) => {
+        if (hit.distance >= targetDistance - 1e-4) {
+            return false;
+        }
+        if (isSemanticInternalObject(hit.object)) {
+            return false;
+        }
+        if (isDescendantOf$1(hit.object, object) ||
+            isDescendantOf$1(object, hit.object)) {
+            return false;
+        }
+        if (!isOpacityOccluding(hit.object, occlusionOpacityThreshold)) {
+            return false;
+        }
+        return isObjectVisible(hit.object);
+    });
+    return occludingHit === undefined;
+}
+function isOpacityOccluding(object, occlusionOpacityThreshold) {
+    if (!(object instanceof THREE.Mesh)) {
+        return true;
+    }
+    return getMaterialOpacity(object.material) > occlusionOpacityThreshold;
+}
+function getMaterialOpacity(material) {
+    const materials = Array.isArray(material) ? material : [material];
+    return Math.max(...materials.map((item) => (item.transparent ? item.opacity : 1)));
+}
+
+class SceneDetector extends Script {
+    constructor() {
+        super(...arguments);
+        this.registry = new SemanticIdRegistry();
+        this.snapshot = null;
+        this.snapshotPromise = null;
+        this.activeClients = new Set();
+        this.currentDetectionPromise = null;
+        this.currentVisibleObjectsPromise = null;
+        this.currentSetOfMarkPromise = null;
+        this.currentContextPromise = null;
+        this.currentContextRequestKey = '';
+        this.lastContinuousDetectionStartedAtMs = -Infinity;
+        this.disposed = false;
+        /**
+         * The latest semantic tree produced by scene context detection.
+         */
+        this.tree = null;
+        /**
+         * The latest semantic tree annotated with user-view visibility.
+         */
+        this.visibleObjects = null;
+        /**
+         * The latest Set-of-Mark context image and label mapping.
+         */
+        this.setOfMark = null;
+    }
+    static { this.dependencies = {
+        options: ContextOptions,
+        scene: THREE.Scene,
+        camera: THREE.Camera,
+        screenshotSynthesizer: ScreenshotSynthesizer,
+    }; }
+    init({ options, scene, camera, screenshotSynthesizer, deviceCamera, }) {
+        this.options = options;
+        this.scene = scene;
+        this.camera = camera;
+        this.screenshotSynthesizer = screenshotSynthesizer;
+        this.deviceCamera = deviceCamera ?? this.deviceCamera;
+        this.snapshot = null;
+        this.disposed = false;
+    }
+    setDeviceCamera(deviceCamera) {
+        this.deviceCamera = deviceCamera;
+    }
+    resolveNodeObject(nodeId) {
+        return this.snapshot?.semanticInternal?.nodeObjects.get(nodeId);
+    }
+    start(client) {
+        if (!this.options.enabled || !this.options.scene.enabled) {
+            console.warn('Cannot start scene context detection: scene context is not enabled.');
+            return;
+        }
+        if (this.activeClients.has(client)) {
+            return;
+        }
+        this.activeClients.add(client);
+        if (this.activeClients.size === 1) {
+            this.runContinuousDetection();
+        }
+    }
+    stop(client) {
+        this.activeClients.delete(client);
+    }
+    update() {
+        if (!this.shouldRunContinuous()) {
+            return;
+        }
+        this.runContinuousDetection();
+    }
+    shouldRunContinuous(now = performance.now()) {
+        if (this.activeClients.size === 0 || this.currentDetectionPromise) {
+            return;
+        }
+        const pollingIntervalMs = this.options.scene.pollingIntervalMs;
+        if (pollingIntervalMs > 0 &&
+            now - this.lastContinuousDetectionStartedAtMs < pollingIntervalMs) {
+            return;
+        }
+        return true;
+    }
+    runDetection() {
+        if (this.currentDetectionPromise) {
+            return this.currentDetectionPromise;
+        }
+        if (this.activeClients.size > 0) {
+            this.runContinuousDetection();
+            return this.currentDetectionPromise;
+        }
+        this.currentDetectionPromise = this.runContextDetection({
+            semanticTree: true,
+        })
+            .then((result) => result.semanticTree)
+            .finally(() => {
+            this.currentDetectionPromise = null;
+        });
+        return this.currentDetectionPromise;
+    }
+    runVisibleObjectsDetection() {
+        if (this.currentVisibleObjectsPromise) {
+            return this.currentVisibleObjectsPromise;
+        }
+        this.currentVisibleObjectsPromise = this.runContextDetection({
+            semanticTree: false,
+            visibleObjects: true,
+        })
+            .then((result) => result.visibleObjects)
+            .finally(() => {
+            this.currentVisibleObjectsPromise = null;
+        });
+        return this.currentVisibleObjectsPromise;
+    }
+    runSetOfMarkDetection() {
+        if (this.currentSetOfMarkPromise) {
+            return this.currentSetOfMarkPromise;
+        }
+        this.currentSetOfMarkPromise = this.runContextDetection({
+            semanticTree: false,
+            visibleObjects: true,
+            setOfMark: true,
+        }, { preserveVisibleObjects: true })
+            .then((result) => result.setOfMark)
+            .finally(() => {
+            this.currentSetOfMarkPromise = null;
+        });
+        return this.currentSetOfMarkPromise;
+    }
+    runContextDetection(options = {
+        semanticTree: true,
+        visibleObjects: true,
+        setOfMark: true,
+    }, snapshotOptions = {}) {
+        const request = {
+            semanticTree: options.semanticTree !== false,
+            visibleObjects: options.visibleObjects === true,
+            setOfMark: options.setOfMark === true,
+        };
+        const requestKey = JSON.stringify({
+            ...request,
+            preserveVisibleObjects: snapshotOptions.preserveVisibleObjects === true,
+        });
+        if (this.currentContextPromise &&
+            this.currentContextRequestKey === requestKey) {
+            return this.currentContextPromise;
+        }
+        this.beginSnapshot(snapshotOptions);
+        this.currentContextRequestKey = requestKey;
+        this.currentContextPromise = this.detectSceneContext(request).finally(() => {
+            this.currentContextPromise = null;
+            this.currentContextRequestKey = '';
+        });
+        return this.currentContextPromise;
+    }
+    runContinuousDetection() {
+        if (this.currentDetectionPromise) {
+            return this.currentDetectionPromise;
+        }
+        this.lastContinuousDetectionStartedAtMs = performance.now();
+        this.currentDetectionPromise = this.runContextDetection({
+            semanticTree: true,
+            visibleObjects: this.options.scene.visibleObjects.enabled,
+            setOfMark: this.options.scene.som.enabled,
+        })
+            .then((result) => result.semanticTree)
+            .then((result) => {
+            this.tree = result;
+            return result;
+        })
+            .finally(() => {
+            this.currentDetectionPromise = null;
+        });
+        return this.currentDetectionPromise;
+    }
+    async detectSceneContext(options) {
+        if (this.disposed) {
+            return {};
+        }
+        const result = {};
+        if (options.semanticTree) {
+            result.semanticTree = await this.getSemanticTree();
+            if (this.disposed) {
+                return {};
+            }
+            this.tree = result.semanticTree;
+        }
+        if (options.visibleObjects || options.setOfMark) {
+            result.visibleObjects = await this.getVisibleObjectsContext();
+            if (this.disposed) {
+                return {};
+            }
+        }
+        if (options.setOfMark) {
+            result.setOfMark = await this.getSetOfMarkContext();
+            if (this.disposed) {
+                return {};
+            }
+        }
+        return this.disposed ? {} : result;
+    }
+    beginSnapshot(options = {}) {
+        if (options.preserveVisibleObjects && this.snapshot?.visibleObjects) {
+            this.snapshot.som = undefined;
+            return;
+        }
+        this.snapshot = {};
+    }
+    async getSemanticTree() {
+        const snapshot = await this.getSnapshot();
+        return snapshot.semanticInternal.tree;
+    }
+    async getVisibleObjectsContext(camera = this.camera) {
+        const snapshot = await this.getSnapshot();
+        if (!snapshot.visibleObjects) {
+            snapshot.visibleObjects = createVisibleObjectsContext({
+                scene: this.scene,
+                camera,
+                semanticTree: snapshot.semanticInternal,
+                occlusionOpacityThreshold: this.options.scene.visibleObjects.occlusionOpacityThreshold,
+            });
+        }
+        if (!this.disposed) {
+            this.visibleObjects = snapshot.visibleObjects;
+        }
+        return snapshot.visibleObjects;
+    }
+    async getSetOfMarkContext() {
+        const snapshot = await this.getSnapshot();
+        if (!snapshot.som) {
+            const camera = this.camera;
+            camera.updateMatrixWorld(true);
+            camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+            const projectionMatrix = camera.projectionMatrix.clone();
+            const matrixWorldInverse = camera.matrixWorldInverse.clone();
+            const visibleObjects = await this.getVisibleObjectsContext(camera);
+            const overlayOnCamera = this.deviceCamera?.loaded === true;
+            const screenshot = await this.screenshotSynthesizer.getScreenshot(overlayOnCamera);
+            snapshot.som = await createSetOfMarkContext({
+                tree: visibleObjects,
+                image: screenshot,
+                nodeObjects: snapshot.semanticInternal.nodeObjects,
+                registry: this.registry,
+                projectionMatrix,
+                matrixWorldInverse,
+            });
+        }
+        if (!this.disposed) {
+            this.setOfMark = snapshot.som;
+        }
+        return snapshot.som;
+    }
+    async getSnapshot() {
+        if (this.snapshot?.semanticInternal) {
+            return this.snapshot;
+        }
+        if (this.snapshotPromise) {
+            return this.snapshotPromise;
+        }
+        this.snapshotPromise = Promise.resolve()
+            .then(() => {
+            const snapshot = this.snapshot ?? {};
+            snapshot.semanticInternal = buildSemanticTree({
+                scene: this.scene,
+                registry: this.registry,
+            });
+            this.snapshot = snapshot;
+            return snapshot;
+        })
+            .finally(() => {
+            this.snapshotPromise = null;
+        });
+        return this.snapshotPromise;
+    }
+    dispose() {
+        this.disposed = true;
+        this.activeClients.clear();
+        this.snapshot = null;
+        this.snapshotPromise = null;
+        this.currentDetectionPromise = null;
+        this.currentVisibleObjectsPromise = null;
+        this.currentSetOfMarkPromise = null;
+        this.currentContextPromise = null;
+        this.currentContextRequestKey = '';
+        this.tree = null;
+        this.visibleObjects = null;
+        this.setOfMark = null;
+    }
+}
+
+class Context extends Script {
+    constructor() {
+        super(...arguments);
+        this.editorIcon = 'account_tree';
+    }
+    static { this.dependencies = {
+        options: ContextOptions,
+        scene: THREE.Scene,
+        camera: THREE.Camera,
+        screenshotSynthesizer: ScreenshotSynthesizer,
+    }; }
+    init({ options, deviceCamera, }) {
+        this.options = options;
+        this.removeDetectors();
+        this.deviceCamera = deviceCamera ?? this.deviceCamera;
+        if (!options.enabled) {
+            return;
+        }
+        if (options.scene.enabled) {
+            this.scene = new SceneDetector();
+            this.scene.setDeviceCamera(this.deviceCamera);
+            this.add(this.scene);
+        }
+    }
+    setDeviceCamera(deviceCamera) {
+        this.deviceCamera = deviceCamera;
+        this.scene?.setDeviceCamera(deviceCamera);
+    }
+    dispose() {
+        this.removeDetectors();
+    }
+    removeDetectors() {
+        if (this.scene) {
+            this.scene.dispose();
+            this.remove(this.scene);
+        }
+        this.scene = undefined;
+    }
+}
+
 // Sorting function which uses the render order to try to find which element is on top.
 function defaultSortFunction(a, b) {
     // 1. Primary: Distance (Ascending).
@@ -2911,197 +4624,6 @@ class Registry {
      */
     unregister(type) {
         this.instances.delete(type);
-    }
-}
-
-// Use a small canvas since a full size canvas can consume a lot of memory and
-// cause toDataUrl to be slow.
-const DEFAULT_CANVAS_WIDTH = 640;
-function flipBufferVertically(buffer, width, height) {
-    const bytesPerRow = width * 4;
-    const tempRow = new Uint8Array(bytesPerRow);
-    for (let y = 0; y < height / 2; y++) {
-        const topRowY = y;
-        const bottomRowY = height - 1 - y;
-        const topRowOffset = topRowY * bytesPerRow;
-        const bottomRowOffset = bottomRowY * bytesPerRow;
-        tempRow.set(buffer.subarray(topRowOffset, topRowOffset + bytesPerRow));
-        buffer.set(buffer.subarray(bottomRowOffset, bottomRowOffset + bytesPerRow), topRowOffset);
-        buffer.set(tempRow, bottomRowOffset);
-    }
-}
-class PendingScreenshotRequest {
-    constructor(resolve, reject, overlayOnCamera) {
-        this.resolve = resolve;
-        this.reject = reject;
-        this.overlayOnCamera = overlayOnCamera;
-    }
-}
-class ScreenshotSynthesizer {
-    constructor() {
-        this.pendingScreenshotRequests = [];
-        this.virtualBuffer = new Uint8Array();
-        this.virtualRealBuffer = new Uint8Array();
-        this.renderTargetWidth = DEFAULT_CANVAS_WIDTH;
-    }
-    async onAfterRender(renderer, renderSceneFn, deviceCamera) {
-        if (this.pendingScreenshotRequests.length == 0) {
-            return;
-        }
-        const haveVirtualOnlyRequests = this.pendingScreenshotRequests.every((request) => !request.overlayOnCamera);
-        if (haveVirtualOnlyRequests) {
-            this.createVirtualImageDataURL(renderer, renderSceneFn).then((virtualImageDataUrl) => {
-                this.resolveVirtualOnlyRequests(virtualImageDataUrl);
-            });
-        }
-        const haveVirtualAndRealReqeusts = this.pendingScreenshotRequests.some((request) => request.overlayOnCamera);
-        if (haveVirtualAndRealReqeusts && deviceCamera) {
-            this.createVirtualRealImageDataURL(renderer, renderSceneFn, deviceCamera).then((virtualRealImageDataUrl) => {
-                if (virtualRealImageDataUrl) {
-                    this.resolveVirtualRealRequests(virtualRealImageDataUrl);
-                }
-            });
-        }
-        else if (haveVirtualAndRealReqeusts) {
-            throw new Error('No device camera provided');
-        }
-    }
-    async createVirtualImageDataURL(renderer, renderSceneFn) {
-        const mainRenderTarget = renderer.getRenderTarget();
-        const isRenderingStereo = renderer.xr.isPresenting && renderer.xr.getCamera().cameras.length == 2;
-        const mainRenderTargetSingleViewWidth = isRenderingStereo
-            ? mainRenderTarget.width / 2
-            : mainRenderTarget.width;
-        const scaledHeight = Math.round(mainRenderTarget.height *
-            (this.renderTargetWidth / mainRenderTargetSingleViewWidth));
-        if (!this.virtualRenderTarget ||
-            this.virtualRenderTarget.width != this.renderTargetWidth) {
-            this.virtualRenderTarget?.dispose();
-            this.virtualRenderTarget = new THREE.WebGLRenderTarget(this.renderTargetWidth, scaledHeight, { colorSpace: THREE.SRGBColorSpace });
-        }
-        const xrIsPresenting = renderer.xr.isPresenting;
-        renderer.xr.isPresenting = false;
-        const virtualRenderTarget = this.virtualRenderTarget;
-        renderer.setRenderTarget(virtualRenderTarget);
-        renderer.clearColor();
-        renderer.clearDepth();
-        renderSceneFn();
-        renderer.setRenderTarget(mainRenderTarget);
-        renderer.xr.isPresenting = xrIsPresenting;
-        const expectedBufferLength = virtualRenderTarget.width * virtualRenderTarget.height * 4;
-        if (this.virtualBuffer.length != expectedBufferLength) {
-            this.virtualBuffer = new Uint8Array(expectedBufferLength);
-        }
-        const buffer = this.virtualBuffer;
-        await renderer.readRenderTargetPixelsAsync(virtualRenderTarget, 0, 0, virtualRenderTarget.width, virtualRenderTarget.height, buffer);
-        flipBufferVertically(buffer, virtualRenderTarget.width, virtualRenderTarget.height);
-        const canvas = this.virtualCanvas ||
-            (this.virtualCanvas = document.createElement('canvas'));
-        canvas.width = virtualRenderTarget.width;
-        canvas.height = virtualRenderTarget.height;
-        const context = canvas.getContext('2d');
-        if (!context) {
-            throw new Error('Failed to get 2D context');
-        }
-        const imageData = new ImageData(new Uint8ClampedArray(buffer), virtualRenderTarget.width, virtualRenderTarget.height);
-        context.putImageData(imageData, 0, 0);
-        return canvas.toDataURL();
-    }
-    resolveVirtualOnlyRequests(virtualImageDataUrl) {
-        let remainingRequests = 0;
-        for (let i = 0; i < this.pendingScreenshotRequests.length; i++) {
-            const request = this.pendingScreenshotRequests[i];
-            if (!request.overlayOnCamera) {
-                request.resolve(virtualImageDataUrl);
-            }
-            else {
-                this.pendingScreenshotRequests[remainingRequests++] = request;
-            }
-        }
-        this.pendingScreenshotRequests.length = remainingRequests;
-    }
-    async createVirtualRealImageDataURL(renderer, renderSceneFn, deviceCamera) {
-        if (!deviceCamera.loaded) {
-            console.debug('Waiting for device camera to be loaded');
-            return null;
-        }
-        const mainRenderTarget = renderer.getRenderTarget();
-        const isRenderingStereo = renderer.xr.isPresenting && renderer.xr.getCamera().cameras.length == 2;
-        const mainRenderTargetSize = new THREE.Vector2();
-        if (mainRenderTarget) {
-            mainRenderTargetSize.set(mainRenderTarget.width, mainRenderTarget.height);
-        }
-        else {
-            renderer.getSize(mainRenderTargetSize);
-        }
-        const mainRenderTargetSingleViewWidth = isRenderingStereo
-            ? mainRenderTargetSize.x / 2
-            : mainRenderTargetSize.x;
-        const scaledHeight = Math.round(mainRenderTargetSize.y *
-            (this.renderTargetWidth / mainRenderTargetSingleViewWidth));
-        if (!this.virtualRealRenderTarget ||
-            this.virtualRealRenderTarget.height != scaledHeight) {
-            this.virtualRealRenderTarget?.dispose();
-            this.virtualRealRenderTarget = new THREE.WebGLRenderTarget(this.renderTargetWidth, scaledHeight, { colorSpace: THREE.SRGBColorSpace });
-        }
-        const renderTarget = this.virtualRealRenderTarget;
-        renderer.setRenderTarget(renderTarget);
-        const xrIsPresenting = renderer.xr.isPresenting;
-        renderer.xr.isPresenting = false;
-        const quad = this.getFullScreenQuad();
-        quad.material.map = deviceCamera.texture;
-        quad.render(renderer);
-        renderSceneFn();
-        renderer.xr.isPresenting = xrIsPresenting;
-        renderer.setRenderTarget(mainRenderTarget);
-        if (this.virtualRealBuffer.length !=
-            renderTarget.width * renderTarget.height * 4) {
-            this.virtualRealBuffer = new Uint8Array(renderTarget.width * renderTarget.height * 4);
-        }
-        const buffer = this.virtualRealBuffer;
-        await renderer.readRenderTargetPixelsAsync(renderTarget, 0, 0, renderTarget.width, renderTarget.height, buffer);
-        flipBufferVertically(buffer, renderTarget.width, renderTarget.height);
-        const canvas = this.virtualRealCanvas ||
-            (this.virtualRealCanvas = document.createElement('canvas'));
-        canvas.width = renderTarget.width;
-        canvas.height = renderTarget.height;
-        const context = canvas.getContext('2d');
-        if (!context) {
-            throw new Error('Failed to get 2D context');
-        }
-        const imageData = new ImageData(new Uint8ClampedArray(buffer), renderTarget.width, renderTarget.height);
-        context.putImageData(imageData, 0, 0);
-        return canvas.toDataURL();
-    }
-    resolveVirtualRealRequests(virtualRealImageDataUrl) {
-        let remainingRequests = 0;
-        for (let i = 0; i < this.pendingScreenshotRequests.length; i++) {
-            const request = this.pendingScreenshotRequests[i];
-            if (request.overlayOnCamera) {
-                request.resolve(virtualRealImageDataUrl);
-            }
-            else {
-                this.pendingScreenshotRequests[remainingRequests++] = request;
-            }
-        }
-        this.pendingScreenshotRequests.length = remainingRequests;
-    }
-    getFullScreenQuad() {
-        if (!this.fullScreenQuad) {
-            this.fullScreenQuad = new FullScreenQuad(new THREE.MeshBasicMaterial({ transparent: true }));
-        }
-        return this.fullScreenQuad;
-    }
-    /**
-     * Requests a screenshot from the scene as a DataURL.
-     * @param overlayOnCamera - If true, overlays the image on a camera image
-     *     without any projection or aspect ratio correction.
-     * @returns Promise which returns the screenshot as a data uri.
-     */
-    async getScreenshot(overlayOnCamera = false) {
-        return new Promise((resolve, reject) => {
-            this.pendingScreenshotRequests.push(new PendingScreenshotRequest(resolve, reject, overlayOnCamera));
-        });
     }
 }
 
@@ -3856,447 +5378,6 @@ class XREffects {
         }
         renderer.xr.enabled = xrEnabled;
         renderer.xr.isPresenting = xrIsPresenting;
-    }
-}
-
-const DepthMeshTexturedShader = {
-    vertexShader: /* glsl */ `
-varying vec3 vNormal;
-varying vec3 vViewPosition;
-varying vec2 vUv;
-
-void main() {
-  vUv = uv;
-  vNormal = normal;
-
-  // Computes the view position.
-  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-  vViewPosition = -mvPosition.xyz;
-
-  gl_Position = projectionMatrix * mvPosition;
-}
-`,
-    fragmentShader: /* glsl */ `
-#include <packing>
-
-uniform vec3 uColor;
-uniform sampler2D uDepthTexture;
-uniform sampler2DArray uDepthTextureArray;
-uniform vec3 uLightDirection;
-uniform vec2 uResolution;
-uniform float uRawValueToMeters;
-
-varying vec3 vNormal;
-varying vec3 vViewPosition;
-varying vec2 vUv;
-
-const highp float kMaxDepthInMeters = 8.0;
-const float kInvalidDepthThreshold = 0.01;
-uniform float uMinDepth;
-uniform float uMaxDepth;
-uniform float uDebug;
-uniform float uOpacity;
-uniform bool uUsingFloatDepth;
-uniform bool uIsTextureArray;
-uniform mat4 uNormDepthBufferFromNormView;
-
-float saturate(in float x) {
-  return clamp(x, 0.0, 1.0);
-}
-
-vec3 TurboColormap(in float x) {
-  const vec4 kRedVec4 = vec4(0.55305649, 3.00913185, -5.46192616, -11.11819092);
-  const vec4 kGreenVec4 = vec4(0.16207513, 0.17712472, 15.24091500, -36.50657960);
-  const vec4 kBlueVec4 = vec4(-0.05195877, 5.18000081, -30.94853351, 81.96403246);
-  const vec2 kRedVec2 = vec2(27.81927491, -14.87899417);
-  const vec2 kGreenVec2 = vec2(25.95549545, -5.02738237);
-  const vec2 kBlueVec2 = vec2(-86.53476570, 30.23299484);
-
-  // Adjusts color space via 6 degree poly interpolation to avoid pure red.
-  vec4 v4 = vec4( 1.0, x, x * x, x * x * x);
-  vec2 v2 = v4.zw * v4.z;
-  return vec3(
-    dot(v4, kRedVec4)   + dot(v2, kRedVec2),
-    dot(v4, kGreenVec4) + dot(v2, kGreenVec2),
-    dot(v4, kBlueVec4)  + dot(v2, kBlueVec2)
-  );
-}
-
-// Depth is packed into the luminance and alpha components of its texture.
-// The texture is in a normalized format, storing raw values that need to be
-// converted to meters.
-float DepthGetMeters(in sampler2D depth_texture, in vec2 depth_uv) {
-  if (uUsingFloatDepth) {
-    return texture2D(depth_texture, depth_uv).r * uRawValueToMeters;
-  }
-  vec2 packedDepthAndVisibility = texture2D(depth_texture, depth_uv).rg;
-  return dot(packedDepthAndVisibility, vec2(255.0, 256.0 * 255.0)) * uRawValueToMeters;
-}
-
-float DepthArrayGetMeters(in sampler2DArray depth_texture, in vec2 depth_uv) {
-  return uRawValueToMeters * texture(uDepthTextureArray, vec3 (depth_uv.x, depth_uv.y, 0)).r;
-}
-
-vec3 DepthGetColorVisualization(in float x) {
-  return step(kInvalidDepthThreshold, x) * TurboColormap(x);
-}
-
-void main() {
-  vec3 lightDirection = normalize(uLightDirection);
-
-  // Compute UV coordinates relative to resolution
-  // vec2 uv = gl_FragCoord.xy / uResolution;
-  vec2 uv = vUv;
-
-  // Ambient, diffuse, and specular terms
-  vec3 ambient = 0.1 * uColor;
-  float diff = max(dot(vNormal, lightDirection), 0.0);
-  vec3 diffuse = diff * uColor;
-
-  vec3 viewDir = normalize(vViewPosition);
-  vec3 reflectDir = reflect(-lightDirection, vNormal);
-  float spec = pow(max(dot(viewDir, reflectDir), 0.0), 16.0);
-  vec3 specular = vec3(0.5) * spec; // Adjust specular color/strength
-
-  // Combine Phong lighting
-  vec3 finalColor = ambient + diffuse + specular;
-  // finalColor = vec3(vNormal);
-
-  // Output color
-  gl_FragColor = uOpacity * vec4(finalColor, 1.0);
-
-  if (uDebug > 0.5) {
-    return;
-  }
-
-  vec2 view_uv = vec2(uv.x, 1.0 - uv.y);
-  vec2 depth_uv = (uNormDepthBufferFromNormView * vec4(view_uv, 0.0, 1.0)).xy;
-
-  float depth = (uIsTextureArray ? DepthArrayGetMeters(uDepthTextureArray, depth_uv) : DepthGetMeters(uDepthTexture, depth_uv)) * 8.0;
-  float normalized_depth =
-    saturate((depth - uMinDepth) / (uMaxDepth - uMinDepth));
-  gl_FragColor =  vec4(TurboColormap(normalized_depth), 1.0);
-}
-`,
-};
-
-class DepthMesh extends MeshScript {
-    static { this.dependencies = {
-        renderer: THREE.WebGLRenderer,
-    }; }
-    static { this.isDepthMesh = true; }
-    constructor(depthOptions, width, height, depthTextures) {
-        const options = depthOptions.depthMesh;
-        const depthResolution = options.depthFullResolution;
-        const ignoreEdgePixels = options.ignoreEdgePixels;
-        const activeRes = Math.max(2, depthResolution - 2 * ignoreEdgePixels);
-        const geometry = new THREE.PlaneGeometry(1, 1, activeRes - 1, activeRes - 1);
-        const minU = ignoreEdgePixels / (depthResolution - 1);
-        const maxU = (depthResolution - 1 - ignoreEdgePixels) / (depthResolution - 1);
-        const minV = ignoreEdgePixels / (depthResolution - 1);
-        const maxV = (depthResolution - 1 - ignoreEdgePixels) / (depthResolution - 1);
-        const uvs = geometry.attributes.uv.array;
-        for (let i = 0; i < uvs.length; i += 2) {
-            uvs[i] = minU + uvs[i] * (maxU - minU);
-            uvs[i + 1] = minV + uvs[i + 1] * (maxV - minV);
-        }
-        let material;
-        let uniforms;
-        if (options.useDepthTexture || options.showDebugTexture) {
-            uniforms = {
-                uDepthTexture: { value: null },
-                uDepthTextureArray: { value: null },
-                uIsTextureArray: { value: 0.0 },
-                uColor: { value: new THREE.Color(0xaaaaaa) },
-                uResolution: { value: new THREE.Vector2(width, height) },
-                uRawValueToMeters: { value: 1.0 },
-                uMinDepth: { value: 0.0 },
-                uMaxDepth: { value: 8.0 },
-                uOpacity: { value: options.opacity },
-                uDebug: { value: options.showDebugTexture ? 1.0 : 0.0 },
-                uLightDirection: { value: new THREE.Vector3(1.0, 1.0, 1.0).normalize() },
-                uUsingFloatDepth: {
-                    value: depthOptions.dataFormatPreference[0] === 'float32',
-                },
-                uNormDepthBufferFromNormView: { value: new THREE.Matrix4() },
-            };
-            material = new THREE.ShaderMaterial({
-                uniforms: uniforms,
-                vertexShader: DepthMeshTexturedShader.vertexShader,
-                fragmentShader: DepthMeshTexturedShader.fragmentShader,
-                side: THREE.DoubleSide,
-                transparent: true,
-            });
-        }
-        else {
-            material = new THREE.ShadowMaterial({ opacity: options.shadowOpacity });
-            material.depthWrite = false;
-        }
-        super(geometry, material);
-        this.depthOptions = depthOptions;
-        this.depthTextures = depthTextures;
-        this.ignoreReticleRaycast = false;
-        this.worldPosition = new THREE.Vector3();
-        this.worldQuaternion = new THREE.Quaternion();
-        this.updateVertexNormals = false;
-        this.minDepth = 8;
-        this.maxDepth = 0;
-        this.minDepthPrev = 8;
-        this.maxDepthPrev = 0;
-        this.colliders = [];
-        this.projectionMatrixInverse = new THREE.Matrix4();
-        this.lastColliderUpdateTime = 0;
-        this.colliderId = 0;
-        this.visible = options.showDebugTexture || options.renderShadow;
-        this.options = options;
-        this.lastColliderUpdateTime = performance.now();
-        this.updateVertexNormals = options.updateVertexNormals;
-        this.colliderUpdateFps = options.colliderUpdateFps;
-        this.depthTextureMaterialUniforms = uniforms;
-        if (options.renderShadow) {
-            this.receiveShadow = true;
-            this.castShadow = false;
-        }
-        // Create a downsampled geometry for raycasts and physics.
-        if (options.useDownsampledGeometry) {
-            this.downsampledGeometry = new THREE.PlaneGeometry(1, 1, 39, 39);
-            const dsUvs = this.downsampledGeometry.attributes.uv.array;
-            for (let i = 0; i < dsUvs.length; i += 2) {
-                dsUvs[i] = minU + dsUvs[i] * (maxU - minU);
-                dsUvs[i + 1] = minV + dsUvs[i + 1] * (maxV - minV);
-            }
-            this.downsampledMesh = new THREE.Mesh(this.downsampledGeometry, material);
-            this.downsampledMesh.visible = false;
-        }
-    }
-    /**
-     * Initialize the depth mesh.
-     */
-    init({ renderer }) {
-        this.renderer = renderer;
-    }
-    /**
-     * Updates the depth data and geometry positions based on the provided camera
-     * and depth data.
-     */
-    updateDepth(depthData, projectionMatrixInverse, depthDataFormat) {
-        this.projectionMatrixInverse = projectionMatrixInverse;
-        this.minDepth = 8;
-        this.maxDepth = 0;
-        if (this.options.updateFullResolutionGeometry) {
-            this.updateFullResolutionGeometry(depthData, depthDataFormat);
-        }
-        if (this.downsampledGeometry) {
-            this.updateGeometry(depthData, this.downsampledGeometry, depthDataFormat);
-            // The downsampled geometry's positions just changed, so bump its
-            // version. Consumers that cache work keyed on the position attribute's
-            // version (e.g. FaceRecognizer's depth-mesh snapshot + BVH) rely on this
-            // to invalidate; without it they reuse a stale clone from the first
-            // detection and every raycast misses.
-            this.downsampledGeometry.attributes.position.needsUpdate = true;
-        }
-        this.minDepthPrev = this.minDepth;
-        this.maxDepthPrev = this.maxDepth;
-        this.geometry.attributes.position.needsUpdate = true;
-        const depthTextureLeft = this.depthTextures?.get(0);
-        if (depthTextureLeft && this.depthTextureMaterialUniforms) {
-            this.depthTextureMaterialUniforms.uUsingFloatDepth.value =
-                depthDataFormat === 'float32';
-            if (depthData.normDepthBufferFromNormView) {
-                this.depthTextureMaterialUniforms.uNormDepthBufferFromNormView.value.fromArray(depthData.normDepthBufferFromNormView.matrix);
-            }
-            else {
-                this.depthTextureMaterialUniforms.uNormDepthBufferFromNormView.value.identity();
-            }
-            const isTextureArray = depthTextureLeft instanceof THREE.ExternalTexture;
-            this.depthTextureMaterialUniforms.uIsTextureArray.value = isTextureArray
-                ? 1.0
-                : 0;
-            if (isTextureArray)
-                this.depthTextureMaterialUniforms.uDepthTextureArray.value =
-                    depthTextureLeft;
-            else
-                this.depthTextureMaterialUniforms.uDepthTexture.value =
-                    depthTextureLeft;
-            this.depthTextureMaterialUniforms.uMinDepth.value = this.minDepth;
-            this.depthTextureMaterialUniforms.uMaxDepth.value = this.maxDepth;
-            this.depthTextureMaterialUniforms.uRawValueToMeters.value = this
-                .depthTextures.depthData.length
-                ? this.depthTextures.depthData[0].rawValueToMeters
-                : 1.0;
-        }
-        if (this.options.updateVertexNormals) {
-            this.geometry.computeVertexNormals();
-        }
-        this.updateColliderIfNeeded();
-    }
-    updatePose(translation, quaternion) {
-        this.position.copy(translation);
-        this.quaternion.copy(quaternion);
-        if (this.downsampledMesh) {
-            this.downsampledMesh.position.copy(translation);
-            this.downsampledMesh.quaternion.copy(quaternion);
-            this.downsampledMesh.updateMatrixWorld();
-        }
-    }
-    /**
-     * Method to manually update the full resolution geometry.
-     * Only needed if options.updateFullResolutionGeometry is false.
-     */
-    updateFullResolutionGeometry(depthData, depthDataFormat) {
-        this.updateGeometry(depthData, this.geometry, depthDataFormat);
-    }
-    /**
-     * Internal method to update the geometry of the depth mesh.
-     */
-    updateGeometry(depthData, geometry, depthDataFormat) {
-        const width = depthData.width;
-        const height = depthData.height;
-        const depthArray = depthDataFormat === 'float32'
-            ? new Float32Array(depthData.data)
-            : new Uint16Array(depthData.data);
-        const vertexPosition = new THREE.Vector3();
-        const normViewCoord = new THREE.Vector3();
-        const normDepthBufferFromNormView = depthData.normDepthBufferFromNormView
-            ? new THREE.Matrix4().fromArray(depthData.normDepthBufferFromNormView.matrix)
-            : new THREE.Matrix4().identity();
-        for (let i = 0; i < geometry.attributes.position.count; ++i) {
-            const u = geometry.attributes.uv.array[2 * i];
-            const v = geometry.attributes.uv.array[2 * i + 1];
-            let sampleU = u;
-            let sampleV = v;
-            if (depthData.normDepthBufferFromNormView) {
-                normViewCoord.set(u, 1.0 - v, 0);
-                normViewCoord.applyMatrix4(normDepthBufferFromNormView);
-                sampleU = normViewCoord.x;
-                sampleV = normViewCoord.y;
-            }
-            else {
-                sampleV = 1.0 - v;
-            }
-            // Grabs the nearest for now.
-            const depthX = Math.round(clamp$1(sampleU * (width - 1), 0, width - 1));
-            const depthY = Math.round(clamp$1(sampleV * (height - 1), 0, height - 1));
-            const rawDepth = depthArray[depthY * width + depthX];
-            let depth = depthData.rawValueToMeters * rawDepth;
-            // Finds global min/max.
-            if (depth > 0) {
-                if (depth < this.minDepth) {
-                    this.minDepth = depth;
-                }
-                else if (depth > this.maxDepth) {
-                    this.maxDepth = depth;
-                }
-            }
-            // This is a wrong algorithm to patch holes but working amazingly well.
-            // Per-row maximum may work better but haven't tried here.
-            // A proper local maximum takes another pass.
-            if (depth == 0 && this.options.patchHoles) {
-                depth = this.maxDepthPrev;
-            }
-            if (this.options.patchHolesUpper && v > 0.9) {
-                depth = this.minDepthPrev;
-            }
-            vertexPosition.set(2.0 * (u - 0.5), 2.0 * (v - 0.5), -1);
-            // This relates to camera.near
-            vertexPosition.applyMatrix4(this.projectionMatrixInverse);
-            vertexPosition.multiplyScalar(-depth / vertexPosition.z);
-            geometry.attributes.position.array[3 * i + 0] = vertexPosition.x;
-            geometry.attributes.position.array[3 * i + 1] = vertexPosition.y;
-            geometry.attributes.position.array[3 * i + 2] = vertexPosition.z;
-        }
-    }
-    /**
-     * Optimizes collider updates to run periodically based on the specified FPS.
-     */
-    updateColliderIfNeeded() {
-        const timeSinceLastUpdate = performance.now() - this.lastColliderUpdateTime;
-        if (this.RAPIER && timeSinceLastUpdate > 1000 / this.colliderUpdateFps) {
-            this.getWorldPosition(this.worldPosition);
-            this.getWorldQuaternion(this.worldQuaternion);
-            this.rigidBody.setTranslation(this.worldPosition, false);
-            this.rigidBody.setRotation(this.worldQuaternion, false);
-            const geometry = this.downsampledGeometry
-                ? this.downsampledGeometry
-                : this.geometry;
-            const vertices = geometry.attributes.position.array;
-            const indices = geometry.getIndex().array;
-            // Changing the density does not fix the issue.
-            const shape = this.RAPIER.ColliderDesc.trimesh(vertices, indices).setDensity(1.0);
-            // const convextHull = this.RAPIER.ColliderDesc.convexHull(vertices);
-            if (this.options.useDualCollider) {
-                this.colliderId = (this.colliderId + 1) % 2;
-                this.blendedWorld.removeCollider(this.colliders[this.colliderId], false);
-                this.colliders[this.colliderId] = this.blendedWorld.createCollider(shape, this.rigidBody);
-            }
-            else {
-                const newCollider = this.blendedWorld.createCollider(shape, this.rigidBody);
-                this.blendedWorld.removeCollider(this.collider, /*wakeUp=*/ false);
-                this.collider = newCollider;
-            }
-            this.lastColliderUpdateTime = performance.now();
-        }
-    }
-    initRapierPhysics(RAPIER, blendedWorld) {
-        this.getWorldPosition(this.worldPosition);
-        this.getWorldQuaternion(this.worldQuaternion);
-        const desc = RAPIER.RigidBodyDesc.fixed()
-            .setTranslation(this.worldPosition.x, this.worldPosition.y, this.worldPosition.z)
-            .setRotation(this.worldQuaternion);
-        this.rigidBody = blendedWorld.createRigidBody(desc);
-        const vertices = this.geometry.attributes.position.array;
-        const indices = this.geometry.getIndex().array;
-        const shape = RAPIER.ColliderDesc.trimesh(vertices, indices);
-        if (this.options.useDualCollider) {
-            this.colliders = [];
-            this.colliders.push(blendedWorld.createCollider(shape, this.rigidBody), blendedWorld.createCollider(shape, this.rigidBody));
-            this.colliderId = 0;
-        }
-        else {
-            this.collider = blendedWorld.createCollider(shape, this.rigidBody);
-        }
-        this.RAPIER = RAPIER;
-        this.blendedWorld = blendedWorld;
-        this.lastColliderUpdateTime = performance.now();
-    }
-    /**
-     * Customizes raycasting to compute normals for intersections.
-     * @param raycaster - The raycaster object.
-     * @param intersects - Array to store intersections.
-     * @returns - True if intersections are found.
-     */
-    raycast(raycaster, intersects) {
-        const intersections = [];
-        if (this.downsampledMesh) {
-            this.downsampledMesh.raycast(raycaster, intersections);
-        }
-        else {
-            super.raycast(raycaster, intersections);
-        }
-        intersections.forEach((intersect) => {
-            intersect.object = this;
-        });
-        if (!this.updateVertexNormals) {
-            // Use the face normals instead of attribute normals.
-            intersections.forEach((intersect) => {
-                if (intersect.normal && intersect.face) {
-                    intersect.normal.copy(intersect.face.normal);
-                }
-            });
-        }
-        intersects.push(...intersections);
-        return true;
-    }
-    getColliderFromHandle(handle) {
-        if (this.collider?.handle == handle) {
-            return this.collider;
-        }
-        for (const collider of this.colliders) {
-            if (collider?.handle == handle) {
-                return collider;
-            }
-        }
-        return undefined;
     }
 }
 
@@ -9644,6 +10725,7 @@ class Options {
         this.ai = new AIOptions();
         this.simulator = new SimulatorOptions();
         this.world = new WorldOptions();
+        this.context = new ContextOptions();
         this.uikit = new UIKitOptions();
         this.physics = new PhysicsOptions();
         this.transition = new XRTransitionOptions();
@@ -9868,6 +10950,39 @@ class Options {
     enableAI() {
         this.ai.enabled = true;
         this.ai.gemini.enabled = true;
+        return this;
+    }
+    /**
+     * Enables agent-facing context detectors such as semantic trees,
+     * view visibility, and Set-of-Mark observations.
+     * @returns The instance for chaining.
+     */
+    enableContext() {
+        this.context.enable();
+        return this;
+    }
+    /**
+     * Enables agent-facing scene context.
+     * @returns The instance for chaining.
+     */
+    enableSceneContext() {
+        this.context.enableScene();
+        return this;
+    }
+    /**
+     * Enables agent-facing visible objects context.
+     * @returns The instance for chaining.
+     */
+    enableVisibleObjectsContext() {
+        this.context.enableVisibleObjects();
+        return this;
+    }
+    /**
+     * Enables agent-facing Set-of-Mark context.
+     * @returns The instance for chaining.
+     */
+    enableSetOfMarkContext() {
+        this.context.enableSetOfMark();
         return this;
     }
     /**
@@ -12765,6 +13880,44 @@ function placeObjectAtIntersectionFacingTarget(obj, intersection, target) {
     return obj;
 }
 
+function disposeMaterial(material, except = new Set()) {
+    if (!material) {
+        return;
+    }
+    const materials = Array.isArray(material) ? material : [material];
+    for (const item of materials) {
+        if (!except.has(item)) {
+            item.dispose();
+        }
+    }
+}
+function disposeRenderableResources(object) {
+    const renderable = object;
+    renderable.geometry?.dispose?.();
+    disposeMaterial(renderable.material);
+}
+function hasRenderableResources(object) {
+    const renderable = object;
+    return !!(renderable.geometry || renderable.material);
+}
+function disposeObjectTree(object) {
+    for (const child of [...object.children]) {
+        disposeObjectTree(child);
+        object.remove(child);
+    }
+    if (hasRenderableResources(object)) {
+        disposeRenderableResources(object);
+    }
+    const disposable = object;
+    disposable.dispose?.();
+}
+function disposeObjectChildren(object) {
+    for (const child of [...object.children]) {
+        disposeObjectTree(child);
+        object.remove(child);
+    }
+}
+
 /**
  * Represents a single detected object in the XR environment and holds metadata
  * about the object's properties. Note: 3D object position is stored in the
@@ -12847,6 +14000,7 @@ let BaseDetectorBackend$1 = class BaseDetectorBackend {
         const detectedObjects = (await Promise.all(detectionPromises)).filter((obj) => obj !== null && obj !== undefined);
         return detectedObjects;
     }
+    dispose() { }
     /**
      * Creates a debug visual representation for a detected object in the 3D scene.
      *
@@ -13135,6 +14289,7 @@ class ObjectDetector extends Script {
         this.activeClients = new Set();
         this.currentDetectionPromise = null;
         this.lastContinuousDetectionStartedAtMs = -Infinity;
+        this.disposed = false;
         /**
          * The latest detected objects.
          */
@@ -13168,6 +14323,7 @@ class ObjectDetector extends Script {
         this.depth = depth;
         this.camera = camera;
         this.renderer = renderer;
+        this.disposed = false;
         if (this.targetDevice === 'galaxyxr' &&
             typeof navigator !== 'undefined' &&
             /OculusBrowser|Quest/i.test(navigator.userAgent)) {
@@ -13225,7 +14381,9 @@ class ObjectDetector extends Script {
         this.lastContinuousDetectionStartedAtMs = performance.now();
         this.currentDetectionPromise = this.runDetectionInternal()
             .then((results) => {
-            this.detectedObjects = results;
+            if (!this.disposed) {
+                this.detectedObjects = results;
+            }
             return results;
         })
             .finally(() => {
@@ -13259,7 +14417,6 @@ class ObjectDetector extends Script {
     }
     async runDetectionInternal() {
         this.clearDetectedObjects(); // Clear previous scene results before starting a new detection.
-        const depthMeshSnapshot = this.getDepthMeshSnapshot();
         const cameraParametersSnapshot = getCameraParametersSnapshot(this.camera, this.renderer.xr.getCamera(), this.deviceCamera, this.targetDevice);
         if (!cameraParametersSnapshot) {
             // Device camera not ready yet (warming up); skip until it is available.
@@ -13276,12 +14433,24 @@ class ObjectDetector extends Script {
             console.warn(`Failed to load or initialize ObjectDetector backend '${activeBackend}':`, error);
             return [];
         }
-        const detectedObjects = await detectorBackend.run(depthMeshSnapshot, cameraParametersSnapshot);
-        for (const obj of detectedObjects) {
-            this._detectedObjects.set(obj.uuid, obj);
-            this.add(obj);
+        if (this.disposed) {
+            return [];
         }
-        return detectedObjects;
+        const depthMeshSnapshot = this.getDepthMeshSnapshot();
+        try {
+            const detectedObjects = await detectorBackend.run(depthMeshSnapshot, cameraParametersSnapshot);
+            if (this.disposed) {
+                return [];
+            }
+            for (const obj of detectedObjects) {
+                this._detectedObjects.set(obj.uuid, obj);
+                this.add(obj);
+            }
+            return detectedObjects;
+        }
+        finally {
+            this.disposeDepthMeshSnapshot(depthMeshSnapshot);
+        }
     }
     getDetectorContext() {
         return {
@@ -13349,12 +14518,17 @@ class ObjectDetector extends Script {
     }
     clearDetectedObjects() {
         for (const obj of this._detectedObjects.values()) {
+            disposeObjectTree(obj);
             this.remove(obj);
         }
         this._detectedObjects.clear();
         if (this._debugVisualsGroup) {
-            this._debugVisualsGroup.clear();
+            disposeObjectChildren(this._debugVisualsGroup);
         }
+    }
+    disposeDepthMeshSnapshot(depthMeshSnapshot) {
+        depthMeshSnapshot.geometry.dispose();
+        disposeMaterial(depthMeshSnapshot.material);
     }
     /**
      * Toggles the visibility of all debug visualizations for detected objects.
@@ -13364,6 +14538,18 @@ class ObjectDetector extends Script {
         if (this._debugVisualsGroup) {
             this._debugVisualsGroup.visible = visible;
         }
+    }
+    dispose() {
+        this.disposed = true;
+        this.activeClients.clear();
+        disposeObjectChildren(this);
+        this.clear(); // Unlinks children so needs to come last
+        for (const backendPromise of this._detectorBackends.values()) {
+            void backendPromise
+                .then((backend) => backend.dispose?.())
+                .catch(() => { });
+        }
+        this._detectorBackends.clear();
     }
 }
 
@@ -13512,10 +14698,14 @@ class PlaneDetector extends Script {
     _removePlaneMesh(xrPlane) {
         const planeMesh = this._detectedPlanes.get(xrPlane);
         if (planeMesh) {
-            planeMesh.geometry.dispose();
+            this.disposePlaneMesh(planeMesh);
             this.remove(planeMesh);
             this._detectedPlanes.delete(xrPlane);
         }
+    }
+    disposePlaneMesh(planeMesh) {
+        planeMesh.geometry.dispose();
+        disposeMaterial(planeMesh.material, this._debugMaterial ? new Set([this._debugMaterial]) : undefined);
     }
     /**
      * Updates the position and orientation of a `DetectedPlane` mesh from its XR
@@ -13567,10 +14757,20 @@ class PlaneDetector extends Script {
     }
     setSimulatorPlanes(planes) {
         this.usingSimulatorPlanes = true;
-        this._detectedPlanes.clear();
+        for (const plane of Array.from(this._detectedPlanes.keys())) {
+            this._removePlaneMesh(plane);
+        }
         for (const plane of planes) {
             this._addSimulatorPlaneMesh(plane);
         }
+    }
+    dispose() {
+        for (const plane of Array.from(this._detectedPlanes.keys())) {
+            this._removePlaneMesh(plane);
+        }
+        this._debugMaterial?.dispose();
+        this.usingSimulatorPlanes = false;
+        this._xrRefSpace = undefined;
     }
 }
 
@@ -13821,12 +15021,9 @@ class MeshDetector extends Script {
      */
     setSimulatorMeshes(meshes) {
         this.usingSimulatorMeshes = true;
-        for (const [, threeMesh] of this.xrMeshToThreeMesh) {
-            this.remove(threeMesh);
-            threeMesh.dispose();
+        for (const [xrMesh, threeMesh] of this.xrMeshToThreeMesh) {
+            this.removeMesh(xrMesh, threeMesh);
         }
-        this.xrMeshToThreeMesh.clear();
-        this.threeMeshToXrMesh.clear();
         for (const simMesh of meshes) {
             const material = (simMesh.semanticLabel &&
                 this.debugMaterials.get(simMesh.semanticLabel)) ||
@@ -13846,6 +15043,20 @@ class MeshDetector extends Script {
                 threeMesh.initRapierPhysics(this.physics.RAPIER, this.physics.blendedWorld);
             }
         }
+    }
+    dispose() {
+        for (const [xrMesh, threeMesh] of Array.from(this.xrMeshToThreeMesh.entries())) {
+            this.removeMesh(xrMesh, threeMesh);
+        }
+        this.defaultMaterial.dispose();
+        this.fallbackDebugMaterial?.dispose();
+        this.fallbackDebugMaterial = null;
+        for (const material of this.debugMaterials.values()) {
+            material.dispose();
+        }
+        this.debugMaterials.clear();
+        this.usingSimulatorMeshes = false;
+        this.physics = undefined;
     }
     createMesh(frame, xrMesh) {
         const semanticLabel = xrMesh.semanticLabel;
@@ -14230,6 +15441,7 @@ class BaseDetectorBackend {
             sampleRate: this.context.sampleRate,
         };
     }
+    dispose() { }
 }
 
 let FilesetResolver$2;
@@ -14311,6 +15523,11 @@ class MediaPipeDetectorBackend extends BaseDetectorBackend {
         }
         return null;
     }
+    dispose() {
+        this.audioClassifier?.close();
+        this.audioClassifier = null;
+        this.accumulatedAudio = [];
+    }
 }
 
 const DEFAULT_SAMPLE_RATE = 44000;
@@ -14385,6 +15602,14 @@ class SoundDetector extends Script {
     }
     update(_timestamp, _frame) {
         // No per-frame update logic needed, audio is handled asynchronously via streams.
+    }
+    dispose() {
+        this.stopListening();
+        for (const backendPromise of this._detectorBackends.values()) {
+            void backendPromise.then((backend) => backend.dispose()).catch(() => { });
+        }
+        this._detectorBackends.clear();
+        this.audioListener = undefined;
     }
     getOrCreateDetectorBackend(sampleRate) {
         if (!this.options) {
@@ -14961,6 +16186,7 @@ class BaseHumanBackend {
         }
         return this.detect(snapshot, depthMeshSnapshot, cameraParametersSnapshot);
     }
+    dispose() { }
 }
 
 let FilesetResolver$1;
@@ -15095,6 +16321,10 @@ class MediaPipeHumanBackend extends BaseHumanBackend {
             minTrackingConfidence: humansOptions.minTrackingConfidence,
         });
     }
+    dispose() {
+        this.poseLandmarker?.close();
+        this.poseLandmarker = null;
+    }
 }
 
 /**
@@ -15109,6 +16339,7 @@ class HumanRecognizer extends Script {
         this.activeClients = new Set();
         this.currentDetectionPromise = null;
         this.lastContinuousDetectionStartedAtMs = -Infinity;
+        this.disposed = false;
         /**
          * The latest detected body poses.
          */
@@ -15128,6 +16359,7 @@ class HumanRecognizer extends Script {
         this.depth = depth;
         this.camera = camera;
         this.renderer = renderer;
+        this.disposed = false;
     }
     /**
      * Starts continuous pose detection for the given client.
@@ -15174,7 +16406,9 @@ class HumanRecognizer extends Script {
         this.lastContinuousDetectionStartedAtMs = performance.now();
         this.currentDetectionPromise = this.runDetectionInternal()
             .then((results) => {
-            this.poses = results;
+            if (!this.disposed) {
+                this.poses = results;
+            }
             return results;
         })
             .finally(() => {
@@ -15211,7 +16445,6 @@ class HumanRecognizer extends Script {
             console.warn('Cannot run Human Detection: Depth module / depthMesh is not enabled or initialized.');
             return [];
         }
-        const depthMeshSnapshot = this.getDepthMeshSnapshot();
         const cameraParametersSnapshot = getCameraParametersSnapshot(this.camera, this.renderer.xr.getCamera(), this.deviceCamera, this.targetDevice);
         if (!cameraParametersSnapshot) {
             // Device camera not ready yet (warming up); skip until it is available.
@@ -15228,8 +16461,17 @@ class HumanRecognizer extends Script {
             console.warn(`Failed to load or initialize HumanRecognizer backend '${activeBackend}':`, error);
             return [];
         }
-        const bodyPoses = await backend.run(depthMeshSnapshot, cameraParametersSnapshot);
-        return bodyPoses;
+        if (this.disposed) {
+            return [];
+        }
+        const depthMeshSnapshot = this.getDepthMeshSnapshot();
+        try {
+            const bodyPoses = await backend.run(depthMeshSnapshot, cameraParametersSnapshot);
+            return this.disposed ? [] : bodyPoses;
+        }
+        finally {
+            this.disposeDepthMeshSnapshot(depthMeshSnapshot);
+        }
     }
     getBackendContext() {
         return {
@@ -15266,6 +16508,22 @@ class HumanRecognizer extends Script {
         depthMesh.getWorldScale(depthMeshSnapshot.scale);
         depthMeshSnapshot.updateMatrixWorld(true);
         return depthMeshSnapshot;
+    }
+    disposeDepthMeshSnapshot(depthMeshSnapshot) {
+        depthMeshSnapshot.geometry.dispose();
+        disposeMaterial(depthMeshSnapshot.material);
+    }
+    dispose() {
+        this.disposed = true;
+        this.activeClients.clear();
+        this.clear();
+        this.poses = [];
+        for (const backendPromise of this.detectorBackends.values()) {
+            void backendPromise
+                .then((backend) => backend.dispose?.())
+                .catch(() => { });
+        }
+        this.detectorBackends.clear();
     }
 }
 
@@ -15588,6 +16846,7 @@ class BaseFaceBackend {
         }
         return this.detect(snapshot, depthMeshSnapshot, cameraParametersSnapshot);
     }
+    dispose() { }
 }
 
 // Source code for the MediaPipe FaceLandmarker web worker. Inlined as a
@@ -15947,6 +17206,7 @@ class FaceRecognizer extends Script {
         this.activeClients = new Set();
         this.currentDetectionPromise = null;
         this.lastContinuousDetectionStartedAtMs = -Infinity;
+        this.disposed = false;
         /**
          * The latest detected faces from continuous detection.
          */
@@ -15975,6 +17235,7 @@ class FaceRecognizer extends Script {
         this.depth = depth;
         this.camera = camera;
         this.renderer = renderer;
+        this.disposed = false;
     }
     /**
      * Starts continuous face detection for the given client.
@@ -16021,7 +17282,9 @@ class FaceRecognizer extends Script {
         this.lastContinuousDetectionStartedAtMs = performance.now();
         this.currentDetectionPromise = this.runDetectionInternal()
             .then((results) => {
-            this.detectedFaces = results;
+            if (!this.disposed) {
+                this.detectedFaces = results;
+            }
             return results;
         })
             .finally(() => {
@@ -16056,7 +17319,6 @@ class FaceRecognizer extends Script {
             console.warn('Cannot run Face Detection: Depth module / depthMesh is not enabled or initialized.');
             return [];
         }
-        const depthMeshSnapshot = this.getDepthMeshSnapshot();
         const cameraParametersSnapshot = getCameraParametersSnapshot(this.camera, this.renderer.xr.getCamera(), this.deviceCamera, this.targetDevice);
         if (!cameraParametersSnapshot) {
             // Device camera not ready yet (warming up); skip until it is available.
@@ -16073,8 +17335,12 @@ class FaceRecognizer extends Script {
             console.warn(`Failed to load or initialize FaceRecognizer backend '${activeBackend}':`, error);
             return [];
         }
+        if (this.disposed) {
+            return [];
+        }
+        const depthMeshSnapshot = this.getDepthMeshSnapshot();
         const faces = await backend.run(depthMeshSnapshot, cameraParametersSnapshot);
-        return faces;
+        return this.disposed ? [] : faces;
     }
     getBackendContext() {
         return {
@@ -16123,9 +17389,7 @@ class FaceRecognizer extends Script {
         // Source changed (or first call). Dispose the previous BVH so its
         // backing buffers free, then clone + rebuild.
         if (this.cachedDepthMeshSnapshot) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            this.cachedDepthMeshSnapshot.geometry.disposeBoundsTree?.();
-            this.cachedDepthMeshSnapshot.geometry.dispose();
+            this.disposeCachedDepthMeshSnapshot();
         }
         const clonedGeometry = geometry.clone();
         clonedGeometry.computeBoundingSphere();
@@ -16149,6 +17413,41 @@ class FaceRecognizer extends Script {
         this.cachedDepthMeshSource = geometry;
         this.cachedDepthMeshVersion = version;
         return depthMeshSnapshot;
+    }
+    disposeCachedDepthMeshSnapshot() {
+        if (!this.cachedDepthMeshSnapshot) {
+            return;
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        this.cachedDepthMeshSnapshot.geometry.disposeBoundsTree?.();
+        this.cachedDepthMeshSnapshot.geometry.dispose();
+        disposeMaterial(this.cachedDepthMeshSnapshot.material);
+        this.cachedDepthMeshSnapshot = null;
+        this.cachedDepthMeshSource = null;
+        this.cachedDepthMeshVersion = -1;
+    }
+    dispose() {
+        this.disposed = true;
+        this.activeClients.clear();
+        this.clear();
+        this.detectedFaces = [];
+        const pendingDetection = this.currentDetectionPromise;
+        if (pendingDetection) {
+            void pendingDetection
+                .finally(() => {
+                this.disposeCachedDepthMeshSnapshot();
+            })
+                .catch(() => { });
+        }
+        else {
+            this.disposeCachedDepthMeshSnapshot();
+        }
+        for (const backendPromise of this._detectorBackends.values()) {
+            void backendPromise
+                .then((backend) => backend.dispose?.())
+                .catch(() => { });
+        }
+        this._detectorBackends.clear();
     }
 }
 
@@ -16177,6 +17476,7 @@ class BaseSegmenterBackend {
         }
         return this.segment(snapshot);
     }
+    dispose() { }
 }
 
 let FilesetResolver;
@@ -16268,6 +17568,10 @@ class MediaPipeSegmenterBackend extends BaseSegmenterBackend {
         });
         return out;
     }
+    dispose() {
+        this.imageSegmenter?.close();
+        this.imageSegmenter = null;
+    }
 }
 
 /**
@@ -16299,6 +17603,7 @@ class Segmenter extends Script {
          * `Number.NEGATIVE_INFINITY` so the first `update()` tick fires immediately.
          */
         this._lastRunMs = Number.NEGATIVE_INFINITY;
+        this._disposed = false;
     }
     static { this.dependencies = {
         options: WorldOptions,
@@ -16307,6 +17612,7 @@ class Segmenter extends Script {
     init({ options, deviceCamera, }) {
         this.options = options;
         this.deviceCamera = deviceCamera;
+        this._disposed = false;
     }
     /**
      * The latest cached segmentation mask from the most recently completed
@@ -16332,6 +17638,8 @@ class Segmenter extends Script {
      *   engine frame loop.
      */
     update(time) {
+        if (this._disposed)
+            return;
         if (this._inferenceInFlight)
             return;
         if (time - this._lastRunMs < this.options.segmentation.pollingIntervalMs)
@@ -16351,11 +17659,16 @@ class Segmenter extends Script {
      * @returns The mask, or `null` if the backend or camera frame is not ready.
      */
     async runSegmentation() {
+        if (this._disposed) {
+            return null;
+        }
         if (this._inferenceInFlight) {
             return this._inferenceInFlight;
         }
         this._inferenceInFlight = this._runInference().then((mask) => {
-            this._latestMask = mask;
+            if (!this._disposed) {
+                this._latestMask = mask;
+            }
             this._inferenceInFlight = null;
             return mask;
         });
@@ -16395,6 +17708,17 @@ class Segmenter extends Script {
             this._backends.set(activeBackend, backendPromise);
         }
         return backendPromise;
+    }
+    dispose() {
+        this._disposed = true;
+        this._latestMask = null;
+        this._inferenceInFlight = null;
+        for (const backendPromise of this._backends.values()) {
+            void backendPromise
+                .then((backend) => backend.dispose?.())
+                .catch(() => { });
+        }
+        this._backends.clear();
     }
 }
 
@@ -16562,6 +17886,30 @@ class World extends Script {
     showDebugVisualizations(visible = true) {
         this.planes?.showDebugVisualizations(visible);
         this.objects?.showDebugVisualizations(visible);
+    }
+    dispose() {
+        const detectors = [
+            this.planes,
+            this.objects,
+            this.meshes,
+            this.sounds,
+            this.humans,
+            this.faces,
+            this.segmentation,
+        ];
+        for (const detector of detectors) {
+            if (!detector)
+                continue;
+            detector.dispose();
+            this.remove(detector);
+        }
+        this.planes = undefined;
+        this.objects = undefined;
+        this.meshes = undefined;
+        this.sounds = undefined;
+        this.humans = undefined;
+        this.faces = undefined;
+        this.segmentation = undefined;
     }
 }
 
@@ -20590,17 +21938,6 @@ class PermissionsManager {
 }
 
 /**
- * A node to hold all XR Blocks Systems.
- */
-class XRSystems extends THREE.Group {
-    constructor() {
-        super(...arguments);
-        this.type = 'XRSystems';
-        this.name = 'XR Blocks Systems';
-    }
-}
-
-/**
  * Core is the central engine of the XR Blocks framework, acting as a
  * singleton manager for all XR subsystems. Its primary goal is to abstract
  * low-level WebXR and THREE.js details, providing a simplified and powerful API
@@ -20689,6 +22026,8 @@ class Core {
         this.dragManager = new DragManager();
         /** Manages real-world understanding: planes, meshes, objects, and sounds. */
         this.world = new World();
+        /** Manages agent-facing observations of the app/session. */
+        this.context = new Context();
         /** A shared texture loader. */
         this.textureLoader = new THREE.TextureLoader();
         this.webXRSettings = {};
@@ -20815,10 +22154,11 @@ class Core {
         Core.instance = this;
         this.scene.name = 'XR Blocks Scene';
         this.scene.add(this.xrSystemsGroup);
-        this.xrSystemsGroup.add(this.user, this.dragManager, this.ui, this.sound, this.world);
+        this.xrSystemsGroup.add(this.user, this.dragManager, this.ui, this.sound, this.world, this.context);
         this.registry.register(this.registry);
         this.registry.register(this);
         this.registry.register(this.waitFrame);
+        this.registry.register(this.screenshotSynthesizer);
         this.registry.register(this.scene);
         this.registry.register(this.timer);
         this.registry.register(this.input);
@@ -20831,6 +22171,7 @@ class Core {
         this.registry.register(this.scriptsManager);
         this.registry.register(this.depth);
         this.registry.register(this.world);
+        this.registry.register(this.context);
         this.registry.register(this.xrSystemsGroup);
     }
     /**
@@ -20846,6 +22187,8 @@ class Core {
         this.registry.register(options.depth, DepthOptions);
         this.registry.register(options.simulator, SimulatorOptions);
         this.registry.register(options.world, WorldOptions);
+        this.registry.register(options.context, ContextOptions);
+        this.registry.register(options.context.scene, SceneOptions);
         this.registry.register(options.world.meshes, MeshDetectionOptions);
         this.registry.register(options.uikit, UIKitOptions);
         this.registry.register(options.ai, AIOptions);
@@ -20916,6 +22259,7 @@ class Core {
             this.deviceCamera = new XRDeviceCamera(options.deviceCamera);
             this.deviceCamera.setRenderer(this.renderer);
             this.registry.register(this.deviceCamera);
+            this.context.setDeviceCamera(this.deviceCamera);
         }
         const webXRRequiredFeatures = options.webxrRequiredFeatures;
         const webXROptionalFeatures = options.webxrOptionalFeatures;
@@ -21995,6 +23339,11 @@ const user = core.user;
  * understanding features like plane detection and object detection.
  */
 const world = core.world;
+/**
+ * A direct alias to the `Context` instance, which provides agent-facing
+ * observations such as semantic trees, visible objects, and Set-of-Mark views.
+ */
+const context = core.context;
 /**
  * A direct alias to the `AI` instance for integrating generative AI features,
  * including multi-modal understanding, image generation, and live conversation.
@@ -23751,5 +25100,5 @@ var SegmentCategory;
     SegmentCategory[SegmentCategory["Others"] = 5] = "Others";
 })(SegmentCategory || (SegmentCategory = {}));
 
-export { AI, AIOptions, AVERAGE_IPD_METERS, ActiveControllers, Agent, AnimatableNumber, AudioListener, AudioPlayer, BACK, BackgroundMusic, CategoryVolumes, Col, Core, CoreSound, DEFAULT_DEVICE_CAMERA_HEIGHT, DEFAULT_DEVICE_CAMERA_WIDTH, DEFAULT_RGB_TO_DEPTH_PARAMS, DEVICE_CAMERA_PARAMETERS, DOWN, Depth, DepthMesh, DepthMeshOptions, DepthOptions, DepthTextures, DetectedBodyPose, DetectedFace, DetectedMesh, DetectedObject, DetectedPlane, DeviceCameraOptions, DragManager, DragMode, ExitButton, FINGER_ORDER, FORWARD, FaceLandmarkName, FaceRecognizer, FacesOptions, FreestandingSlider, GEMINI_DEFAULT_FLASH_MODEL, GEMINI_DEFAULT_IMAGE_MODEL, GEMINI_DEFAULT_LIVE_MODEL, GamepadBindings, GamepadController, GazeController, Gemini, GeminiOptions, GenerateSkyboxTool, GestureRecognition, GestureRecognitionOptions, GetWeatherTool, Grid, HAND_BONE_IDX_CONNECTION_MAP, HAND_INDEX_TO_LABEL, HAND_JOINT_COUNT, HAND_JOINT_IDX_CONNECTION_MAP, HAND_JOINT_NAMES, Handedness, Hands, HandsOptions, HeuristicGestureRecognizer, HorizontalPager, HumanRecognizer, HumansOptions, IconButton, IconView, ImageView, Input, InputOptions, Keycodes, LEFT, LEFT_VIEW_ONLY_LAYER, LabelView, Lighting, LightingOptions, LoadingSpinnerManager, MaterialSymbolsView, MediaPipeHandContext, MediaPipeHandPoseEstimator, MeshDetectionOptions, MeshDetector, MeshScript, ModelLoader, ModelViewer, MouseController, NUM_HANDS, OCCLUDABLE_ITEMS_LAYER, ObjectDetector, ObjectsOptions, OcclusionPass, OcclusionUtils, OpenAI, OpenAIOptions, Options, Orbiter, PageIndicator, Pager, PagerState, Panel, PanelMesh, Physics, PhysicsOptions, PinchOnButtonAction, PlaneDetector, PlanesOptions, PoseJointName, RIGHT, RIGHT_VIEW_ONLY_LAYER, Raycaster, Registry, Reticle, ReticleOptions, Reticles, RotationRaycastMesh, Row, SIMULATOR_HAND_COMMON_BIOMECHANICAL_CONSTRAINTS_DEGREES, SIMULATOR_HAND_POSE_NAMES, SIMULATOR_HAND_POSE_ROTATIONS, SOUND_PRESETS, ScreenshotSynthesizer, Script, ScriptMixin, ScriptsManager, ScriptsManagerEventType, ScrollingTroikaTextView, SegmentCategory, SegmentationOptions, Segmenter, SetSimulatorEnvironmentEvent, SetSimulatorModeEvent, ShowHandsAction, ShowSimulatorInstructionsEvent, Simulator, SimulatorCamera, SimulatorControlMode, SimulatorControllerState, SimulatorControls, SimulatorDepth, SimulatorDepthMaterial, SimulatorHandPose, SimulatorHandPoseChangeRequestEvent, SimulatorHands, SimulatorInterface, SimulatorMediaDeviceInfo, SimulatorMode, SimulatorNavMesh, SimulatorOptions, SimulatorPointerLockController, SimulatorRenderMode, SimulatorScene, SimulatorUser, SimulatorUserAction, SketchPanel, SkyboxAgent, SoundOptions, SoundSynthesizer, SparkRendererHolder, SpatialAudio, SpatialPanel, SpeechRecognizer, SpeechRecognizerOptions, SpeechSynthesizer, SpeechSynthesizerOptions, SplatAnchor, StreamState, StrokeRecognizer, StylizedFace, TensorFlowHandPoseEstimator, TextButton, TextScrollerState, TextView, Tool, UI, UIKitOptions, UI_OVERLAY_LAYER, UP, UX, User, VIEW_DEPTH_GAP, VerticalPager, VideoFileStream, VideoStream, VideoView, View, VolumeCategory, WaitFrame, WalkTowardsPanelAction, WebXRHandContext, WebXRHandPoseEstimator, World, WorldOptions, XRButton, XRDeviceCamera, XREffects, XRPass, XRTransitionOptions, XR_BLOCKS_ASSETS_PATH, ZERO_VECTOR3, ZERO_VISEME, _getBvhImportStatus, add, ai, applyBVH, applySimulatorHandPoseRotationConstraints, average, callInitWithDependencyInjection, camera, clamp$1 as clamp, clamp01, clampRotationToAngle, core, cropImage, depth, disposeBVH, enableAcceleratedRaycast, estimateHandScale, extractYaw, getAdjacentFingerSpreads, getBoneVectors, getCameraParametersSnapshot, getColorHex, getDeltaTime, getDeviceCameraClipFromView, getDeviceCameraWorldFromClip, getDeviceCameraWorldFromView, getElapsedTime, getFingerBendAngles, getFingerCurl, getFingerDirection, getFingerJoint, getFingerPalmAlignment, getFingerSpread, getFingerStraightness, getFingertipDistance, getFingertipPalmDistance, getPalmNormal, getPalmPose, getPalmRight, getPalmUp, getPalmWidth, getRelativeBoneAngles, getThumbBendAngles, getThumbCurl, getThumbDirection, getThumbOpposition, getThumbStraightness, getThumbVerticalDirection, getUrlParamBool, getUrlParamFloat, getUrlParamInt, getUrlParameter, getVec4ByColorString, getXrCameraLeft, getXrCameraRight, init, initScript, input, intrinsicsToProjectionMatrix, isBVHReady, isDeviceCameraPoseAvailable, lerp, loadStereoImageAsTextures, loadingSpinnerManager, lookAtRotation, objectIsDescendantOf, parseBase64DataURL, parseSimulatorHandPoseRotations, placeObjectAtIntersectionFacingTarget, print, resolveSimulatorHandPoseRotations, resolveSimulatorRotationsFromKeypoints, scene, showOnlyInLeftEye, showOnlyInRightEye, showReticleOnDepthMesh, sound, timer, transformRgbUvToWorld, traverseUtil, uninitScript, urlParams, user, visualizeDepth, visualizeDepthMap, world, xrDepthMeshOptions, xrDepthMeshPhysicsOptions, xrDepthMeshVisualizationOptions, xrDeviceCameraEnvironmentContinuousOptions, xrDeviceCameraEnvironmentOptions, xrDeviceCameraUserContinuousOptions, xrDeviceCameraUserOptions };
+export { AI, AIOptions, AVERAGE_IPD_METERS, ActiveControllers, Agent, AnimatableNumber, AudioListener, AudioPlayer, BACK, BackgroundMusic, CategoryVolumes, Col, Context, ContextOptions, Core, CoreSound, DEFAULT_DEVICE_CAMERA_HEIGHT, DEFAULT_DEVICE_CAMERA_WIDTH, DEFAULT_RGB_TO_DEPTH_PARAMS, DEVICE_CAMERA_PARAMETERS, DOWN, Depth, DepthMesh, DepthMeshOptions, DepthOptions, DepthTextures, DetectedBodyPose, DetectedFace, DetectedMesh, DetectedObject, DetectedPlane, DeviceCameraOptions, DragManager, DragMode, ExitButton, FINGER_ORDER, FORWARD, FaceLandmarkName, FaceRecognizer, FacesOptions, FreestandingSlider, GEMINI_DEFAULT_FLASH_MODEL, GEMINI_DEFAULT_IMAGE_MODEL, GEMINI_DEFAULT_LIVE_MODEL, GamepadBindings, GamepadController, GazeController, Gemini, GeminiOptions, GenerateSkyboxTool, GestureRecognition, GestureRecognitionOptions, GetWeatherTool, Grid, HAND_BONE_IDX_CONNECTION_MAP, HAND_INDEX_TO_LABEL, HAND_JOINT_COUNT, HAND_JOINT_IDX_CONNECTION_MAP, HAND_JOINT_NAMES, Handedness, Hands, HandsOptions, HeuristicGestureRecognizer, HorizontalPager, HumanRecognizer, HumansOptions, IconButton, IconView, ImageView, Input, InputOptions, Keycodes, LEFT, LEFT_VIEW_ONLY_LAYER, LabelView, Lighting, LightingOptions, LoadingSpinnerManager, MaterialSymbolsView, MediaPipeHandContext, MediaPipeHandPoseEstimator, MeshDetectionOptions, MeshDetector, MeshScript, ModelLoader, ModelViewer, MouseController, NUM_HANDS, OCCLUDABLE_ITEMS_LAYER, ObjectDetector, ObjectsOptions, OcclusionPass, OcclusionUtils, OpenAI, OpenAIOptions, Options, Orbiter, PageIndicator, Pager, PagerState, Panel, PanelMesh, Physics, PhysicsOptions, PinchOnButtonAction, PlaneDetector, PlanesOptions, PoseJointName, RIGHT, RIGHT_VIEW_ONLY_LAYER, Raycaster, Registry, Reticle, ReticleOptions, Reticles, RotationRaycastMesh, Row, SIMULATOR_HAND_COMMON_BIOMECHANICAL_CONSTRAINTS_DEGREES, SIMULATOR_HAND_POSE_NAMES, SIMULATOR_HAND_POSE_ROTATIONS, SOUND_PRESETS, SceneDetector, SceneOptions, SceneSetOfMarkOptions, SceneVisibilityOptions, ScreenshotSynthesizer, Script, ScriptMixin, ScriptsManager, ScriptsManagerEventType, ScrollingTroikaTextView, SegmentCategory, SegmentationOptions, Segmenter, SetSimulatorEnvironmentEvent, SetSimulatorModeEvent, ShowHandsAction, ShowSimulatorInstructionsEvent, Simulator, SimulatorCamera, SimulatorControlMode, SimulatorControllerState, SimulatorControls, SimulatorDepth, SimulatorDepthMaterial, SimulatorHandPose, SimulatorHandPoseChangeRequestEvent, SimulatorHands, SimulatorInterface, SimulatorMediaDeviceInfo, SimulatorMode, SimulatorNavMesh, SimulatorOptions, SimulatorPointerLockController, SimulatorRenderMode, SimulatorScene, SimulatorUser, SimulatorUserAction, SketchPanel, SkyboxAgent, SoundOptions, SoundSynthesizer, SparkRendererHolder, SpatialAudio, SpatialPanel, SpeechRecognizer, SpeechRecognizerOptions, SpeechSynthesizer, SpeechSynthesizerOptions, SplatAnchor, StreamState, StrokeRecognizer, StylizedFace, TensorFlowHandPoseEstimator, TextButton, TextScrollerState, TextView, Tool, UI, UIKitOptions, UI_OVERLAY_LAYER, UP, UX, User, VIEW_DEPTH_GAP, VerticalPager, VideoFileStream, VideoStream, VideoView, View, VolumeCategory, WaitFrame, WalkTowardsPanelAction, WebXRHandContext, WebXRHandPoseEstimator, World, WorldOptions, XRButton, XRDeviceCamera, XREffects, XRPass, XRTransitionOptions, XR_BLOCKS_ASSETS_PATH, ZERO_VECTOR3, ZERO_VISEME, _getBvhImportStatus, add, ai, applyBVH, applySimulatorHandPoseRotationConstraints, average, callInitWithDependencyInjection, camera, clamp$1 as clamp, clamp01, clampRotationToAngle, context, core, cropImage, depth, disposeBVH, enableAcceleratedRaycast, estimateHandScale, extractYaw, getAdjacentFingerSpreads, getBoneVectors, getCameraParametersSnapshot, getColorHex, getDeltaTime, getDeviceCameraClipFromView, getDeviceCameraWorldFromClip, getDeviceCameraWorldFromView, getElapsedTime, getFingerBendAngles, getFingerCurl, getFingerDirection, getFingerJoint, getFingerPalmAlignment, getFingerSpread, getFingerStraightness, getFingertipDistance, getFingertipPalmDistance, getPalmNormal, getPalmPose, getPalmRight, getPalmUp, getPalmWidth, getRelativeBoneAngles, getThumbBendAngles, getThumbCurl, getThumbDirection, getThumbOpposition, getThumbStraightness, getThumbVerticalDirection, getUrlParamBool, getUrlParamFloat, getUrlParamInt, getUrlParameter, getVec4ByColorString, getXrCameraLeft, getXrCameraRight, init, initScript, input, intrinsicsToProjectionMatrix, isBVHReady, isDeviceCameraPoseAvailable, lerp, loadStereoImageAsTextures, loadingSpinnerManager, lookAtRotation, objectIsDescendantOf, parseBase64DataURL, parseSimulatorHandPoseRotations, placeObjectAtIntersectionFacingTarget, print, resolveSimulatorHandPoseRotations, resolveSimulatorRotationsFromKeypoints, scene, showOnlyInLeftEye, showOnlyInRightEye, showReticleOnDepthMesh, sound, timer, transformRgbUvToWorld, traverseUtil, uninitScript, urlParams, user, visualizeDepth, visualizeDepthMap, world, xrDepthMeshOptions, xrDepthMeshPhysicsOptions, xrDepthMeshVisualizationOptions, xrDeviceCameraEnvironmentContinuousOptions, xrDeviceCameraEnvironmentOptions, xrDeviceCameraUserContinuousOptions, xrDeviceCameraUserOptions };
 //# sourceMappingURL=xrblocks.js.map
