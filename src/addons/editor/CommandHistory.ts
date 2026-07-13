@@ -8,7 +8,7 @@ export interface Command {
 }
 
 /**
- * Undo/redo command stack. Each entry is {undo, redo}; redo is never
+ * Undo/redo command stack. Each entry is \{undo, redo\}; redo is never
  * called at push time (the action has already happened by then) -- it
  * only runs if the entry is later undone and then redone. Ctrl+Z /
  * Ctrl+Shift+Z wired here via onKeyDown, guarded against firing while an
@@ -31,7 +31,7 @@ export class CommandHistory extends xb.Script {
     this.redoStack.length = 0;
   }
 
-  /** Combines several {undo, redo} entries into a single stack entry, so
+  /** Combines several \{undo, redo\} entries into a single stack entry, so
    * one Ctrl+Z reverts all of them together (e.g. a group gizmo drag or a
    * multi-object delete). Sub-commands undo in reverse order, redo in
    * forward order. No-op entries should be filtered out by the caller

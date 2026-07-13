@@ -37,11 +37,11 @@ export interface SpawnState {
 }
 
 export interface SpawnOptions {
-  /** Optional {position, quaternion, scale} to apply after load instead of
+  /** Optional \{position, quaternion, scale\} to apply after load instead of
    * the default spawn placement/auto-fit -- used by undo-of-delete and
    * scene import to restore an exact prior transform. */
   transform?: SpawnTransform | null;
-  /** Optional {customName, locked, visible} to apply after load -- same
+  /** Optional \{customName, locked, visible\} to apply after load -- same
    * purpose as transform, restoring a prior instance's rename/lock/
    * visibility across undo-of-delete, duplicate, and scene import. */
   state?: SpawnState | null;
