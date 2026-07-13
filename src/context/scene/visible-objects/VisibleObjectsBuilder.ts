@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 
+import {roundContextNumber} from '../../shared/ContextNumberUtils';
 import {SemanticTreeInternal} from '../semantic-tree/SemanticTreeBuilder';
 import {
   getObjectBounds,
@@ -137,8 +138,8 @@ function isProjectedInFrame(projected: THREE.Vector3): boolean {
 
 function projectedToScreenCoordinates(projected: THREE.Vector3) {
   return {
-    x: (projected.x + 1) / 2,
-    y: (1 - projected.y) / 2,
+    x: roundContextNumber((projected.x + 1) / 2),
+    y: roundContextNumber((1 - projected.y) / 2),
   };
 }
 

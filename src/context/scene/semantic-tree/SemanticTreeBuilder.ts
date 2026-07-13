@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 
+import {roundContextNumber} from '../../shared/ContextNumberUtils';
 import {SemanticIdRegistry} from '../../shared/SemanticIdRegistry';
 import {
   getObjectBounds,
@@ -64,7 +65,8 @@ export function buildSemanticTree({
   const nodeObjects = new Map<string, THREE.Object3D>();
   const objectNodeIds = new WeakMap<THREE.Object3D, string>();
 
-  const snapshotId = `ctx_snapshot_${Math.round(capturedAt)}_${snapshotCounter++}`;
+  const roundedCapturedAt = roundContextNumber(capturedAt);
+  const snapshotId = `ctx_snapshot_${Math.round(roundedCapturedAt)}_${snapshotCounter++}`;
 
   const visit = (
     object: THREE.Object3D,
@@ -103,7 +105,7 @@ export function buildSemanticTree({
   return {
     tree: {
       snapshotId,
-      capturedAt,
+      capturedAt: roundedCapturedAt,
       rootIds,
       nodes,
     },
@@ -328,7 +330,11 @@ function createSemanticNode(
     role: semantic.role,
     name: semantic.name,
     visible: object.visible,
-    position: [tempPosition.x, tempPosition.y, tempPosition.z],
+    position: [
+      roundContextNumber(tempPosition.x),
+      roundContextNumber(tempPosition.y),
+      roundContextNumber(tempPosition.z),
+    ],
     children: [],
     objectId: object.id,
     source: semantic.source,
@@ -357,7 +363,15 @@ function getSemanticBounds(object: THREE.Object3D): SemanticBounds | undefined {
   const center = bounds.getCenter(tempBoundsCenter);
   const size = bounds.getSize(tempBoundsSize);
   return {
-    center: [center.x, center.y, center.z],
-    size: [size.x, size.y, size.z],
+    center: [
+      roundContextNumber(center.x),
+      roundContextNumber(center.y),
+      roundContextNumber(center.z),
+    ],
+    size: [
+      roundContextNumber(size.x),
+      roundContextNumber(size.y),
+      roundContextNumber(size.z),
+    ],
   };
 }
