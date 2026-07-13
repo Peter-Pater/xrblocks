@@ -48,10 +48,9 @@ const PLANE_DEFS: PlaneDef[] = [
   {name: 'xz', color: 0x22c55e, normal: new THREE.Vector3(0, 1, 0)},
 ];
 
-const AXIS_DIR_BY_NAME = Object.fromEntries(AXIS_DEFS.map((d) => [d.name, d.dir])) as Record<
-  AxisName,
-  THREE.Vector3
->;
+const AXIS_DIR_BY_NAME = Object.fromEntries(
+  AXIS_DEFS.map((d) => [d.name, d.dir])
+) as Record<AxisName, THREE.Vector3>;
 const PLANE_NORMAL_BY_NAME = Object.fromEntries(
   PLANE_DEFS.map((d) => [d.name, d.normal])
 ) as Record<PlaneName, THREE.Vector3>;
@@ -65,7 +64,10 @@ const PLANE_AXIS_LETTERS: Record<PlaneName, [AxisName, AxisName]> = {
 // per axis. Only needs to be internally consistent frame-to-frame, not
 // globally "correct" -- it's recomputed fresh via atan2 every frame rather
 // than accumulated, so there's no drift regardless of basis choice.
-const RING_BASIS_BY_AXIS: Record<AxisName, {u: THREE.Vector3; v: THREE.Vector3}> = {
+const RING_BASIS_BY_AXIS: Record<
+  AxisName,
+  {u: THREE.Vector3; v: THREE.Vector3}
+> = {
   x: {u: new THREE.Vector3(0, 1, 0), v: new THREE.Vector3(0, 0, 1)},
   y: {u: new THREE.Vector3(0, 0, 1), v: new THREE.Vector3(1, 0, 0)},
   z: {u: new THREE.Vector3(1, 0, 0), v: new THREE.Vector3(0, 1, 0)},
@@ -94,7 +96,10 @@ const MIN_SCALE_DENOMINATOR = 0.02;
 const MIN_SCALE_COMPONENT = 0.02;
 const MAX_SCALE_RATIO = 8;
 
-function buildAxisHandle(def: AxisDef): {object: THREE.Object3D; record: HandleRecord} {
+function buildAxisHandle(def: AxisDef): {
+  object: THREE.Object3D;
+  record: HandleRecord;
+} {
   const group = new THREE.Group();
   const material = new THREE.MeshBasicMaterial({
     color: def.color,
@@ -110,7 +115,10 @@ function buildAxisHandle(def: AxisDef): {object: THREE.Object3D; record: HandleR
   shaft.renderOrder = 999;
   shaft.raycast = () => {};
 
-  const head = new THREE.Mesh(new THREE.ConeGeometry(HEAD_RADIUS, HEAD_LENGTH, 10), material);
+  const head = new THREE.Mesh(
+    new THREE.ConeGeometry(HEAD_RADIUS, HEAD_LENGTH, 10),
+    material
+  );
   head.position.y = SHAFT_LENGTH + HEAD_LENGTH / 2;
   head.renderOrder = 999;
   head.raycast = () => {};
@@ -143,7 +151,10 @@ function buildAxisHandle(def: AxisDef): {object: THREE.Object3D; record: HandleR
   return {object: group, record};
 }
 
-function buildPlaneHandle(def: PlaneDef): {object: THREE.Object3D; record: HandleRecord} {
+function buildPlaneHandle(def: PlaneDef): {
+  object: THREE.Object3D;
+  record: HandleRecord;
+} {
   const material = new THREE.MeshBasicMaterial({
     color: def.color,
     transparent: true,
@@ -151,7 +162,10 @@ function buildPlaneHandle(def: PlaneDef): {object: THREE.Object3D; record: Handl
     side: THREE.DoubleSide,
     depthTest: false,
   });
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE), material);
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE),
+    material
+  );
   mesh.renderOrder = 999;
   mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), def.normal);
 
@@ -172,7 +186,10 @@ function buildPlaneHandle(def: PlaneDef): {object: THREE.Object3D; record: Handl
   return {object: mesh, record};
 }
 
-function buildRingHandle(def: AxisDef): {object: THREE.Object3D; record: HandleRecord} {
+function buildRingHandle(def: AxisDef): {
+  object: THREE.Object3D;
+  record: HandleRecord;
+} {
   const material = new THREE.MeshBasicMaterial({
     color: def.color,
     depthTest: false,
@@ -188,7 +205,12 @@ function buildRingHandle(def: AxisDef): {object: THREE.Object3D; record: HandleR
 
   // A fatter invisible torus makes the thin ring easy to click precisely.
   const pick = new THREE.Mesh(
-    new THREE.TorusGeometry(RING_RADIUS, RING_TUBE_RADIUS * RING_PICK_TUBE_SCALE, 8, RING_SEGMENTS),
+    new THREE.TorusGeometry(
+      RING_RADIUS,
+      RING_TUBE_RADIUS * RING_PICK_TUBE_SCALE,
+      8,
+      RING_SEGMENTS
+    ),
     new THREE.MeshBasicMaterial({visible: false})
   );
   const handleData: HandleUserData = {kind: 'ring', axis: def.name};
@@ -212,7 +234,10 @@ function buildRingHandle(def: AxisDef): {object: THREE.Object3D; record: HandleR
   return {object: group, record};
 }
 
-function buildScaleAxisHandle(def: AxisDef): {object: THREE.Object3D; record: HandleRecord} {
+function buildScaleAxisHandle(def: AxisDef): {
+  object: THREE.Object3D;
+  record: HandleRecord;
+} {
   const group = new THREE.Group();
   const material = new THREE.MeshBasicMaterial({
     color: def.color,
@@ -221,7 +246,12 @@ function buildScaleAxisHandle(def: AxisDef): {object: THREE.Object3D; record: Ha
   });
 
   const shaft = new THREE.Mesh(
-    new THREE.CylinderGeometry(SHAFT_RADIUS, SHAFT_RADIUS, SCALE_SHAFT_LENGTH, 8),
+    new THREE.CylinderGeometry(
+      SHAFT_RADIUS,
+      SHAFT_RADIUS,
+      SCALE_SHAFT_LENGTH,
+      8
+    ),
     material
   );
   shaft.position.y = SCALE_SHAFT_LENGTH / 2;
@@ -265,14 +295,21 @@ function buildScaleAxisHandle(def: AxisDef): {object: THREE.Object3D; record: Ha
   return {object: group, record};
 }
 
-function buildScaleCenterHandle(): {object: THREE.Object3D; record: HandleRecord} {
+function buildScaleCenterHandle(): {
+  object: THREE.Object3D;
+  record: HandleRecord;
+} {
   const material = new THREE.MeshBasicMaterial({
     color: SCALE_CENTER_COLOR,
     depthTest: false,
     transparent: true,
   });
   const visual = new THREE.Mesh(
-    new THREE.BoxGeometry(SCALE_CENTER_CUBE_SIZE, SCALE_CENTER_CUBE_SIZE, SCALE_CENTER_CUBE_SIZE),
+    new THREE.BoxGeometry(
+      SCALE_CENTER_CUBE_SIZE,
+      SCALE_CENTER_CUBE_SIZE,
+      SCALE_CENTER_CUBE_SIZE
+    ),
     material
   );
   visual.renderOrder = 999;
@@ -392,7 +429,10 @@ export class TransformGizmo extends xb.Script {
   drag: DragState | null = null;
   hoveredRecord: HandleRecord | null = null;
 
-  constructor(selectionManager: SelectionManager, commandHistory: CommandHistory | null = null) {
+  constructor(
+    selectionManager: SelectionManager,
+    commandHistory: CommandHistory | null = null
+  ) {
     super();
     this.selectionManager = selectionManager;
     this.commandHistory = commandHistory;
@@ -466,7 +506,9 @@ export class TransformGizmo extends xb.Script {
   syncOrientation() {
     const primary = this.selectionManager.primary;
     const content =
-      this.selectionManager.space === 'local' ? primary?.viewer.contentScene : null;
+      this.selectionManager.space === 'local'
+        ? primary?.viewer.contentScene
+        : null;
     if (content) {
       this.quaternion.copy(content.quaternion);
     } else {
@@ -536,7 +578,10 @@ export class TransformGizmo extends xb.Script {
 
   updateHover() {
     xb.core.input.setRaycasterFromController(xb.core.input.mouseController);
-    const hits = xb.core.input.raycaster.intersectObjects(this.getActiveHandles(), true);
+    const hits = xb.core.input.raycaster.intersectObjects(
+      this.getActiveHandles(),
+      true
+    );
     const record = hits.length > 0 ? this.findRecord(hits[0].object) : null;
     this.setHoveredRecord(record);
   }
@@ -558,7 +603,9 @@ export class TransformGizmo extends xb.Script {
     // the hover detection instead of helping it.
     record.material.color.set(highlighted ? HOVER_COLOR : record.baseColor);
     if (record.hoverOpacity != null) {
-      record.material.opacity = highlighted ? record.hoverOpacity : (record.baseOpacity ?? 1);
+      record.material.opacity = highlighted
+        ? record.hoverOpacity
+        : (record.baseOpacity ?? 1);
     }
   }
 
@@ -578,7 +625,10 @@ export class TransformGizmo extends xb.Script {
     if (this.selectionManager.selectedList().length === 0) return null;
 
     xb.core.input.setRaycasterFromController(controller);
-    const hits = xb.core.input.raycaster.intersectObjects(this.getActiveHandles(), true);
+    const hits = xb.core.input.raycaster.intersectObjects(
+      this.getActiveHandles(),
+      true
+    );
     return hits.length > 0 ? hits[0] : null;
   }
 
@@ -591,7 +641,11 @@ export class TransformGizmo extends xb.Script {
 
     const selectedList = this.selectionManager.selectedList();
     this.setHoveredRecord(this.findRecord(hit.object));
-    this.beginDrag(selectedList, hit.object.userData as HandleUserData, controller);
+    this.beginDrag(
+      selectedList,
+      hit.object.userData as HandleUserData,
+      controller
+    );
   }
 
   override onSelectEnd(event: SelectEvent) {
@@ -599,22 +653,35 @@ export class TransformGizmo extends xb.Script {
     this.endDrag();
   }
 
-  beginDrag(selectedList: SceneInstance[], handleData: HandleUserData, controller: THREE.Object3D) {
+  beginDrag(
+    selectedList: SceneInstance[],
+    handleData: HandleUserData,
+    controller: THREE.Object3D
+  ) {
     const pivot = this.computeGroupPivot(selectedList);
 
     if (handleData.kind === 'ring') {
       this.beginRotateDrag(selectedList, pivot, handleData, controller);
       return;
     }
-    if (handleData.kind === 'scale-axis' || handleData.kind === 'scale-uniform') {
+    if (
+      handleData.kind === 'scale-axis' ||
+      handleData.kind === 'scale-uniform'
+    ) {
       this.beginScaleDrag(selectedList, pivot, handleData, controller);
       return;
     }
 
     const axisDirections = this.getAxisDirections();
     const planeNormals = this.getPlaneNormals();
-    const axisDir = handleData.kind === 'axis' ? axisDirections[handleData.axis!] : null;
-    const plane = this.computeDragPlane(pivot, handleData, axisDirections, planeNormals);
+    const axisDir =
+      handleData.kind === 'axis' ? axisDirections[handleData.axis!] : null;
+    const plane = this.computeDragPlane(
+      pivot,
+      handleData,
+      axisDirections,
+      planeNormals
+    );
     xb.core.input.setRaycasterFromController(controller);
     const startPoint = new THREE.Vector3();
     if (!xb.core.input.raycaster.ray.intersectPlane(plane, startPoint)) {
@@ -629,7 +696,9 @@ export class TransformGizmo extends xb.Script {
       handleData,
       axisDir,
       planeAxes:
-        handleData.kind === 'plane' ? this.getPlaneAxisPair(handleData.plane!, axisDirections) : null,
+        handleData.kind === 'plane'
+          ? this.getPlaneAxisPair(handleData.plane!, axisDirections)
+          : null,
       targets: selectedList.map((instance) => ({
         instance,
         viewer: instance.viewer,
@@ -645,7 +714,10 @@ export class TransformGizmo extends xb.Script {
     controller: THREE.Object3D
   ) {
     const axisDir = this.getAxisDirections()[handleData.axis!];
-    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(axisDir, pivot);
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(
+      axisDir,
+      pivot
+    );
     xb.core.input.setRaycasterFromController(controller);
     const startAngle = this.computeRingAngle(plane, pivot, handleData.axis!);
     if (startAngle == null) return;
@@ -696,7 +768,10 @@ export class TransformGizmo extends xb.Script {
         this.getPlaneNormals()
       );
     } else {
-      const eye = new THREE.Vector3().subVectors(xb.core.camera.position, pivot);
+      const eye = new THREE.Vector3().subVectors(
+        xb.core.camera.position,
+        pivot
+      );
       if (eye.lengthSq() < 1e-8) eye.set(0, 0, 1);
       eye.normalize();
       plane = new THREE.Plane().setFromNormalAndCoplanarPoint(eye, pivot);
@@ -735,25 +810,38 @@ export class TransformGizmo extends xb.Script {
     let normal: THREE.Vector3;
     if (handleData.kind === 'axis') {
       const axisDir = axisDirections[handleData.axis!];
-      const eye = new THREE.Vector3().subVectors(xb.core.camera.position, worldPosition);
+      const eye = new THREE.Vector3().subVectors(
+        xb.core.camera.position,
+        worldPosition
+      );
       if (eye.lengthSq() < 1e-8) eye.set(0, 0, 1);
       eye.normalize();
       const align = new THREE.Vector3().crossVectors(eye, axisDir);
       if (align.lengthSq() < 1e-8) {
         // Ray nearly parallel to the axis: pick an arbitrary perpendicular.
-        align.crossVectors(eye, axisDir.clone().add(new THREE.Vector3(0.1, 0.1, 0.1)));
+        align.crossVectors(
+          eye,
+          axisDir.clone().add(new THREE.Vector3(0.1, 0.1, 0.1))
+        );
       }
       normal = new THREE.Vector3().crossVectors(axisDir, align).normalize();
     } else {
       normal = planeNormals[handleData.plane!].clone();
     }
-    return new THREE.Plane().setFromNormalAndCoplanarPoint(normal, worldPosition);
+    return new THREE.Plane().setFromNormalAndCoplanarPoint(
+      normal,
+      worldPosition
+    );
   }
 
   /** Signed angle (radians) of the current mouse-ray/plane intersection
    * around `pivot`, measured in the ring's own in-plane basis. Recomputed
    * fresh via atan2 every call rather than accumulated, so it can't drift. */
-  computeRingAngle(plane: THREE.Plane, pivot: THREE.Vector3, axisName: AxisName): number | null {
+  computeRingAngle(
+    plane: THREE.Plane,
+    pivot: THREE.Vector3,
+    axisName: AxisName
+  ): number | null {
     const {u, v} = RING_BASIS_BY_AXIS[axisName];
     const hit = new THREE.Vector3();
     if (!xb.core.input.raycaster.ray.intersectPlane(plane, hit)) return null;
@@ -795,22 +883,39 @@ export class TransformGizmo extends xb.Script {
     if (currentAngle == null) return;
 
     const deltaAngle = currentAngle - startAngle;
-    const deltaQuaternion = new THREE.Quaternion().setFromAxisAngle(axisDir, deltaAngle);
+    const deltaQuaternion = new THREE.Quaternion().setFromAxisAngle(
+      axisDir,
+      deltaAngle
+    );
 
     for (const target of targets) {
-      const offset = this.computeOrbitDelta(target.ownPivot, pivot, (relative) =>
-        relative.applyQuaternion(deltaQuaternion)
+      const offset = this.computeOrbitDelta(
+        target.ownPivot,
+        pivot,
+        (relative) => relative.applyQuaternion(deltaQuaternion)
       );
       target.viewer.position.copy(target.startPosition).add(offset);
-      target.content.quaternion.multiplyQuaternions(deltaQuaternion, target.startQuaternion);
+      target.content.quaternion.multiplyQuaternions(
+        deltaQuaternion,
+        target.startQuaternion
+      );
     }
   }
 
   updateTranslateDrag(drag: TranslateDrag) {
-    const {controller, plane, startPoint, handleData, axisDir, planeAxes, targets} = drag;
+    const {
+      controller,
+      plane,
+      startPoint,
+      handleData,
+      axisDir,
+      planeAxes,
+      targets,
+    } = drag;
     xb.core.input.setRaycasterFromController(controller);
     const currentPoint = new THREE.Vector3();
-    if (!xb.core.input.raycaster.ray.intersectPlane(plane, currentPoint)) return;
+    if (!xb.core.input.raycaster.ray.intersectPlane(plane, currentPoint))
+      return;
 
     // Raw world-space offset on the drag plane, projected onto the
     // handle's own axis/plane basis (world-aligned or, in local space,
@@ -823,7 +928,10 @@ export class TransformGizmo extends xb.Script {
       offset = axisDir.clone().multiplyScalar(rawOffset.dot(axisDir));
     } else if (planeAxes) {
       const [u, v] = planeAxes;
-      offset = u.clone().multiplyScalar(rawOffset.dot(u)).addScaledVector(v, rawOffset.dot(v));
+      offset = u
+        .clone()
+        .multiplyScalar(rawOffset.dot(u))
+        .addScaledVector(v, rawOffset.dot(v));
     } else {
       return;
     }
@@ -834,10 +942,12 @@ export class TransformGizmo extends xb.Script {
   }
 
   updateScaleDrag(drag: ScaleDrag) {
-    const {controller, plane, pivot, startPoint, handleData, axisDir, targets} = drag;
+    const {controller, plane, pivot, startPoint, handleData, axisDir, targets} =
+      drag;
     xb.core.input.setRaycasterFromController(controller);
     const currentPoint = new THREE.Vector3();
-    if (!xb.core.input.raycaster.ray.intersectPlane(plane, currentPoint)) return;
+    if (!xb.core.input.raycaster.ray.intersectPlane(plane, currentPoint))
+      return;
 
     let scaleTransform: (relative: THREE.Vector3) => THREE.Vector3;
     let axis: AxisName | null;
@@ -845,13 +955,19 @@ export class TransformGizmo extends xb.Script {
     if (handleData.kind === 'scale-uniform') {
       const startDist = startPoint.distanceTo(pivot);
       const currentDist = currentPoint.distanceTo(pivot);
-      ratio = clampScaleRatio(currentDist / Math.max(startDist, MIN_SCALE_DENOMINATOR));
+      ratio = clampScaleRatio(
+        currentDist / Math.max(startDist, MIN_SCALE_DENOMINATOR)
+      );
       scaleTransform = (relative) => relative.multiplyScalar(ratio);
       axis = null;
     } else if (axisDir) {
       axis = handleData.axis!;
-      const startOffset = new THREE.Vector3().subVectors(startPoint, pivot).dot(axisDir);
-      const currentOffset = new THREE.Vector3().subVectors(currentPoint, pivot).dot(axisDir);
+      const startOffset = new THREE.Vector3()
+        .subVectors(startPoint, pivot)
+        .dot(axisDir);
+      const currentOffset = new THREE.Vector3()
+        .subVectors(currentPoint, pivot)
+        .dot(axisDir);
       const denom =
         Math.abs(startOffset) < MIN_SCALE_DENOMINATOR
           ? Math.sign(startOffset || 1) * MIN_SCALE_DENOMINATOR
@@ -859,7 +975,10 @@ export class TransformGizmo extends xb.Script {
       ratio = clampScaleRatio(currentOffset / denom);
       const capturedAxisDir = axisDir;
       scaleTransform = (relative) =>
-        relative.addScaledVector(capturedAxisDir, relative.dot(capturedAxisDir) * (ratio - 1));
+        relative.addScaledVector(
+          capturedAxisDir,
+          relative.dot(capturedAxisDir) * (ratio - 1)
+        );
     } else {
       return;
     }
@@ -873,7 +992,11 @@ export class TransformGizmo extends xb.Script {
       }
       target.viewer.scale.copy(clampScaleVector(newScale));
 
-      const offset = this.computeOrbitDelta(target.ownPivot, pivot, scaleTransform);
+      const offset = this.computeOrbitDelta(
+        target.ownPivot,
+        pivot,
+        scaleTransform
+      );
       target.viewer.position.copy(target.startPosition).add(offset);
     }
   }
@@ -897,7 +1020,10 @@ export class TransformGizmo extends xb.Script {
         const content = rotateTarget.content;
         const beforeQuaternion = rotateTarget.startQuaternion.clone();
         const afterQuaternion = content.quaternion.clone();
-        if (beforePosition.equals(afterPosition) && beforeQuaternion.equals(afterQuaternion)) {
+        if (
+          beforePosition.equals(afterPosition) &&
+          beforeQuaternion.equals(afterQuaternion)
+        ) {
           continue;
         }
         commands.push({
@@ -914,7 +1040,11 @@ export class TransformGizmo extends xb.Script {
         const scaleTarget = target as ScaleTarget;
         const beforeScale = scaleTarget.startScale.clone();
         const afterScale = viewer.scale.clone();
-        if (beforePosition.equals(afterPosition) && beforeScale.equals(afterScale)) continue;
+        if (
+          beforePosition.equals(afterPosition) &&
+          beforeScale.equals(afterScale)
+        )
+          continue;
         commands.push({
           undo: () => {
             viewer.position.copy(beforePosition);

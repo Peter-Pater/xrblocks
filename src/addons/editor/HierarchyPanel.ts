@@ -98,7 +98,10 @@ export class HierarchyPanel extends xb.Script {
    * trailing #id only when another live instance shares the same source
    * file (disambiguation, not identity -- a renamed object never gets a
    * suffix, even if another instance happens to share its new name). */
-  computeLabel(instance: SceneInstance, countByFileName: Map<string, number>): string {
+  computeLabel(
+    instance: SceneInstance,
+    countByFileName: Map<string, number>
+  ): string {
     if (instance.customName) return instance.customName;
     const baseName = instance.fileName.replace(NAME_EXTENSION, '');
     return (countByFileName.get(instance.fileName) ?? 0) > 1
@@ -146,7 +149,9 @@ export class HierarchyPanel extends xb.Script {
         instance.locked = !instance.locked;
       });
 
-      const labelEl = el('span', {className: 'xrblocks-editor-hierarchy-label'});
+      const labelEl = el('span', {
+        className: 'xrblocks-editor-hierarchy-label',
+      });
       labelEl.addEventListener('dblclick', (event) => {
         event.stopPropagation();
         this.beginRename(instance, labelEl);
@@ -155,7 +160,14 @@ export class HierarchyPanel extends xb.Script {
       row.append(visBtn, lockBtn, labelEl);
       this.listEl.appendChild(row);
 
-      this.rowsById.set(instance.id, {row, instance, labelEl, visBtn, lockBtn, editing: false});
+      this.rowsById.set(instance.id, {
+        row,
+        instance,
+        labelEl,
+        visBtn,
+        lockBtn,
+        editing: false,
+      });
     }
   }
 
@@ -166,7 +178,8 @@ export class HierarchyPanel extends xb.Script {
     const input = el('input', {
       type: 'text',
       className: 'xrblocks-editor-hierarchy-rename-input',
-      value: instance.customName ?? instance.fileName.replace(NAME_EXTENSION, ''),
+      value:
+        instance.customName ?? instance.fileName.replace(NAME_EXTENSION, ''),
     });
     input.addEventListener('click', (event) => event.stopPropagation());
 
@@ -203,7 +216,10 @@ export class HierarchyPanel extends xb.Script {
   syncRows(countByFileName: Map<string, number>) {
     for (const entry of this.rowsById.values()) {
       const {row, instance, labelEl, visBtn, lockBtn} = entry;
-      row.classList.toggle('selected', this.selectionManager.isSelected(instance));
+      row.classList.toggle(
+        'selected',
+        this.selectionManager.isSelected(instance)
+      );
 
       if (!entry.editing) {
         const label = this.computeLabel(instance, countByFileName);

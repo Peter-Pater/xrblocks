@@ -59,7 +59,10 @@ export class ModelPickerPanel extends xb.Script {
   lastDirectoryRefresh = 0;
   directoryRefreshInFlight = false;
 
-  constructor(sceneManager: SceneManager, {parent = document.body}: ModelPickerPanelOptions = {}) {
+  constructor(
+    sceneManager: SceneManager,
+    {parent = document.body}: ModelPickerPanelOptions = {}
+  ) {
     super();
     this.sceneManager = sceneManager;
 
@@ -95,7 +98,11 @@ export class ModelPickerPanel extends xb.Script {
   }
 
   setupPreview(canvas: HTMLCanvasElement) {
-    this.previewRenderer = new THREE.WebGLRenderer({canvas, alpha: true, antialias: true});
+    this.previewRenderer = new THREE.WebGLRenderer({
+      canvas,
+      alpha: true,
+      antialias: true,
+    });
     this.previewRenderer.setPixelRatio(window.devicePixelRatio || 1);
     this.previewRenderer.setSize(PREVIEW_SIZE, PREVIEW_SIZE, false);
 
@@ -121,7 +128,10 @@ export class ModelPickerPanel extends xb.Script {
     try {
       this.models = await this.readModelsDirectory();
     } catch (error) {
-      console.error('[ModelPickerPanel] Failed to read models directory:', error);
+      console.error(
+        '[ModelPickerPanel] Failed to read models directory:',
+        error
+      );
       this.setStatus(`Could not read ${this.sceneManager.modelsDir}`);
       return;
     }
@@ -165,7 +175,10 @@ export class ModelPickerPanel extends xb.Script {
     try {
       models = await this.readModelsDirectory();
     } catch (error) {
-      console.error('[ModelPickerPanel] Failed to refresh models directory:', error);
+      console.error(
+        '[ModelPickerPanel] Failed to refresh models directory:',
+        error
+      );
       return;
     } finally {
       this.directoryRefreshInFlight = false;
@@ -184,9 +197,13 @@ export class ModelPickerPanel extends xb.Script {
       return;
     }
 
-    const preservedIndex = currentFileName ? this.models.indexOf(currentFileName) : -1;
+    const preservedIndex = currentFileName
+      ? this.models.indexOf(currentFileName)
+      : -1;
     this.pickerIndex =
-      preservedIndex >= 0 ? preservedIndex : Math.min(this.pickerIndex, this.models.length - 1);
+      preservedIndex >= 0
+        ? preservedIndex
+        : Math.min(this.pickerIndex, this.models.length - 1);
 
     if (this.models[this.pickerIndex] !== currentFileName) {
       // The previously-browsed file is gone -- move on and reload the
@@ -227,12 +244,15 @@ export class ModelPickerPanel extends xb.Script {
       if (MODEL_EXTENSIONS.test(name)) names.add(name);
     }
 
-    return [...names].sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
+    return [...names].sort((a, b) =>
+      a.localeCompare(b, undefined, {numeric: true})
+    );
   }
 
   showPrevious() {
     if (this.models.length === 0) return;
-    this.pickerIndex = (this.pickerIndex - 1 + this.models.length) % this.models.length;
+    this.pickerIndex =
+      (this.pickerIndex - 1 + this.models.length) % this.models.length;
     this.updateNameLabel();
   }
 
@@ -269,7 +289,9 @@ export class ModelPickerPanel extends xb.Script {
     if (!fileName) return;
 
     try {
-      const gltf = await this.previewLoader.loadAsync(`${this.sceneManager.modelsDir}${fileName}`);
+      const gltf = await this.previewLoader.loadAsync(
+        `${this.sceneManager.modelsDir}${fileName}`
+      );
       if (token !== this.previewLoadToken) {
         this.disposePreviewObject(gltf.scene);
         return;
@@ -278,7 +300,10 @@ export class ModelPickerPanel extends xb.Script {
       this.previewRoot.add(gltf.scene);
       this.previewObject = gltf.scene;
     } catch (error) {
-      console.error(`[ModelPickerPanel] Failed to load preview for ${fileName}:`, error);
+      console.error(
+        `[ModelPickerPanel] Failed to load preview for ${fileName}:`,
+        error
+      );
     }
   }
 
@@ -318,7 +343,8 @@ export class ModelPickerPanel extends xb.Script {
           : [];
       for (const material of materials) {
         for (const value of Object.values(material)) {
-          if ((value as THREE.Texture)?.isTexture) (value as THREE.Texture).dispose();
+          if ((value as THREE.Texture)?.isTexture)
+            (value as THREE.Texture).dispose();
         }
         material.dispose?.();
       }

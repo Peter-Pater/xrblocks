@@ -81,7 +81,10 @@ export class SceneManager extends xb.Script {
   // live, unlike the shader patching itself. Off by default.
   occlusionEnabled = false;
 
-  constructor({modelsDir = './Models/', commandHistory = null}: SceneManagerOptions = {}) {
+  constructor({
+    modelsDir = './Models/',
+    commandHistory = null,
+  }: SceneManagerOptions = {}) {
     super();
     this.modelsDir = modelsDir;
     this.commandHistory = commandHistory;
@@ -93,7 +96,10 @@ export class SceneManager extends xb.Script {
   ): Promise<SceneInstance | null> {
     const id = this.nextId++;
 
-    const viewer = new xb.ModelViewer({castShadow: false, receiveShadow: false});
+    const viewer = new xb.ModelViewer({
+      castShadow: false,
+      receiveShadow: false,
+    });
     // ModelViewer marks itself draggable by default; disable it so
     // DragManager never intercepts clicks meant for the transform gizmo.
     viewer.draggable = false;
@@ -134,7 +140,8 @@ export class SceneManager extends xb.Script {
     // ModelViewer's own drag affordance; override it so it never fights the
     // custom transform gizmo built on top of this registry.
     if (viewer.contentScene) {
-      (viewer.contentScene as unknown as xb.HasDraggingMode).draggingMode = xb.DragMode.DO_NOT_DRAG;
+      (viewer.contentScene as unknown as xb.HasDraggingMode).draggingMode =
+        xb.DragMode.DO_NOT_DRAG;
     }
 
     viewer.setOcclusionEnabled(this.occlusionEnabled);
@@ -201,7 +208,10 @@ export class SceneManager extends xb.Script {
     return instance;
   }
 
-  removeInstance(id: number, {skipHistory = false}: RemoveInstanceOptions = {}) {
+  removeInstance(
+    id: number,
+    {skipHistory = false}: RemoveInstanceOptions = {}
+  ) {
     const instance = this.instances.get(id);
     if (!instance) return;
 
@@ -228,7 +238,8 @@ export class SceneManager extends xb.Script {
           ref.instanceId = respawned?.id ?? null;
         },
         redo: () => {
-          if (ref.instanceId != null) this.removeInstance(ref.instanceId, {skipHistory: true});
+          if (ref.instanceId != null)
+            this.removeInstance(ref.instanceId, {skipHistory: true});
         },
       });
     }
@@ -333,7 +344,8 @@ export class SceneManager extends xb.Script {
           : [];
       for (const material of materials) {
         for (const value of Object.values(material)) {
-          if ((value as THREE.Texture)?.isTexture) (value as THREE.Texture).dispose();
+          if ((value as THREE.Texture)?.isTexture)
+            (value as THREE.Texture).dispose();
         }
         material.dispose?.();
       }

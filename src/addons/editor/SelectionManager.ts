@@ -55,7 +55,10 @@ export class SelectionManager extends xb.Script {
     return this.selectedSet.has(instance);
   }
 
-  select(instance: SceneInstance | null, {additive = false}: {additive?: boolean} = {}) {
+  select(
+    instance: SceneInstance | null,
+    {additive = false}: {additive?: boolean} = {}
+  ) {
     if (!instance) {
       if (!additive) this.clearSelection();
       return;
@@ -156,18 +159,22 @@ export class SelectionManager extends xb.Script {
     // avoids stealing clicks meant to start a drag.
     if (this.transformGizmo?.hitTestActiveHandle(controller)) return;
 
-    const intersections = xb.core.input.intersectionsForController.get(controller);
+    const intersections =
+      xb.core.input.intersectionsForController.get(controller);
     const hit = intersections?.[0];
     // A click on a UI panel (model picker, inspector) isn't a click "in
     // the scene" -- leave the current selection alone.
     if (hit && this.hasUserDataFlag(hit.object, 'isUIPanel')) return;
-    let instance = hit ? this.sceneManager.getInstanceForObject(hit.object) : undefined;
+    let instance = hit
+      ? this.sceneManager.getInstanceForObject(hit.object)
+      : undefined;
     // Hidden objects don't have a visible surface to click, and locked
     // objects are meant to resist selection entirely -- neither should be
     // pickable in the 3D scene. Hidden (but unlocked) objects are still
     // selectable from the hierarchy panel, e.g. to re-show them; locked
     // ones are excluded there too (see HierarchyPanel's row click guard).
-    if (instance && (instance.locked || !instance.viewer.visible)) instance = undefined;
+    if (instance && (instance.locked || !instance.viewer.visible))
+      instance = undefined;
     this.select(instance ?? null, {additive: this.shiftHeld});
   }
 
@@ -187,14 +194,19 @@ export class SelectionManager extends xb.Script {
     const box = new THREE.Box3();
     for (const instance of instances) {
       instance.viewer.updateMatrixWorld();
-      box.union(instance.viewer.bbox.clone().applyMatrix4(instance.viewer.matrixWorld));
+      box.union(
+        instance.viewer.bbox.clone().applyMatrix4(instance.viewer.matrixWorld)
+      );
     }
 
     const center = new THREE.Vector3();
     box.getCenter(center);
     const size = new THREE.Vector3();
     box.getSize(size);
-    const distance = Math.max(size.length() * FRAME_PADDING, MIN_FRAME_DISTANCE);
+    const distance = Math.max(
+      size.length() * FRAME_PADDING,
+      MIN_FRAME_DISTANCE
+    );
 
     const camera = xb.core.camera;
     const facing = new THREE.Vector3();
@@ -204,7 +216,9 @@ export class SelectionManager extends xb.Script {
   }
 
   selectAll() {
-    const candidates = this.sceneManager.list().filter((instance) => !instance.locked);
+    const candidates = this.sceneManager
+      .list()
+      .filter((instance) => !instance.locked);
     if (candidates.length === 0) return;
     this.selectedSet = new Set(candidates);
     this.primary = candidates[candidates.length - 1];
@@ -214,7 +228,10 @@ export class SelectionManager extends xb.Script {
 
   override onKeyDown(event: KeyboardEvent) {
     if (!this.editorActive) return;
-    if (event.code === xb.Keycodes.LEFT_SHIFT_CODE || event.code === xb.Keycodes.RIGHT_SHIFT_CODE) {
+    if (
+      event.code === xb.Keycodes.LEFT_SHIFT_CODE ||
+      event.code === xb.Keycodes.RIGHT_SHIFT_CODE
+    ) {
       this.shiftHeld = true;
     }
 
@@ -253,7 +270,10 @@ export class SelectionManager extends xb.Script {
   }
 
   override onKeyUp(event: KeyboardEvent) {
-    if (event.code === xb.Keycodes.LEFT_SHIFT_CODE || event.code === xb.Keycodes.RIGHT_SHIFT_CODE) {
+    if (
+      event.code === xb.Keycodes.LEFT_SHIFT_CODE ||
+      event.code === xb.Keycodes.RIGHT_SHIFT_CODE
+    ) {
       this.shiftHeld = false;
     }
   }

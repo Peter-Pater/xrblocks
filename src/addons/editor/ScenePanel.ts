@@ -77,16 +77,24 @@ export class ScenePanel extends xb.Script {
     this.nameLabel = el('span', {className: 'xrblocks-editor-name'});
     this.statusLabel = el('div', {className: 'status'});
     this.occlusionButton = el('button', {className: 'accent'});
-    const exportBtn = el('button', {className: 'accent', textContent: 'Export Scene'});
+    const exportBtn = el('button', {
+      className: 'accent',
+      textContent: 'Export Scene',
+    });
     const prevBtn = el('button', {textContent: 'Prev'});
     const nextBtn = el('button', {textContent: 'Next'});
-    const importBtn = el('button', {className: 'accent', textContent: 'Import Scene'});
+    const importBtn = el('button', {
+      className: 'accent',
+      textContent: 'Import Scene',
+    });
 
     exportBtn.addEventListener('click', () => this.exportScene());
     prevBtn.addEventListener('click', () => this.showPrevious());
     nextBtn.addEventListener('click', () => this.showNext());
     importBtn.addEventListener('click', () => this.importScene());
-    this.occlusionButton.addEventListener('click', () => this.toggleOcclusion());
+    this.occlusionButton.addEventListener('click', () =>
+      this.toggleOcclusion()
+    );
 
     this.root = el(
       'div',
@@ -128,7 +136,9 @@ export class ScenePanel extends xb.Script {
   }
 
   async readSceneDirectory(): Promise<string[]> {
-    const res = await fetch(`${this.scenesDir}?t=${Date.now()}`, {cache: 'no-store'});
+    const res = await fetch(`${this.scenesDir}?t=${Date.now()}`, {
+      cache: 'no-store',
+    });
     if (!res.ok) {
       throw new Error(`Directory request failed: ${res.status}`);
     }
@@ -144,12 +154,15 @@ export class ScenePanel extends xb.Script {
       if (SCENE_EXTENSION.test(name)) names.add(name);
     }
 
-    return [...names].sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
+    return [...names].sort((a, b) =>
+      a.localeCompare(b, undefined, {numeric: true})
+    );
   }
 
   showPrevious() {
     if (this.sceneFiles.length === 0) return;
-    this.pickerIndex = (this.pickerIndex - 1 + this.sceneFiles.length) % this.sceneFiles.length;
+    this.pickerIndex =
+      (this.pickerIndex - 1 + this.sceneFiles.length) % this.sceneFiles.length;
     this.updateNameLabel();
   }
 
@@ -169,19 +182,23 @@ export class ScenePanel extends xb.Script {
   }
 
   exportScene() {
-    const objects: SerializedSceneObject[] = this.sceneManager.list().map((instance) => {
-      const content = instance.viewer.contentScene;
-      const quaternion = content ? content.quaternion : new THREE.Quaternion();
-      return {
-        fileName: instance.fileName,
-        position: instance.viewer.position.toArray(),
-        quaternion: quaternion.toArray(),
-        scale: instance.viewer.scale.toArray(),
-        customName: instance.customName,
-        visible: instance.viewer.visible,
-        locked: instance.locked,
-      };
-    });
+    const objects: SerializedSceneObject[] = this.sceneManager
+      .list()
+      .map((instance) => {
+        const content = instance.viewer.contentScene;
+        const quaternion = content
+          ? content.quaternion
+          : new THREE.Quaternion();
+        return {
+          fileName: instance.fileName,
+          position: instance.viewer.position.toArray(),
+          quaternion: quaternion.toArray(),
+          scale: instance.viewer.scale.toArray(),
+          customName: instance.customName,
+          visible: instance.viewer.visible,
+          locked: instance.locked,
+        };
+      });
 
     const scene: SerializedScene = {
       version: 1,
@@ -189,7 +206,9 @@ export class ScenePanel extends xb.Script {
       objects,
     };
 
-    const blob = new Blob([JSON.stringify(scene, null, 2)], {type: 'application/json'});
+    const blob = new Blob([JSON.stringify(scene, null, 2)], {
+      type: 'application/json',
+    });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -199,7 +218,9 @@ export class ScenePanel extends xb.Script {
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
 
-    this.setStatus(`Exported ${objects.length} object(s). Move the download into Scenes/ to import it later.`);
+    this.setStatus(
+      `Exported ${objects.length} object(s). Move the download into Scenes/ to import it later.`
+    );
   }
 
   async importScene() {
@@ -212,7 +233,9 @@ export class ScenePanel extends xb.Script {
 
     let scene: SerializedScene;
     try {
-      const res = await fetch(`${this.scenesDir}${fileName}?t=${Date.now()}`, {cache: 'no-store'});
+      const res = await fetch(`${this.scenesDir}${fileName}?t=${Date.now()}`, {
+        cache: 'no-store',
+      });
       if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
       scene = await res.json();
     } catch (error) {
@@ -228,7 +251,9 @@ export class ScenePanel extends xb.Script {
     for (const obj of scene.objects ?? []) {
       const transform: SpawnTransform = {
         position: new THREE.Vector3().fromArray(obj.position ?? [0, 0, 0]),
-        quaternion: new THREE.Quaternion().fromArray(obj.quaternion ?? [0, 0, 0, 1]),
+        quaternion: new THREE.Quaternion().fromArray(
+          obj.quaternion ?? [0, 0, 0, 1]
+        ),
         scale: new THREE.Vector3().fromArray(obj.scale ?? [1, 1, 1]),
       };
       // Older scene files predate customName/visible/locked -- default to

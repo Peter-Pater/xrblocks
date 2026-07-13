@@ -26,10 +26,20 @@ export interface TransformInspectorPanelOptions {
   parent?: HTMLElement;
 }
 
-function buildField(idPrefix: string, label: string, step: string, min?: string) {
+function buildField(
+  idPrefix: string,
+  label: string,
+  step: string,
+  min?: string
+) {
   const input = el('input', {type: 'number', step, id: idPrefix});
   if (min !== undefined) input.min = min;
-  const field = el('div', {className: 'field'}, el('label', {htmlFor: idPrefix, textContent: label}), input);
+  const field = el(
+    'div',
+    {className: 'field'},
+    el('label', {htmlFor: idPrefix, textContent: label}),
+    input
+  );
   return {input, field};
 }
 
@@ -77,7 +87,10 @@ export class TransformInspectorPanel extends xb.Script {
 
     injectEditorStyles();
 
-    this.nameLabel = el('div', {className: 'title', textContent: 'No selection'});
+    this.nameLabel = el('div', {
+      className: 'title',
+      textContent: 'No selection',
+    });
     this.spaceButton = el('button', {className: 'accent'});
     this.spaceButton.addEventListener('click', () => this.toggleSpace());
 
@@ -101,8 +114,14 @@ export class TransformInspectorPanel extends xb.Script {
       this.wireInput(this.scaleInputs[axis], () => this.applyScale(axis));
     }
 
-    const duplicateBtn = el('button', {className: 'accent', textContent: 'Duplicate'});
-    const deleteBtn = el('button', {className: 'danger', textContent: 'Delete'});
+    const duplicateBtn = el('button', {
+      className: 'accent',
+      textContent: 'Duplicate',
+    });
+    const deleteBtn = el('button', {
+      className: 'danger',
+      textContent: 'Delete',
+    });
     duplicateBtn.addEventListener('click', () => this.duplicateSelected());
     deleteBtn.addEventListener('click', () => this.deleteSelected());
 
@@ -115,8 +134,17 @@ export class TransformInspectorPanel extends xb.Script {
       el('div', {className: 'row fields'}, posX.field, posY.field, posZ.field),
       el('div', {className: 'sectionLabel', textContent: 'Rotation (deg)'}),
       el('div', {className: 'row fields'}, rotX.field, rotY.field, rotZ.field),
-      el('div', {className: 'sectionLabel', textContent: 'Scale (× as-spawned)'}),
-      el('div', {className: 'row fields'}, scaleX.field, scaleY.field, scaleZ.field),
+      el('div', {
+        className: 'sectionLabel',
+        textContent: 'Scale (× as-spawned)',
+      }),
+      el(
+        'div',
+        {className: 'row fields'},
+        scaleX.field,
+        scaleY.field,
+        scaleZ.field
+      ),
       el('div', {className: 'row'}, duplicateBtn, deleteBtn)
     );
     this.root.style.display = 'none';
@@ -126,7 +154,8 @@ export class TransformInspectorPanel extends xb.Script {
   }
 
   toggleSpace() {
-    this.selectionManager.space = this.selectionManager.space === 'world' ? 'local' : 'world';
+    this.selectionManager.space =
+      this.selectionManager.space === 'world' ? 'local' : 'world';
     this.updateSpaceButton();
   }
 
@@ -190,7 +219,10 @@ export class TransformInspectorPanel extends xb.Script {
       const content = instance.viewer.contentScene;
       if (!content) continue;
       const before = content.quaternion.clone();
-      const euler = new THREE.Euler().setFromQuaternion(content.quaternion, 'XYZ');
+      const euler = new THREE.Euler().setFromQuaternion(
+        content.quaternion,
+        'XYZ'
+      );
       euler[axis] = THREE.MathUtils.degToRad(value);
       content.quaternion.setFromEuler(euler);
       const after = content.quaternion.clone();
@@ -273,7 +305,8 @@ export class TransformInspectorPanel extends xb.Script {
       // -- same pattern as SceneManager.spawn()'s own undo/redo.
       const ref = {instanceId: duplicate.id};
       commands.push({
-        undo: () => this.sceneManager.removeInstance(ref.instanceId, {skipHistory: true}),
+        undo: () =>
+          this.sceneManager.removeInstance(ref.instanceId, {skipHistory: true}),
         redo: async () => {
           const respawned = await this.sceneManager.spawn(fileName, {
             transform: snapshotTransform,
@@ -326,7 +359,9 @@ export class TransformInspectorPanel extends xb.Script {
         },
         redo: () => {
           if (ref.instanceId != null) {
-            this.sceneManager.removeInstance(ref.instanceId, {skipHistory: true});
+            this.sceneManager.removeInstance(ref.instanceId, {
+              skipHistory: true,
+            });
           }
         },
       });
@@ -370,7 +405,9 @@ export class TransformInspectorPanel extends xb.Script {
     if (list.length === 0) return;
 
     this.nameLabel.textContent =
-      list.length === 1 ? (list[0].customName ?? list[0].fileName) : `${list.length} objects selected`;
+      list.length === 1
+        ? (list[0].customName ?? list[0].fileName)
+        : `${list.length} objects selected`;
 
     const positionByAxis: Record<Axis, number[]> = {x: [], y: [], z: []};
     const rotationByAxis: Record<Axis, number[]> = {x: [], y: [], z: []};
@@ -384,7 +421,10 @@ export class TransformInspectorPanel extends xb.Script {
 
       const content = instance.viewer.contentScene;
       if (content) {
-        const euler = new THREE.Euler().setFromQuaternion(content.quaternion, 'XYZ');
+        const euler = new THREE.Euler().setFromQuaternion(
+          content.quaternion,
+          'XYZ'
+        );
         rotationByAxis.x.push(THREE.MathUtils.radToDeg(euler.x));
         rotationByAxis.y.push(THREE.MathUtils.radToDeg(euler.y));
         rotationByAxis.z.push(THREE.MathUtils.radToDeg(euler.z));
@@ -397,8 +437,18 @@ export class TransformInspectorPanel extends xb.Script {
       scaleByAxis.z.push(scale.z / baseScale.z);
     }
 
-    this.setFieldValues(this.positionInputs, positionByAxis, 2, POSITION_EPSILON);
-    this.setFieldValues(this.rotationInputs, rotationByAxis, 0, ROTATION_EPSILON_DEG);
+    this.setFieldValues(
+      this.positionInputs,
+      positionByAxis,
+      2,
+      POSITION_EPSILON
+    );
+    this.setFieldValues(
+      this.rotationInputs,
+      rotationByAxis,
+      0,
+      ROTATION_EPSILON_DEG
+    );
     this.setFieldValues(this.scaleInputs, scaleByAxis, 2, SCALE_EPSILON);
   }
 }

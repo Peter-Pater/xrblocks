@@ -64,7 +64,10 @@ export class SceneEditor extends xb.Script {
    * XR" (see update()). */
   inRealXRSession = false;
 
-  constructor({modelsDir = './Models/', scenesDir = './Scenes/'}: SceneEditorOptions = {}) {
+  constructor({
+    modelsDir = './Models/',
+    scenesDir = './Scenes/',
+  }: SceneEditorOptions = {}) {
     super();
 
     injectEditorStyles();
@@ -78,10 +81,18 @@ export class SceneEditor extends xb.Script {
     this.root.appendChild(this.leftColumn);
 
     this.commandHistory = new CommandHistory();
-    this.sceneManager = new SceneManager({modelsDir, commandHistory: this.commandHistory});
+    this.sceneManager = new SceneManager({
+      modelsDir,
+      commandHistory: this.commandHistory,
+    });
     this.selectionManager = new SelectionManager(this.sceneManager);
-    this.modelPickerPanel = new ModelPickerPanel(this.sceneManager, {parent: this.leftColumn});
-    this.transformGizmo = new TransformGizmo(this.selectionManager, this.commandHistory);
+    this.modelPickerPanel = new ModelPickerPanel(this.sceneManager, {
+      parent: this.leftColumn,
+    });
+    this.transformGizmo = new TransformGizmo(
+      this.selectionManager,
+      this.commandHistory
+    );
     // SelectionManager.onSelectStart defers to the gizmo's own scoped
     // handle raycast before running its whole-scene one -- see the
     // comment there for why.
@@ -96,9 +107,13 @@ export class SceneEditor extends xb.Script {
       scenesDir,
       parent: this.root,
     });
-    this.hierarchyPanel = new HierarchyPanel(this.sceneManager, this.selectionManager, {
-      parent: this.leftColumn,
-    });
+    this.hierarchyPanel = new HierarchyPanel(
+      this.sceneManager,
+      this.selectionManager,
+      {
+        parent: this.leftColumn,
+      }
+    );
 
     this.add(this.commandHistory);
     this.add(this.sceneManager);
