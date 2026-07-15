@@ -120,9 +120,11 @@ URL does the same. `options.catchScriptExceptions` (default `true`) keeps one bu
 script from crashing the app.
 
 For automation or external remote runs, use `options.enableAutomationMode()` before
-`xb.init(options)`. It applies the desktop simulator preset, enables hands and
-camera input, hides simulator control panels, and can also be activated from the
-URL with `?xrAutomation=1`.
+`xb.init(options)`. It applies the desktop simulator preset, enables hands, camera
+input, and agent context, hides simulator control panels, and can also be activated
+from the URL with `?xrAutomation=1`. Separately, `?debug=1` exposes the full SDK as
+`window.xb` and initialization as `window.xbReady`. Combine the flags when browser
+tooling needs both direct SDK access and the automation preset.
 
 Simulator navmesh constraints are opt-in. Set
 `options.simulator.navMesh.enabled = true`; the default Living Room environment
@@ -212,23 +214,23 @@ gradients, and shadows, use the **uiblocks addon** instead — see
 
 ## Directory map (read deeper on demand)
 
-| Path                                                                                 | What lives there                                                                                                                                      |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`core/`](core)                                                                      | `Core` singleton, `Script`, `Options`, `User`, DI `Registry`, `XRButton`, WebXR session mgmt                                                          |
-| [`input/`](input)                                                                    | controllers, hands, gaze, mouse, gamepad; `gestures/`; `strokes/`                                                                                     |
-| [`world/`](world)                                                                    | `World` + `planes/`, `mesh/`, `objects/` (Gemini & MediaPipe backends), `sounds/`                                                                     |
-| [`context/`](context)                                                                | Agent-facing scene context: semantic tree, visible objects, Set-of-Mark screenshots                                                                   |
-| [`depth/`](depth)                                                                    | depth sensing, depth mesh, `occlusion/` shaders & passes                                                                                              |
-| [`ai/`](ai)                                                                          | `AI` facade over `Gemini` + `OpenAI` (query / live / image gen)                                                                                       |
-| [`agent/`](agent)                                                                    | agent framework: tools, memory, context (WIP — see `agent/README.md`)                                                                                 |
-| [`ui/`](ui)                                                                          | core spatial UI: `SpatialPanel`, `Grid`/`Row`/`Col`, views, `ModelViewer`, `Reticle`                                                                  |
-| [`ux/`](ux)                                                                          | `DragManager`, reusable interaction behaviors                                                                                                         |
-| [`simulator/`](simulator)                                                            | desktop XR simulator (virtual user/hands/depth/planes, control modes)                                                                                 |
-| [`sound/`](sound)                                                                    | spatial audio, speech recognizer/synthesizer (see `sound/README.md`)                                                                                  |
-| [`physics/`](physics)                                                                | Rapier3D integration                                                                                                                                  |
-| [`lighting/`](lighting), [`camera/`](camera), [`video/`](video), [`stereo/`](stereo) | light estimation, device camera, video streams, stereo utils                                                                                          |
-| [`utils/`](utils)                                                                    | `ModelLoader`, dependency injection, helpers                                                                                                          |
-| [`addons/`](addons)                                                                  | opt-in modules, each often with its own README/skills: `uiblocks`, `netblocks`, `testing`, `glasses`, `volumes`, `virtualkeyboard`, simulator UI, ... |
+| Path                                                                                 | What lives there                                                                                                                                                               |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`core/`](core)                                                                      | `Core` singleton, `Script`, `Options`, `User`, DI `Registry`, `XRButton`, WebXR session mgmt                                                                                   |
+| [`input/`](input)                                                                    | controllers, hands, gaze, mouse, gamepad; `gestures/`; `strokes/`                                                                                                              |
+| [`world/`](world)                                                                    | `World` + `planes/`, `mesh/`, `objects/` (Gemini & MediaPipe backends), `sounds/`                                                                                              |
+| [`context/`](context)                                                                | Agent-facing scene context: semantic tree, visible objects, Set-of-Mark screenshots                                                                                            |
+| [`depth/`](depth)                                                                    | depth sensing, depth mesh, `occlusion/` shaders & passes                                                                                                                       |
+| [`ai/`](ai)                                                                          | `AI` facade over `Gemini` + `OpenAI` (query / live / image gen)                                                                                                                |
+| [`agent/`](agent)                                                                    | agent framework: tools, memory, context (WIP — see `agent/README.md`)                                                                                                          |
+| [`ui/`](ui)                                                                          | core spatial UI: `SpatialPanel`, `Grid`/`Row`/`Col`, views, `ModelViewer`, `Reticle`                                                                                           |
+| [`ux/`](ux)                                                                          | `DragManager`, reusable interaction behaviors                                                                                                                                  |
+| [`simulator/`](simulator)                                                            | desktop XR simulator (virtual user/hands/depth/planes, control modes)                                                                                                          |
+| [`sound/`](sound)                                                                    | spatial audio, speech recognizer/synthesizer (see `sound/README.md`)                                                                                                           |
+| [`physics/`](physics)                                                                | Rapier3D integration                                                                                                                                                           |
+| [`lighting/`](lighting), [`camera/`](camera), [`video/`](video), [`stereo/`](stereo) | light estimation, device camera, video streams, stereo utils                                                                                                                   |
+| [`utils/`](utils)                                                                    | `ModelLoader`, dependency injection, helpers                                                                                                                                   |
+| [`addons/`](addons)                                                                  | opt-in modules, each often with its own README/skills: `uiblocks`, `netblocks`, `lipsync`, `testing`, `glasses`, `volumes`, `virtualkeyboard`, `agenthands`, simulator UI, ... |
 
 ## Two UI systems — pick deliberately
 

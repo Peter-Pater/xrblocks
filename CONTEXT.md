@@ -121,7 +121,9 @@ npm ci && npm run dev     # builds in watch mode + serves http://127.0.0.1:8080
 
 Open a sample/template/demo under that URL; add `?formFactor=desktop` to force the simulator.
 For external automation or remote runs, configure `new xb.Options().enableAutomationMode()` or
-add `?xrAutomation=1`.
+add `?xrAutomation=1`. Automation mode enables agent context. Add `?debug=1` to expose
+the SDK as `window.xb` and initialization as `window.xbReady`; combine both flags when
+an in-page browser driver needs the automation preset and direct SDK access.
 
 ## Task Recipes -> Skills/
 

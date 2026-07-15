@@ -49,7 +49,9 @@ immersive applications with features like:
 - **Cross-Platform:** Write once and deploy to both XR devices and desktop
   Chrome browsers.
 - **Automation-Friendly Simulator:** Use `options.enableAutomationMode()` or
-  `?xrAutomation=1` to start a desktop simulator preset for external remote runs.
+  `?xrAutomation=1` to start a desktop simulator preset with context enabled.
+- **Browser Debugging:** Add `?debug=1` to expose the SDK as `window.xb` and
+  await initialization through `window.xbReady` from browser tooling.
 - **Constrained Simulator Navigation:** Opt into simulator navmesh grounding with
   `options.simulator.navMesh.enabled = true`. The default Living Room
   environment includes a pregenerated glTF/GLB `navMeshPath`; custom

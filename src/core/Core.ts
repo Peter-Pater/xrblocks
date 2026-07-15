@@ -2,6 +2,7 @@ import * as THREE from 'three';
 
 import {AI} from '../ai/AI';
 import {AIOptions} from '../ai/AIOptions';
+import {markDebugFailed, markDebugReady} from '../debug/DebugGlobals';
 import {XRDeviceCamera} from '../camera/XRDeviceCamera';
 import {Context} from '../context/Context';
 import {ContextOptions} from '../context/ContextOptions';
@@ -32,6 +33,7 @@ import {MeshDetectionOptions} from '../world/mesh/MeshDetectionOptions';
 
 import {Registry} from './components/Registry';
 import {ScreenshotSynthesizer} from './components/ScreenshotSynthesizer';
+import {SimulationTimer} from './components/SimulationTimer';
 import {ScriptsManager} from './components/ScriptsManager';
 import {WaitFrame} from './components/WaitFrame';
 import {
@@ -73,6 +75,7 @@ export class Core {
    * A timer for tracking time deltas. Call timer.getDelta() or getDeltaTime().
    */
   timer = new THREE.Timer();
+  private simulationTimer = new SimulationTimer();
 
   /** Manages hand, mouse, gaze inputs. */
   input = new Input();
@@ -173,6 +176,7 @@ export class Core {
 
   pause() {
     this._isPaused = true;
+    this.simulationTimer.pause();
   }
 
   resume() {
@@ -188,6 +192,7 @@ export class Core {
 
     this.isSteppingFrame = true;
     try {
+      this.simulationTimer.step(dtMs, this.timer.getTimescale());
       this.manualStepTime += dtMs;
       this.update(this.manualStepTime, undefined as unknown as XRFrame);
       if (this.physics) {
@@ -225,6 +230,7 @@ export class Core {
     this.registry.register(this);
     this.registry.register(this.waitFrame);
     this.registry.register(this.screenshotSynthesizer);
+    this.registry.register(this.simulationTimer);
     this.registry.register(this.scene);
     this.registry.register(this.timer);
     this.registry.register(this.input);
@@ -249,6 +255,16 @@ export class Core {
    * session.
    */
   async init(options = new Options()) {
+    try {
+      await this.initialize(options);
+      markDebugReady(this);
+    } catch (error) {
+      markDebugFailed(this, error);
+      throw error;
+    }
+  }
+
+  private async initialize(options: Options) {
     loadingSpinnerManager.showSpinner();
 
     this.registry.register(options, Options);
@@ -517,6 +533,9 @@ export class Core {
 
     this.currentFrame = frame;
     this.manualStepTime = Math.max(this.manualStepTime, time);
+    if (!this.isSteppingFrame) {
+      this.simulationTimer.update(time, this.timer.getTimescale());
+    }
     this.timer.update(time);
     if (this.simulatorRunning) {
       this.simulator.simulatorUpdate();

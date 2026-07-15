@@ -276,6 +276,7 @@ export class Options {
     if (enableCamera) {
       this.enableCamera();
     }
+    this.enableContext();
 
     this.simulator.defaultMode = defaultMode;
     this.simulator.defaultHand = defaultHand;

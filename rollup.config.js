@@ -92,7 +92,7 @@ const xrblocksPackages = [
 
 const sdkBuilds = [
   {
-    input: 'src/xrblocks.ts',
+    input: 'src/entry.ts',
     external: externalPackages,
     output: {
       file: 'build/xrblocks.js',
@@ -110,7 +110,7 @@ const sdkBuilds = [
     ],
   },
   {
-    input: 'src/xrblocks.ts',
+    input: 'src/entry.ts',
     external: externalPackages,
     output: {
       file: 'build/xrblocks.d.ts',
@@ -120,7 +120,7 @@ const sdkBuilds = [
     plugins: [dts()],
   },
   {
-    input: 'src/xrblocks.ts',
+    input: 'src/entry.ts',
     external: externalPackages,
     output: {
       file: 'build/xrblocks.min.js',
