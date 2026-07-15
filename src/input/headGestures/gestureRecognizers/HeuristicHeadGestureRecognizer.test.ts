@@ -70,6 +70,20 @@ describe('HeuristicHeadGestureRecognizer', () => {
     expect(scores.shake).toBeUndefined();
   });
 
+  it('does not recognize a slow nod', () => {
+    const recognizer = new HeuristicHeadGestureRecognizer();
+    const samples = createSamples(1800, (time) => ({
+      pitch: piecewise(time, [
+        [0, 300, 0, 0],
+        [300, 1000, 0, degrees(20)],
+        [1000, 1700, degrees(20), 0],
+        [1700, 1800, 0, 0],
+      ]),
+    }));
+
+    expect(recognizer.recognize({samples}).nod).toBeUndefined();
+  });
+
   it('supports custom registered detectors without built-ins', () => {
     const recognizer = new HeuristicHeadGestureRecognizer(
       false

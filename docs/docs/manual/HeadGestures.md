@@ -36,7 +36,7 @@ options.enableHeadGestures();
 
 options.headGestures.minimumConfidence = 0.65;
 options.headGestures.releaseConfidence = 0.4;
-options.headGestures.updateIntervalMs = 33;
+options.headGestures.updateIntervalMs = 16;
 options.headGestures.historyDurationMs = 1500;
 
 options.headGestures.setGestureEnabled('shake', false);
@@ -66,6 +66,10 @@ The default `HeuristicHeadGestureRecognizer` measures motion in axes local to a
 recent resting orientation. A nod is a pitch excursion and return. A shake is a
 yaw excursion and return. The detectors accept either starting direction and
 reject excessive off-axis motion.
+
+Built-in gestures are intentionally quick: a completed excursion must take
+roughly 200–750 ms and reach a minimum peak angular speed. Slow looks and slow
+nods are not recognized as gestures.
 
 Large tracking jumps and timestamp gaps clear recognition history without
 emitting. This prevents session entry, tab suspension, or simulator pose resets

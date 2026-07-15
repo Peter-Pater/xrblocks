@@ -21,14 +21,14 @@ type RegisteredGesture = {
 
 const DEFAULT_OPTIONS: HeuristicHeadGestureRecognizerOptions = {
   minimumGestureDurationMs: 200,
-  maximumGestureDurationMs: 1200,
+  maximumGestureDurationMs: 750,
   maximumOffAxisRatio: 0.5,
   quietPrefixDurationMs: 200,
   detectionHoldMs: 180,
-  returnToleranceFactor: 0.45,
+  returnToleranceFactor: 0.55,
   smoothingTimeConstantMs: 35,
   minimumPathEfficiency: 0.65,
-  minimumPeakAngularSpeed: 0.35,
+  minimumPeakAngularSpeed: 0.75,
 };
 
 export class HeuristicHeadGestureRecognizer implements HeadGestureRecognizer {

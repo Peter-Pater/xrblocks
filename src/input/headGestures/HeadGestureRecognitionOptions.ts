@@ -13,7 +13,7 @@ export class HeadGestureRecognitionOptions {
 
   releaseConfidence = 0.4;
 
-  updateIntervalMs = 33;
+  updateIntervalMs = 16;
 
   historyDurationMs = 1500;
 
