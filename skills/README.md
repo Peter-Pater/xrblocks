@@ -26,7 +26,7 @@ The `xb-` prefix matches the `xb` import alias.
 | [`xb-hands`](xb-hands/SKILL.md)                 | Use hand tracking (joints, pinch, touch, grab)                       |
 | [`xb-agenthands`](xb-agenthands/SKILL.md)       | Give an AI agent gesturing hands + an orb that point at real objects |
 | [`xb-gestures`](xb-gestures/SKILL.md)           | Detect pinch/fist/point/spread/thumbs-up/open-palm                   |
-| [`xb-head-gestures`](xb-head-gestures/SKILL.md) | Detect completed head nod and shake motions                      |
+| [`xb-head-gestures`](xb-head-gestures/SKILL.md) | Detect completed head nod and shake motions                          |
 | [`xb-depth`](xb-depth/SKILL.md)                 | Add depth sensing, occlusion, and depth-mesh colliders               |
 | [`xb-world`](xb-world/SKILL.md)                 | Detect real-world planes, meshes, and objects                        |
 | [`xb-context`](xb-context/SKILL.md)             | Read agent-facing scene context, visible objects, and SOM labels     |
