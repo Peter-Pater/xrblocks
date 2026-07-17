@@ -147,6 +147,7 @@ export class SimulatorControls {
     domElement.addEventListener('pointermove', this.onPointerMove);
     domElement.addEventListener('pointerdown', this.onPointerDown);
     domElement.addEventListener('pointerup', this.onPointerUp);
+    domElement.addEventListener('wheel', this.onWheel, {passive: false});
     domElement.addEventListener('contextmenu', preventDefault);
     window.addEventListener('blur', this.onBlur);
     document.addEventListener('visibilitychange', this.onBlur);
@@ -171,6 +172,13 @@ export class SimulatorControls {
     if (!this.enabled) return;
     this.simulatorModeControls.onPointerUp(event);
     this.pointerDown = false;
+  };
+
+  onWheel = (event: WheelEvent) => {
+    if (!this.enabled) return;
+    if (this.simulatorModeControls.onWheel(event)) {
+      event.preventDefault();
+    }
   };
 
   onKeyDown = (event: KeyboardEvent) => {

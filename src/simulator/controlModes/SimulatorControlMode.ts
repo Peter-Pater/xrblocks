@@ -73,6 +73,9 @@ export class SimulatorControlMode {
   onPointerDown(_: MouseEvent) {}
   onPointerUp(_: MouseEvent) {}
   onPointerMove(_: MouseEvent) {}
+  onWheel(_: WheelEvent) {
+    return false;
+  }
   onKeyDown(event: KeyboardEvent) {
     if (event.code == Keycodes.DIGIT_1) {
       this.setStereoRenderMode(SimulatorRenderMode.STEREO_LEFT);
