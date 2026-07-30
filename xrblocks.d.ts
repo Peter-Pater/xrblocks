@@ -14,9 +14,9 @@
  * limitations under the License.
  *
  * @file xrblocks.js
- * @version v0.17.0
- * @commitid 670ae4e
- * @builddate 2026-07-13T16:52:02.477Z
+ * @version v0.18.0
+ * @commitid cedabde
+ * @builddate 2026-07-30T18:42:12.704Z
  * @description XR Blocks SDK, built from source with the above commit ID.
  * @agent When using with Gemini to create XR apps, use **Gemini Canvas** mode,
  * and follow rules below:
@@ -48,6 +48,7 @@ import OpenAIType from 'openai';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { TemplateResult } from 'lit';
 import { GLTFLoader, GLTF } from 'three/addons/loaders/GLTFLoader.js';
+import { Pathfinding } from 'three-pathfinding';
 import TroikaThreeText from 'troika-three-text';
 import * as _sparkjsdev_spark from '@sparkjsdev/spark';
 import { SplatMesh, SparkRenderer } from '@sparkjsdev/spark';
@@ -1088,9 +1089,9 @@ declare class MeshScript<TGeometry extends THREE.BufferGeometry = THREE.BufferGe
     constructor(geometry?: TGeometry, material?: TMaterial);
 }
 
-declare const GEMINI_DEFAULT_FLASH_MODEL = "gemini-3.5-flash";
+declare const GEMINI_DEFAULT_FLASH_MODEL = "gemini-3.6-flash";
 declare const GEMINI_DEFAULT_LIVE_MODEL = "gemini-3.1-flash-live-preview";
-declare const GEMINI_DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
+declare const GEMINI_DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image";
 declare class GeminiOptions {
     apiKey: string;
     urlParam: string;
@@ -1818,6 +1819,12 @@ declare class SpeechSynthesizer extends Script {
     private specificVolume;
     private speechCategory;
     private options;
+    /**
+     * Optional callback invoked on each word boundary while speaking, with the
+     * character index into the spoken text. Lets callers sync visuals (e.g.
+     * gestures) to the actual spoken words.
+     */
+    onBoundaryCallback?: (charIndex: number) => void;
     constructor(categoryVolumes: CategoryVolumes, onStartCallback?: () => void, onEndCallback?: () => void, onErrorCallback?: (_: Error) => void);
     init({ soundOptions }: {
         soundOptions: SoundOptions;
@@ -3127,7 +3134,7 @@ declare const DEFAULT_DEVICE_CAMERA_WIDTH = 1280;
  * Corresponds to a 720p resolution.
  */
 declare const DEFAULT_DEVICE_CAMERA_HEIGHT = 720;
-declare const XR_BLOCKS_ASSETS_PATH = "https://cdn.jsdelivr.net/gh/xrblocks/assets@d872cfdb7668443da5cd38361fc3a3d131aca04c/";
+declare const XR_BLOCKS_ASSETS_PATH = "https://cdn.jsdelivr.net/gh/xrblocks/assets@5582bd1b2d1a4e19f7ee7093b63a5ee328e974ac/";
 
 declare class ScreenshotSynthesizer {
     private pendingScreenshotRequests;
@@ -3194,11 +3201,22 @@ declare class ContextOptions {
     enableSetOfMark(): this;
 }
 
+/**
+ * Tracks elapsed simulation time independently from browser wall time.
+ */
+declare class SimulationTimer {
+    private elapsedMs;
+    private previousFrameTimeMs?;
+    getElapsedMs(): number;
+    update(frameTimeMs: number, timescale: number): void;
+    step(dtMs: number, timescale: number): void;
+    pause(): void;
+}
+
 type Vec2Tuple = [number, number];
 type Vec3Tuple = [number, number, number];
 type QuatTuple = [number, number, number, number];
 type SemanticSource = 'xrblocks' | 'uiblocks' | 'three' | 'app';
-type SemanticViewOcclusion = 'none' | 'occluded' | 'outOfFrame' | 'notRendered';
 interface SemanticBounds {
     center: Vec3Tuple;
     size: Vec3Tuple;
@@ -3207,7 +3225,6 @@ interface SemanticViewData {
     rendered: boolean;
     inFrame: boolean;
     inLineOfSight: boolean;
-    occlusion: SemanticViewOcclusion;
     /**
      * Normalized horizontal screen coordinate: 0 at the left edge, 1 at the
      * right edge.
@@ -3240,6 +3257,7 @@ interface SemanticNode {
 }
 interface SemanticTree {
     snapshotId: string;
+    /** Elapsed simulation time in milliseconds when the snapshot was captured. */
     capturedAt: number;
     rootIds: string[];
     nodes: Record<string, SemanticNode>;
@@ -3263,6 +3281,7 @@ interface SetOfMark {
 }
 interface SetOfMarkContext {
     snapshotId: string;
+    /** Elapsed simulation time in milliseconds when the snapshot was captured. */
     capturedAt: number;
     image: string;
     marks: SetOfMark[];
@@ -3293,11 +3312,13 @@ declare class SceneDetector extends Script {
         scene: typeof THREE.Scene;
         camera: typeof THREE.Camera;
         screenshotSynthesizer: typeof ScreenshotSynthesizer;
+        simulationTimer: typeof SimulationTimer;
     };
     private options;
     private scene;
     private camera;
     private screenshotSynthesizer;
+    private simulationTimer?;
     private deviceCamera?;
     private registry;
     private snapshot;
@@ -3322,11 +3343,12 @@ declare class SceneDetector extends Script {
      * The latest Set-of-Mark context image and label mapping.
      */
     setOfMark: SetOfMarkContext | null;
-    init({ options, scene, camera, screenshotSynthesizer, deviceCamera, }: {
+    init({ options, scene, camera, screenshotSynthesizer, simulationTimer, deviceCamera, }: {
         options: ContextOptions;
         scene: THREE.Scene;
         camera: THREE.Camera;
         screenshotSynthesizer: ScreenshotSynthesizer;
+        simulationTimer?: SimulationTimer;
         deviceCamera?: XRDeviceCamera;
     }): void;
     setDeviceCamera(deviceCamera: XRDeviceCamera | undefined): void;
@@ -3349,6 +3371,7 @@ declare class SceneDetector extends Script {
     private getSetOfMarkContext;
     private getSnapshot;
     dispose(): void;
+    private getCaptureTimeMs;
 }
 
 declare class Context extends Script {
@@ -4155,6 +4178,52 @@ declare class GestureRecognitionOptions {
     private applyGestureRecognizerConfigurations;
 }
 
+type HeadGestureConfiguration = {
+    enabled: boolean;
+    /** Detector-specific sensitivity. Built-in heuristics interpret this as radians. */
+    threshold?: number;
+};
+type HeadPoseSample = {
+    timestamp: number;
+    position: THREE.Vector3;
+    orientation: THREE.Quaternion;
+};
+interface HeadGestureContext {
+    readonly samples: readonly HeadPoseSample[];
+}
+type HeadGestureDetectionResult = {
+    confidence: number;
+    data?: Record<string, unknown>;
+};
+type HeadGestureScoreMap = Record<string, HeadGestureDetectionResult | undefined>;
+type HeuristicHeadGestureDetector = (context: HeadGestureContext, config: HeadGestureConfiguration) => HeadGestureDetectionResult | undefined;
+interface HeadGestureRecognizer {
+    init?(): Promise<void>;
+    recognize(context: HeadGestureContext): HeadGestureScoreMap | Promise<HeadGestureScoreMap>;
+    getGestureConfigurations?(): Record<string, HeadGestureConfiguration>;
+    setGestureConfig?(name: string, config: HeadGestureConfiguration): void;
+    dispose?(): void;
+}
+
+declare class HeadGestureRecognitionOptions {
+    enabled: boolean;
+    minimumConfidence: number;
+    releaseConfidence: number;
+    updateIntervalMs: number;
+    historyDurationMs: number;
+    warmupDurationMs: number;
+    maximumSampleGapMs: number;
+    maximumSampleAngleRadians: number;
+    gestureRecognizer: HeadGestureRecognizer;
+    gestures: Record<string, HeadGestureConfiguration>;
+    constructor(options?: DeepReadonly<DeepPartial<HeadGestureRecognitionOptions>>);
+    enable(): this;
+    setGestureEnabled(name: string, enabled: boolean): this;
+    setGestureRecognizer(gestureRecognizer: HeadGestureRecognizer): this;
+    setGestureConfig(name: string, config: Partial<HeadGestureConfiguration>): this;
+    private applyGestureRecognizerConfigurations;
+}
+
 type StrokeProvider = 'onedollar';
 declare class StrokeRecognitionOptions {
     /** Master switch for the stroke recognition block. */
@@ -4281,7 +4350,8 @@ declare enum SimulatorMode {
     USER = "User",
     POSE = "Navigation",
     CONTROLLER = "Hands",
-    POINTER_LOCK = "PointerLock"
+    POINTER_LOCK = "PointerLock",
+    EDITOR = "Editor"
 }
 interface SimulatorCustomInstruction {
     header: string | TemplateResult;
@@ -4289,11 +4359,17 @@ interface SimulatorCustomInstruction {
     description: string | TemplateResult;
 }
 interface SimulatorEnvironment {
-    name: string;
-    scenePath?: string | null;
-    scenePlanesPath?: string | null;
-    navMeshPath?: string | null;
-    videoPath?: string;
+    /** Optional display name; otherwise the manifest name is used. */
+    name?: string;
+    manifestPath: string;
+}
+interface SimulatorHandPhysicsOptions {
+    enabled: boolean;
+    radius: number;
+    mass: number;
+    contactOffset: number;
+    friction: number;
+    restitution: number;
 }
 declare class SimulatorOptions {
     initialCameraPosition: {
@@ -4301,13 +4377,12 @@ declare class SimulatorOptions {
         y: number;
         z: number;
     };
-    environments: SimulatorEnvironment[];
+    environments: {
+        /** Optional display name; otherwise the manifest name is used. */
+        name?: string;
+        manifestPath: string;
+    }[];
     activeEnvironmentIndex: number;
-    initialScenePosition: {
-        x: number;
-        y: number;
-        z: number;
-    };
     defaultMode: SimulatorMode;
     defaultHand: Handedness;
     modeToggle: {
@@ -4318,6 +4393,7 @@ declare class SimulatorOptions {
             Navigation: SimulatorMode;
             Hands: SimulatorMode;
             PointerLock: SimulatorMode;
+            Editor: SimulatorMode;
         };
     };
     simulatorSettingsPanel: {
@@ -4343,30 +4419,37 @@ declare class SimulatorOptions {
     };
     navMesh: {
         enabled: boolean;
+        showDebugVisualizations: boolean;
         eyeHeight: number;
+    };
+    /** Controls the isolated physics world used by the desktop simulator. */
+    physics: {
+        enabled: boolean;
     };
     deviceCamera: {
         enabled: boolean;
     };
     renderToRenderTexture: boolean;
     blendingMode: 'normal' | 'screen';
+    /** Shoulder/chest origin of the left hand in local camera space. */
+    leftHandOrigin: {
+        x: number;
+        y: number;
+        z: number;
+    };
+    /** Shoulder/chest origin of the right hand in local camera space. */
+    rightHandOrigin: {
+        x: number;
+        y: number;
+        z: number;
+    };
+    /** Optional physical constraints for simulated hands. Requires Rapier. */
+    handPhysics: SimulatorHandPhysicsOptions;
     /** Limits how far each hand controller can travel from the user's shoulder origin. */
     reachDistance: {
         enabled: boolean;
         /** The maximum distance in meters a controller can move from its origin point. */
         radius: number;
-        /** The shoulder/chest origin point for the left hand in local camera space. */
-        leftHandOrigin: {
-            x: number;
-            y: number;
-            z: number;
-        };
-        /** The shoulder/chest origin point for the right hand in local camera space. */
-        rightHandOrigin: {
-            x: number;
-            y: number;
-            z: number;
-        };
     };
     /** Limits the angular cone in front of the user within which controllers can move. */
     reachAngle: {
@@ -4413,6 +4496,8 @@ declare class ObjectsOptions {
     debugging: boolean;
     enabled: boolean;
     showDebugVisualizations: boolean;
+    /** Use simulator ground truth instead of a camera detector on desktop. */
+    simulatorOverride: boolean;
     /**
      * Minimum delay in milliseconds between continuous object detection runs.
      * A value of 0 runs again as soon as the previous detection finishes.
@@ -4763,6 +4848,7 @@ declare class Options {
     deviceCamera: DeviceCameraOptions;
     hands: HandsOptions;
     gestures: GestureRecognitionOptions;
+    headGestures: HeadGestureRecognitionOptions;
     strokes: StrokeRecognitionOptions;
     reticles: ReticleOptions;
     sound: SoundOptions;
@@ -4897,6 +4983,11 @@ declare class Options {
      * @returns The instance for chaining.
      */
     enableGestures(): this;
+    /**
+     * Enables completed nod and shake recognition from the user's head pose.
+     * @returns The instance for chaining.
+     */
+    enableHeadGestures(): this;
     /**
      * Enables the stroke recognition block and ensures gestures are available.
      * @returns The instance for chaining.
@@ -5179,6 +5270,48 @@ declare class GazeController extends Script<GazeControllerEventMap> implements C
     disconnect(): void;
 }
 
+type HeadGestureEventDetail = {
+    name: string;
+    confidence: number;
+    data?: Record<string, unknown>;
+};
+type HeadGestureEvent = THREE.Event & {
+    type: 'gesture';
+    target: HeadGestureRecognition;
+    detail: HeadGestureEventDetail;
+};
+interface HeadGestureEventMap extends THREE.Object3DEventMap {
+    gesture: HeadGestureEvent;
+}
+
+declare class HeadGestureRecognition extends Script<HeadGestureEventMap> {
+    static dependencies: {
+        camera: typeof THREE.Camera;
+        options: typeof HeadGestureRecognitionOptions;
+    };
+    private camera;
+    private options;
+    private samples;
+    private latchedGestures;
+    private lastEvaluation;
+    private latestTimestamp;
+    private pendingRecognition;
+    private generation;
+    init({ camera, options, }: {
+        camera: THREE.Camera;
+        options: HeadGestureRecognitionOptions;
+    }): Promise<void>;
+    update(time?: number): void;
+    private captureSample;
+    private isDiscontinuity;
+    private pruneSamples;
+    private evaluate;
+    private emitFromScores;
+    private emitGesture;
+    private resetRecognitionState;
+    dispose(): void;
+}
+
 /** Defines the event map for the MouseController's custom events. */
 interface MouseControllerEventMap extends THREE.Object3DEventMap {
     connected: {
@@ -5284,6 +5417,7 @@ declare class Reticles extends THREE.Group {
     name: string;
 }
 type HasIgnoreReticleRaycast = {
+    /** Excludes this object and its descendants from reticle targeting and context visibility occlusion. */
     ignoreReticleRaycast: boolean;
 };
 type MaybeHasIgnoreReticleRaycast = Partial<HasIgnoreReticleRaycast>;
@@ -5296,6 +5430,8 @@ declare class Input {
     controllers: Controller[];
     controllerGrips: THREE.Group[];
     hands: THREE.XRHandSpace[];
+    /** Completed head gestures, when enabled before initialization. */
+    headGestures?: HeadGestureRecognition;
     raycaster: Raycaster;
     initialized: boolean;
     pivotsEnabled: boolean;
@@ -5304,6 +5440,7 @@ declare class Input {
     gamepadController: GamepadController;
     controllersEnabled: boolean;
     listeners: Map<any, any>;
+    private pinchFilter;
     intersectionsForController: Map<Controller, THREE.Intersection<THREE.Object3D<THREE.Object3DEventMap>>[]>;
     intersections: never[];
     activeControllers: ActiveControllers;
@@ -5434,6 +5571,7 @@ declare class Input {
     disableController(controller: Controller): void;
     disableControllers(): void;
     enableControllers(): void;
+    dispose(): void;
     performRaycastOnScene(controller: Controller): void;
 }
 
@@ -5832,6 +5970,42 @@ declare class Lighting {
     debugLog(): void;
 }
 
+type SimulatorVector3Tuple = [number, number, number];
+type SimulatorQuaternionTuple = [number, number, number, number];
+type SimulatorPhysicsMode = false | 'fixed' | 'dynamic';
+interface SimulatorObjectDefinition {
+    id?: string;
+    assetPath?: string;
+    object?: THREE.Object3D;
+    position?: SimulatorVector3Tuple;
+    quaternion?: SimulatorQuaternionTuple;
+    scale?: SimulatorVector3Tuple;
+    visible?: boolean;
+    detectObject?: boolean;
+    label?: string;
+    data?: unknown;
+    physics?: SimulatorPhysicsMode;
+}
+interface SimulatorSceneManifest {
+    name?: string;
+    scenePath?: string;
+    videoPath?: string;
+    scenePlanesPath?: string;
+    navMeshPath?: string;
+    position?: SimulatorVector3Tuple;
+    quaternion?: SimulatorQuaternionTuple;
+    scale?: SimulatorVector3Tuple;
+    objects?: SimulatorObjectDefinition[];
+}
+interface ResolvedSimulatorSceneManifest extends Omit<SimulatorSceneManifest, 'scenePath' | 'videoPath' | 'scenePlanesPath' | 'navMeshPath' | 'objects'> {
+    scenePath?: string;
+    videoPath?: string;
+    scenePlanesPath?: string;
+    navMeshPath?: string;
+    objects: SimulatorObjectDefinition[];
+    manifestUrl: string;
+}
+
 declare const AVERAGE_IPD_METERS = 0.063;
 declare enum SimulatorRenderMode {
     DEFAULT = "default",
@@ -5913,6 +6087,21 @@ declare enum SimulatorHandPose {
 }
 declare const SIMULATOR_HAND_POSE_NAMES: Readonly<Record<SimulatorHandPose, string>>;
 
+/** Physics world isolated to the simulated physical environment. */
+declare class SimulatorPhysics {
+    private handOptions;
+    readonly RAPIER: RAPIERCompat;
+    readonly world: RAPIER_NS.World;
+    private hands;
+    constructor(physics: Physics, handOptions: SimulatorHandPhysicsOptions);
+    constrainHand(index: number, position: THREE.Vector3, enabled: boolean, handOrigin?: THREE.Vector3): void;
+    private createHand;
+    private clampHandToOrigin;
+    private validateHandOptions;
+    step(): void;
+    dispose(): void;
+}
+
 type SimulatorHandPoseHTMLElement = HTMLElement & {
     visible: boolean;
     handPose?: SimulatorHandPose;
@@ -5938,6 +6127,9 @@ declare class SimulatorHands {
     handPosePanelElement?: SimulatorHandPoseHTMLElement;
     input: Input;
     loader: GLTFLoader;
+    private physics?;
+    private camera?;
+    private simulatorOptions?;
     private leftXRHand;
     private rightXRHand;
     private leftHandRawTargetJoints?;
@@ -5946,8 +6138,11 @@ declare class SimulatorHands {
     /**
      * Initialize Simulator Hands.
      */
-    init({ input }: {
+    init({ input, physics, camera, simulatorOptions, }: {
         input: Input;
+        physics?: SimulatorPhysics;
+        camera?: THREE.Camera;
+        simulatorOptions?: SimulatorOptions;
     }): Promise<void>;
     loadMeshes(): Promise<[void, void]>;
     private loadHandMesh;
@@ -5960,6 +6155,7 @@ declare class SimulatorHands {
     setLeftHandJoints(joints: DeepReadonly<SimulatorHandPoseJoints>): void;
     setRightHandJoints(joints: DeepReadonly<SimulatorHandPoseJoints>): void;
     update(): void;
+    private constrainHand;
     lerpLeftHandPose(): void;
     lerpRightHandPose(): void;
     syncHandJoints(): void;
@@ -5975,13 +6171,26 @@ declare class SimulatorHands {
     onHandednessChanged?: (handedness: 'left' | 'right') => void;
 }
 
+type PathfindingNode = ReturnType<Pathfinding['getClosestNode']>;
+type PathfindingZone = {
+    groups: PathfindingNode[][];
+    vertices: THREE.Vector3[];
+};
 interface SimulatorNavMeshPath {
     target: THREE.Vector3;
     path: THREE.Vector3[];
 }
+interface PreparedSimulatorNavMesh {
+    enabled: boolean;
+    eyeHeight: number;
+    pathfinding?: Pathfinding;
+    zone?: PathfindingZone;
+    debugGeometry?: THREE.BufferGeometry;
+}
 declare class SimulatorNavMesh {
     enabled: boolean;
     ready: boolean;
+    readonly debugVisualization: THREE.Group<THREE.Object3DEventMap>;
     private Pathfinding?;
     private pathfinding?;
     private zone?;
@@ -5989,9 +6198,15 @@ declare class SimulatorNavMesh {
     private groupId;
     private currentNode;
     private eyeHeight;
+    private debugVisualizationVisible;
+    constructor();
     get constrained(): boolean;
-    init(options: SimulatorOptions): Promise<void>;
-    setEnvironment(environment: SimulatorEnvironment | null, options: SimulatorOptions): Promise<void>;
+    get debugVisualizationsVisible(): boolean;
+    showDebugVisualizations(visible?: boolean): void;
+    prepareEnvironment(manifest: ResolvedSimulatorSceneManifest, options: SimulatorOptions): Promise<PreparedSimulatorNavMesh>;
+    commitEnvironment(prepared: PreparedSimulatorNavMesh): void;
+    dispose(): void;
+    private setDebugGeometry;
     setGeometry(geometry: THREE.BufferGeometry): Promise<void>;
     applyUserMovement(camera: THREE.Camera, desiredCameraPosition: THREE.Vector3): void;
     findPathTo(startCameraPosition: THREE.Vector3, targetGroundPosition: THREE.Vector3): THREE.Vector3[] | null;
@@ -6040,6 +6255,7 @@ declare class SimulatorControlMode {
     onPointerDown(_: MouseEvent): void;
     onPointerUp(_: MouseEvent): void;
     onPointerMove(_: MouseEvent): void;
+    onWheel(_: WheelEvent): boolean;
     onKeyDown(event: KeyboardEvent): void;
     onModeActivated(): void;
     onModeDeactivated(): void;
@@ -6063,15 +6279,6 @@ declare class SimulatorControlMode {
     disableSimulatorHands(): void;
 }
 
-declare class SimulatorScene extends THREE.Scene {
-    gltf?: GLTF;
-    constructor();
-    init(simulatorOptions: SimulatorOptions): Promise<void>;
-    setEnvironment(path: string | null, initialPosition: THREE.Vector3): Promise<void>;
-    addLights(): void;
-    loadGLTF(path: string, initialPosition: THREE.Vector3): Promise<unknown>;
-}
-
 declare class SimulatorInterface {
     private elements;
     private interfaceVisible;
@@ -6080,8 +6287,8 @@ declare class SimulatorInterface {
     /**
      * Initialize the simulator interface.
      */
-    init(simulatorOptions: SimulatorOptions, simulatorControls: SimulatorControls, simulatorHands: SimulatorHands, input?: Input, simulatorScene?: SimulatorScene, simulatorNavMesh?: SimulatorNavMesh): void;
-    createSimulatorSettingsPanel(simulatorOptions: SimulatorOptions, simulatorControls: SimulatorControls, simulatorScene: SimulatorScene, simulatorNavMesh?: SimulatorNavMesh): void;
+    init(simulatorOptions: SimulatorOptions, simulatorControls: SimulatorControls, simulatorHands: SimulatorHands, input?: Input, setEnvironment?: (environment: SimulatorEnvironment) => Promise<void>, handPhysicsAvailable?: boolean): void;
+    createSimulatorSettingsPanel(simulatorOptions: SimulatorOptions, simulatorControls: SimulatorControls, setEnvironment: (environment: SimulatorEnvironment) => Promise<void>, handPhysicsAvailable: boolean): void;
     showInstructions(simulatorOptions: SimulatorOptions): void;
     showGeminiLivePanel(simulatorOptions: SimulatorOptions): void;
     createHandPosePanel(simulatorOptions: SimulatorOptions, simulatorHands: SimulatorHands): void;
@@ -6100,6 +6307,8 @@ interface ISimulatorSettingsPanelElement extends HTMLElement {
     activeEnvironmentIndex: number;
     simulatorMode: SimulatorMode;
     instructionsEnabled?: boolean;
+    handPhysicsAvailable: boolean;
+    handPhysicsEnabled: boolean;
 }
 
 declare class SimulatorControls {
@@ -6142,6 +6351,7 @@ declare class SimulatorControls {
     onPointerMove: (event: MouseEvent) => void;
     onPointerDown: (event: MouseEvent) => void;
     onPointerUp: (event: MouseEvent) => void;
+    onWheel: (event: WheelEvent) => void;
     onKeyDown: (event: KeyboardEvent) => void;
     onKeyUp: (event: KeyboardEvent) => void;
     onBlur: () => void;
@@ -6156,6 +6366,18 @@ declare class SimulatorDepthMaterial extends THREE.MeshBasicMaterial {
         fragmentShader: string;
         uniforms: object;
     }): void;
+}
+
+declare class SimulatorScene extends THREE.Scene {
+    gltf?: GLTF;
+    environmentRoot?: THREE.Group;
+    constructor();
+    createEnvironmentRoot(manifest: ResolvedSimulatorSceneManifest): {
+        root: THREE.Group<THREE.Object3DEventMap>;
+        objects: THREE.Group<THREE.Object3DEventMap>;
+    };
+    commitEnvironment(root: THREE.Group, gltf?: GLTF): THREE.Group<THREE.Object3DEventMap> | undefined;
+    clearEnvironment(): void;
 }
 
 declare class SimulatorDepth {
@@ -6230,6 +6452,154 @@ declare class SimulatorUser extends Script {
 }
 
 /**
+ * A mesh injected into the {@link MeshDetector} by the desktop simulator.
+ *
+ * The real WebXR Mesh Detection API only produces meshes from
+ * `frame.detectedMeshes`, which the simulator never provides. This is the
+ * mesh-detection analog of {@link SimulatorPlane}: the simulator extracts the
+ * ground-truth geometry of the loaded environment and feeds it to the
+ * `MeshDetector` via `setSimulatorMeshes()`.
+ */
+interface SimulatorMesh {
+    /** Vertex positions as flat xyz triples, in world space. */
+    vertices: Float32Array;
+    /** Triangle indices into {@link vertices}. */
+    indices: Uint32Array;
+    /**
+     * Timestamp of the last geometry change, analogous to `XRMesh.lastChangedTime`.
+     * Simulator meshes are static, so this is typically 0.
+     */
+    lastChangedTime: number;
+    /**
+     * Optional semantic label (e.g. 'floor', 'ceiling', 'wall'). When it matches
+     * one of the detector's debug materials it is colored accordingly; otherwise
+     * the fallback debug material is used.
+     */
+    semanticLabel?: string;
+    /**
+     * Optional world-space origin. Defaults to the identity. When {@link vertices}
+     * are already baked into world space this should be left undefined.
+     */
+    position?: THREE.Vector3;
+    /** Optional world-space orientation. Defaults to the identity. */
+    quaternion?: THREE.Quaternion;
+    /** Internal simulator object id used to keep dynamic mesh poses synchronized. */
+    simulatorObjectId?: string;
+}
+
+declare class DetectedMesh extends THREE.Mesh {
+    private RAPIER?;
+    private rigidBody?;
+    private collider?;
+    private blendedWorld?;
+    private lastChangedTime;
+    semanticLabel?: string;
+    get getRigidBody(): RAPIER_NS.RigidBody | undefined;
+    constructor(mesh: XRMesh | SimulatorMesh, material: THREE.Material);
+    initRapierPhysics(RAPIER: typeof RAPIER_NS, blendedWorld: RAPIER_NS.World): void;
+    updateVertices(mesh: XRMesh): void;
+    dispose(): void;
+}
+
+interface SimulatorObject {
+    id: string;
+    object: THREE.Object3D;
+    definition: SimulatorObjectDefinition;
+}
+/** Mutable fields on an existing simulator object. Asset ownership and IDs
+ * remain stable; remove and re-add an object to change either of those. */
+interface SimulatorObjectUpdate {
+    id: string;
+    position?: SimulatorVector3Tuple;
+    quaternion?: SimulatorQuaternionTuple;
+    scale?: SimulatorVector3Tuple;
+    visible?: boolean;
+    detectObject?: boolean;
+    /** Use null to clear an existing semantic label. */
+    label?: string | null;
+    data?: unknown;
+    physics?: SimulatorPhysicsMode;
+}
+/** @internal */
+interface SimulatorObjectRecord extends SimulatorObject {
+    rigidBody?: RAPIER_NS.RigidBody;
+    detectedMesh?: DetectedMesh;
+    physicsGeometry?: THREE.BufferGeometry;
+    ownsObject: boolean;
+    preserveWorldTransform: boolean;
+}
+/** @internal */
+interface PreparedSimulatorObjects {
+    records: SimulatorObjectRecord[];
+    nextId: number;
+}
+interface SimulatorObjects {
+    addObjects(definitions: SimulatorObjectDefinition[], options?: {
+        baseUrl?: string;
+    }): Promise<SimulatorObject[]>;
+    get(ids?: string[]): SimulatorObject[];
+    updateObjects(updates: SimulatorObjectUpdate[]): Promise<SimulatorObject[]>;
+    removeObjects(ids: string[]): this;
+    clear(): this;
+}
+/** @internal */
+declare class SimulatorObjectsManager implements SimulatorObjects {
+    onChanged?: () => void;
+    private records;
+    private nextId;
+    private group?;
+    private physics?;
+    private renderer?;
+    init(renderer: THREE.WebGLRenderer, physics?: SimulatorPhysics): void;
+    prepareObjects(definitions: SimulatorObjectDefinition[], baseUrl?: string, { replaceExisting }?: {
+        replaceExisting?: boolean;
+    }): Promise<PreparedSimulatorObjects>;
+    activatePrepared(prepared: PreparedSimulatorObjects, targetGroup: THREE.Group): SimulatorObject[];
+    setEnvironmentGroup(group: THREE.Group): void;
+    addObjects(definitions: SimulatorObjectDefinition[], { baseUrl }?: {
+        baseUrl?: string;
+    }): Promise<SimulatorObject[]>;
+    get(ids?: string[]): SimulatorObject[];
+    updateObjects(updates: SimulatorObjectUpdate[]): Promise<SimulatorObject[]>;
+    private validateUpdate;
+    private applyUpdate;
+    getMeshRecords(): SimulatorObject[];
+    setDetectedMeshes(meshes: Map<string, DetectedMesh>): void;
+    removeObjects(ids: string[]): this;
+    private removeRecords;
+    clear(): this;
+    reset(): void;
+    physicsStep(): void;
+    private createPhysics;
+    private removePhysics;
+    private createBodyDesc;
+    private disposeRecord;
+    dispose(): void;
+}
+
+type SimulatorPlaneType = 'horizontal' | 'vertical';
+interface SimulatorPlane {
+    /** 'horizontal' or 'vertical' */
+    type: SimulatorPlaneType;
+    /** Optional semantic label for the plane (e.g., 'table', 'floor') */
+    label?: string;
+    /** Total surface area in square meters */
+    area: number;
+    /** * The center point of the plane in World Space.
+     * This corresponds to the origin of the plane's local coordinate system.
+     */
+    position: THREE.Vector3;
+    /** * Rotation of the plane in World Space.
+     * Applying this rotation to (0,1,0) yields the plane's normal.
+     */
+    quaternion: THREE.Quaternion;
+    /** * The boundary points of the plane in Local Space (X, Z).
+     * Since +Y is normal, these points lie on the flat surface.
+     */
+    polygon: THREE.Vector2[];
+}
+
+/**
  * Represents a single detected object in the XR environment and holds metadata
  * about the object's properties. Note: 3D object position is stored in the
  * position property of `Three.Object3D`.
@@ -6274,6 +6644,15 @@ interface CameraSnapshot {
     base64?: string;
     imageData?: ImageData;
 }
+interface SimulatorDetectedObjectInput<T = unknown> {
+    label: string;
+    position: THREE.Vector3;
+    boundingBox: THREE.Box2;
+    data?: T;
+}
+interface SimulatorObjectDetectionSource {
+    detect(): SimulatorDetectedObjectInput[];
+}
 /**
  * Detects objects in the user's environment using a specified backend.
  * It queries an AI model with the device camera feed and returns located
@@ -6298,6 +6677,7 @@ declare class ObjectDetector extends Script {
     private currentDetectionPromise;
     private lastContinuousDetectionStartedAtMs;
     private disposed;
+    private simulatorSource?;
     private _debugVisualsGroup?;
     /**
      * The latest detected objects.
@@ -6361,6 +6741,8 @@ declare class ObjectDetector extends Script {
      * array of detected `DetectedObject` instances.
      */
     runDetection<T = null>(): Promise<DetectedObject<T>[]>;
+    /** Installs or removes the desktop simulator's ground-truth detector. */
+    setSimulatorSource(source?: SimulatorObjectDetectionSource): this;
     private runDetectionInternal;
     private getDetectorContext;
     private getOrCreateDetectorBackend;
@@ -6386,28 +6768,6 @@ declare class ObjectDetector extends Script {
      */
     showDebugVisualizations(visible?: boolean): void;
     dispose(): void;
-}
-
-type SimulatorPlaneType = 'horizontal' | 'vertical';
-interface SimulatorPlane {
-    /** 'horizontal' or 'vertical' */
-    type: SimulatorPlaneType;
-    /** Optional semantic label for the plane (e.g., 'table', 'floor') */
-    label?: string;
-    /** Total surface area in square meters */
-    area: number;
-    /** * The center point of the plane in World Space.
-     * This corresponds to the origin of the plane's local coordinate system.
-     */
-    position: THREE.Vector3;
-    /** * Rotation of the plane in World Space.
-     * Applying this rotation to (0,1,0) yields the plane's normal.
-     */
-    quaternion: THREE.Quaternion;
-    /** * The boundary points of the plane in Local Space (X, Z).
-     * Since +Y is normal, these points lie on the flat surface.
-     */
-    polygon: THREE.Vector2[];
 }
 
 /**
@@ -6514,54 +6874,7 @@ declare class PlaneDetector extends Script {
     showDebugVisualizations(visible?: boolean): void;
     private _addSimulatorPlaneMesh;
     setSimulatorPlanes(planes: SimulatorPlane[]): void;
-    dispose(): void;
-}
-
-/**
- * A mesh injected into the {@link MeshDetector} by the desktop simulator.
- *
- * The real WebXR Mesh Detection API only produces meshes from
- * `frame.detectedMeshes`, which the simulator never provides. This is the
- * mesh-detection analog of {@link SimulatorPlane}: the simulator extracts the
- * ground-truth geometry of the loaded environment and feeds it to the
- * `MeshDetector` via `setSimulatorMeshes()`.
- */
-interface SimulatorMesh {
-    /** Vertex positions as flat xyz triples, in world space. */
-    vertices: Float32Array;
-    /** Triangle indices into {@link vertices}. */
-    indices: Uint32Array;
-    /**
-     * Timestamp of the last geometry change, analogous to `XRMesh.lastChangedTime`.
-     * Simulator meshes are static, so this is typically 0.
-     */
-    lastChangedTime: number;
-    /**
-     * Optional semantic label (e.g. 'floor', 'ceiling', 'wall'). When it matches
-     * one of the detector's debug materials it is colored accordingly; otherwise
-     * the fallback debug material is used.
-     */
-    semanticLabel?: string;
-    /**
-     * Optional world-space origin. Defaults to the identity. When {@link vertices}
-     * are already baked into world space this should be left undefined.
-     */
-    position?: THREE.Vector3;
-    /** Optional world-space orientation. Defaults to the identity. */
-    quaternion?: THREE.Quaternion;
-}
-
-declare class DetectedMesh extends THREE.Mesh {
-    private RAPIER?;
-    private rigidBody?;
-    private collider?;
-    private blendedWorld?;
-    private lastChangedTime;
-    semanticLabel?: string;
-    get getRigidBody(): RAPIER_NS.RigidBody | undefined;
-    constructor(mesh: XRMesh | SimulatorMesh, material: THREE.Material);
-    initRapierPhysics(RAPIER: typeof RAPIER_NS, blendedWorld: RAPIER_NS.World): void;
-    updateVertices(mesh: XRMesh): void;
+    clearSimulatorPlanes(): void;
     dispose(): void;
 }
 
@@ -6599,7 +6912,8 @@ declare class MeshDetector extends Script {
      * Injects a set of meshes from the desktop simulator, bypassing the WebXR
      * `frame.detectedMeshes` path. Mirrors `PlaneDetector.setSimulatorPlanes`.
      */
-    setSimulatorMeshes(meshes: SimulatorMesh[]): void;
+    setSimulatorMeshes(meshes: SimulatorMesh[]): DetectedMesh[];
+    clearSimulatorMeshes(): void;
     dispose(): void;
     private createMesh;
     private updateMeshPose;
@@ -7268,16 +7582,20 @@ declare class World extends Script {
     dispose(): void;
 }
 
+/** World-sensing adapters for the simulator environment. */
 declare class SimulatorWorld {
     private options;
     private world;
-    init(options: Options, world: World, simulatorScene?: SimulatorScene): Promise<void>;
-    /**
-     * Bakes every sub-mesh of the environment into world-space
-     * {@link SimulatorMesh} objects and injects them into the MeshDetector.
-     */
-    private loadMeshesFromScene;
-    private loadPlanes;
+    private simulatorPlanes?;
+    init(options: Options, world: World): Promise<void>;
+    preparePlanes(manifest: ResolvedSimulatorSceneManifest): Promise<SimulatorPlane[] | undefined>;
+    commitPlanes(planes?: SimulatorPlane[]): void;
+    suspendSimulatorSensing(): void;
+    restoreSimulatorPlanes(): void;
+    commitMeshes(room: THREE.Object3D | undefined, objects: SimulatorObjectsManager): void;
+    /** Preserves the original simulator behavior of exposing each room submesh. */
+    private createRoomMeshSources;
+    private createMeshSource;
 }
 
 declare class Simulator extends Script {
@@ -7298,6 +7616,10 @@ declare class Simulator extends Script {
     simulatorScene: SimulatorScene;
     simulatorWorld: SimulatorWorld;
     navMesh: SimulatorNavMesh;
+    private simulatorObjects;
+    objects: SimulatorObjects;
+    private environment?;
+    private simulatorPhysics?;
     depth: SimulatorDepth;
     simulatorControllerState: SimulatorControllerState;
     hands: SimulatorHands;
@@ -7321,6 +7643,9 @@ declare class Simulator extends Script {
     private renderSimulatorSceneToCanvasBound;
     private sparkRenderer?;
     private registry?;
+    private world?;
+    private objectDetectionSource?;
+    private useSimulatorObjectDetection;
     constructor(renderMainScene: (cameraOverride?: THREE.Camera) => void);
     init({ simulatorOptions, input, timer, camera, renderer, scene, registry, options, depth, world, }: {
         simulatorOptions: SimulatorOptions;
@@ -7334,6 +7659,18 @@ declare class Simulator extends Script {
         depth: Depth;
         world: World;
     }): Promise<void>;
+    /**
+     * Loads and activates a simulator environment at runtime.
+     */
+    setEnvironment(manifestPath: string): Promise<void>;
+    setEnvironment(name: string, manifestPath: string): Promise<void>;
+    private activateEnvironment;
+    get activeEnvironment(): SimulatorEnvironment | undefined;
+    get activeEnvironmentManifest(): ResolvedSimulatorSceneManifest | undefined;
+    physicsStep(): void;
+    onXRSessionStarted(): void;
+    onXRSessionEnded(): void;
+    dispose(): void;
     simulatorUpdate(): void;
     setStereoRenderMode(mode: SimulatorRenderMode): void;
     setupStereoCameras(camera: THREE.Camera): void;
@@ -7343,6 +7680,7 @@ declare class Simulator extends Script {
     renderScene(): void;
     renderSimulatorScene(): void;
     private renderSimulatorSceneToCanvas;
+    private setVideoPath;
 }
 
 interface Draggable extends THREE.Object3D {
@@ -8532,6 +8870,7 @@ declare class Core {
      * A timer for tracking time deltas. Call timer.getDelta() or getDeltaTime().
      */
     timer: THREE.Timer;
+    private simulationTimer;
     /** Manages hand, mouse, gaze inputs. */
     input: Input;
     /** The main camera for rendering. */
@@ -8597,6 +8936,7 @@ declare class Core {
      * user, UI, AI, and input managers.
      */
     constructor();
+    dispose(): void;
     /**
      * Initializes the Core system with a given set of options. This includes
      * setting up the renderer, enabling features like controllers, depth
@@ -8605,6 +8945,7 @@ declare class Core {
      * session.
      */
     init(options?: Options): Promise<void>;
+    private initialize;
     /**
      * The main update loop, called every frame by the renderer. It orchestrates
      * all per-frame updates for subsystems and scripts.
@@ -9054,6 +9395,31 @@ declare class HeuristicGestureRecognizer implements GestureRecognizer {
     private registerBuiltInGestures;
 }
 
+type HeuristicHeadGestureRecognizerOptions = {
+    minimumGestureDurationMs: number;
+    maximumGestureDurationMs: number;
+    maximumOffAxisRatio: number;
+    quietPrefixDurationMs: number;
+    detectionHoldMs: number;
+    returnToleranceFactor: number;
+    smoothingTimeConstantMs: number;
+    minimumPathEfficiency: number;
+    minimumPeakAngularSpeed: number;
+};
+
+declare class HeuristicHeadGestureRecognizer implements HeadGestureRecognizer {
+    private gestures;
+    readonly options: HeuristicHeadGestureRecognizerOptions;
+    constructor(initBuiltInGestures?: boolean, options?: DeepReadonly<Partial<HeuristicHeadGestureRecognizerOptions>>);
+    registerGesture(name: string, detector: HeuristicHeadGestureDetector, config?: DeepReadonly<Partial<HeadGestureConfiguration>>): this;
+    unregisterGesture(name: string): this;
+    getGestureConfigurations(): Record<string, HeadGestureConfiguration>;
+    setGestureConfig(name: string, config: HeadGestureConfiguration): this;
+    recognize(context: HeadGestureContext): HeadGestureScoreMap;
+    private registerBuiltInGestures;
+    private detectDirection;
+}
+
 declare class SetSimulatorEnvironmentEvent extends Event {
     environmentIndex: number;
     static type: string;
@@ -9075,6 +9441,12 @@ declare class SetSimulatorModeEvent extends Event {
 declare class ShowSimulatorInstructionsEvent extends Event {
     static type: string;
     constructor();
+}
+
+declare class SetSimulatorHandPhysicsEvent extends Event {
+    enabled: boolean;
+    static type: string;
+    constructor(enabled: boolean);
 }
 
 declare function applySimulatorHandPoseRotationConstraints(rotations: SimulatorHandPoseRotations): SimulatorHandPoseRotations;
@@ -9913,6 +10285,9 @@ type ModelLoaderLoadOptions = ModelLoaderLoadGLTFOptions & {
  */
 declare class ModelLoader {
     private manager;
+    private gltfLoader?;
+    private ktx2Loader?;
+    private ktxRenderer?;
     /**
      * Creates an instance of ModelLoader.
      * @param manager - The
@@ -9920,6 +10295,7 @@ declare class ModelLoader {
      * required for KTX2 texture support.
      */
     constructor(manager?: THREE.LoadingManager);
+    private getGLTFLoader;
     /**
      * Loads a model based on its file extension. Supports .gltf, .glb,
      * .ply, .spz, .splat, and .ksplat.
@@ -10152,5 +10528,650 @@ declare class VideoFileStream extends VideoStream<VideoFileStreamDetails> {
     setSource(videoFile: string | File): Promise<void>;
 }
 
-export { AI, AIOptions, AVERAGE_IPD_METERS, ActiveControllers, Agent, AnimatableNumber, AudioListener, AudioPlayer, BACK, BackgroundMusic, CategoryVolumes, Col, Context, ContextOptions, Core, CoreSound, DEFAULT_DEVICE_CAMERA_HEIGHT, DEFAULT_DEVICE_CAMERA_WIDTH, DEFAULT_RGB_TO_DEPTH_PARAMS, DEVICE_CAMERA_PARAMETERS, DOWN, Depth, DepthMesh, DepthMeshOptions, DepthOptions, DepthTextures, DetectedBodyPose, DetectedFace, DetectedMesh, DetectedObject, DetectedPlane, DeviceCameraOptions, DragManager, DragMode, ExitButton, FINGER_ORDER, FORWARD, FaceLandmarkName, FaceRecognizer, FacesOptions, FreestandingSlider, GEMINI_DEFAULT_FLASH_MODEL, GEMINI_DEFAULT_IMAGE_MODEL, GEMINI_DEFAULT_LIVE_MODEL, GamepadBindings, GamepadController, GazeController, Gemini, GeminiOptions, GenerateSkyboxTool, GestureRecognition, GestureRecognitionOptions, GetWeatherTool, Grid, HAND_BONE_IDX_CONNECTION_MAP, HAND_INDEX_TO_LABEL, HAND_JOINT_COUNT, HAND_JOINT_IDX_CONNECTION_MAP, HAND_JOINT_NAMES, Handedness, Hands, HandsOptions, HeuristicGestureRecognizer, HorizontalPager, HumanRecognizer, HumansOptions, IconButton, IconView, ImageView, Input, InputOptions, Keycodes, LEFT, LEFT_VIEW_ONLY_LAYER, LabelView, Lighting, LightingOptions, LoadingSpinnerManager, MaterialSymbolsView, MediaPipeHandContext, MediaPipeHandPoseEstimator, MeshDetectionOptions, MeshDetector, MeshScript, ModelLoader, ModelViewer, MouseController, NUM_HANDS, OCCLUDABLE_ITEMS_LAYER, ObjectDetector, ObjectsOptions, OcclusionPass, OcclusionUtils, OpenAI, OpenAIOptions, Options, Orbiter, PageIndicator, Pager, PagerState, Panel, PanelMesh, Physics, PhysicsOptions, PinchOnButtonAction, PlaneDetector, PlanesOptions, PoseJointName, RIGHT, RIGHT_VIEW_ONLY_LAYER, Raycaster, Registry, Reticle, ReticleOptions, Reticles, RotationRaycastMesh, Row, SIMULATOR_HAND_COMMON_BIOMECHANICAL_CONSTRAINTS_DEGREES, SIMULATOR_HAND_POSE_NAMES, SIMULATOR_HAND_POSE_ROTATIONS, SOUND_PRESETS, SceneDetector, SceneOptions, SceneSetOfMarkOptions, SceneVisibilityOptions, ScreenshotSynthesizer, Script, ScriptMixin, ScriptsManager, ScriptsManagerEventType, ScrollingTroikaTextView, SegmentCategory, SegmentationOptions, Segmenter, SetSimulatorEnvironmentEvent, SetSimulatorModeEvent, ShowHandsAction, ShowSimulatorInstructionsEvent, Simulator, SimulatorCamera, SimulatorControlMode, SimulatorControllerState, SimulatorControls, SimulatorDepth, SimulatorDepthMaterial, SimulatorHandPose, SimulatorHandPoseChangeRequestEvent, SimulatorHands, SimulatorInterface, SimulatorMediaDeviceInfo, SimulatorMode, SimulatorNavMesh, SimulatorOptions, SimulatorPointerLockController, SimulatorRenderMode, SimulatorScene, SimulatorUser, SimulatorUserAction, SketchPanel, SkyboxAgent, SoundOptions, SoundSynthesizer, SparkRendererHolder, SpatialAudio, SpatialPanel, SpeechRecognizer, SpeechRecognizerOptions, SpeechSynthesizer, SpeechSynthesizerOptions, SplatAnchor, StreamState, StrokeRecognizer, StylizedFace, TensorFlowHandPoseEstimator, TextButton, TextScrollerState, TextView, Tool, UI, UIKitOptions, UI_OVERLAY_LAYER, UP, UX, User, VIEW_DEPTH_GAP, VerticalPager, VideoFileStream, VideoStream, VideoView, View, VolumeCategory, WaitFrame, WalkTowardsPanelAction, WebXRHandContext, WebXRHandPoseEstimator, World, WorldOptions, XRButton, XRDeviceCamera, XREffects, XRPass, XRTransitionOptions, XR_BLOCKS_ASSETS_PATH, ZERO_VECTOR3, ZERO_VISEME, _getBvhImportStatus, add, ai, applyBVH, applySimulatorHandPoseRotationConstraints, average, callInitWithDependencyInjection, camera, clamp, clamp01, clampRotationToAngle, context, core, cropImage, depth, disposeBVH, enableAcceleratedRaycast, estimateHandScale, extractYaw, getAdjacentFingerSpreads, getBoneVectors, getCameraParametersSnapshot, getColorHex, getDeltaTime, getDeviceCameraClipFromView, getDeviceCameraWorldFromClip, getDeviceCameraWorldFromView, getElapsedTime, getFingerBendAngles, getFingerCurl, getFingerDirection, getFingerJoint, getFingerPalmAlignment, getFingerSpread, getFingerStraightness, getFingertipDistance, getFingertipPalmDistance, getPalmNormal, getPalmPose, getPalmRight, getPalmUp, getPalmWidth, getRelativeBoneAngles, getThumbBendAngles, getThumbCurl, getThumbDirection, getThumbOpposition, getThumbStraightness, getThumbVerticalDirection, getUrlParamBool, getUrlParamFloat, getUrlParamInt, getUrlParameter, getVec4ByColorString, getXrCameraLeft, getXrCameraRight, init, initScript, input, intrinsicsToProjectionMatrix, isBVHReady, isDeviceCameraPoseAvailable, lerp, loadStereoImageAsTextures, loadingSpinnerManager, lookAtRotation, objectIsDescendantOf, parseBase64DataURL, parseSimulatorHandPoseRotations, placeObjectAtIntersectionFacingTarget, print, resolveSimulatorHandPoseRotations, resolveSimulatorRotationsFromKeypoints, scene, showOnlyInLeftEye, showOnlyInRightEye, showReticleOnDepthMesh, sound, timer, transformRgbUvToWorld, traverseUtil, uninitScript, urlParams, user, visualizeDepth, visualizeDepthMap, world, xrDepthMeshOptions, xrDepthMeshPhysicsOptions, xrDepthMeshVisualizationOptions, xrDeviceCameraEnvironmentContinuousOptions, xrDeviceCameraEnvironmentOptions, xrDeviceCameraUserContinuousOptions, xrDeviceCameraUserOptions };
-export type { AIModel, AgentLifecycleCallbacks, AudioListenerOptions, AudioPlayerOptions, AutomationModeOptions, CameraParametersSnapshot, CameraSnapshot, ColOptions, Constructor, DeepPartial, DeepReadonly, DepthArray, DeviceCameraParameters, DigitName, Draggable, FaceBlendshape, FaceLandmark, FingerName, FormFactor, GLTFData, GamepadAction, GeminiQueryInput, GestureConfiguration, GestureDetectionResult, GestureEvent, GestureEventDetail, GestureEventType, GestureHandedness, GestureRecognizer, GestureScoreMap, GetWeatherArgs, GridOptions, HandContext, HandLabel, HasDraggingMode, HasIgnoreReticleRaycast, HeuristicGestureDetector, ISimulatorSettingsPanelElement, IconButtonOptions, IconViewOptions, ImageViewOptions, Injectable, InjectableConstructor, JointName, JointPositions, KeyEvent, KeysJson, LabelViewOptions, LipMetrics, LiveSessionState, MaterialSymbolsViewOptions, MaybeHasIgnoreReticleRaycast, MediaOrSimulatorMediaDeviceInfo, MediaPipeHandLandmark, ModelClass, ModelLoaderLoadGLTFOptions, ModelLoaderLoadOptions, ModelOptions, NormalizedDetectedObject, ObjectGrabEvent, ObjectTouchEvent, OrbiterOptions, OrbiterPosition, PagerOptions, PalmPose, PanelFadeState, PanelOptions, PlaySoundOptions, PoseEstimator, PoseLandmark, QuatTuple, RAPIERCompat, RgbToDepthParams, RowOptions, SceneContextDetectionOptions, SceneContextDetectionResult, ScriptsManagerEventMap, ScrollingTroikaTextViewOptions, SegmentationMask, SelectEvent, SemanticBounds, SemanticMetadata, SemanticNode, SemanticSource, SemanticTree, SemanticViewData, SemanticViewOcclusion, SetOfMark, SetOfMarkContext, Shader, ShaderUniforms, SimulatorCustomInstruction, SimulatorEnvironment, SimulatorHandJointRotationArray, SimulatorHandPoseHTMLElement, SimulatorHandPoseJoints, SimulatorHandPoseRotationConstraintsDegrees, SimulatorHandPoseRotationRangeDegrees, SimulatorHandPoseRotations, SimulatorMesh, SimulatorNavMeshPath, SimulatorPlane, SimulatorPlaneType, SpatialPanelOptions, SplatData, StrokeEventMap, StylizedFaceOptions, TextButtonOptions, TextViewOptions, ToolCall, ToolOptions, ToolResult, ToolSchema, UIJsonNode, UIJsonNodeOptions, Vec2Tuple, Vec3Tuple, VideoFileStreamOptions, VideoStreamDetails, VideoStreamEventMap, VideoStreamGetSnapshotBase64Options, VideoStreamGetSnapshotBlobOptions, VideoStreamGetSnapshotImageDataOptions, VideoStreamGetSnapshotOptions, VideoStreamGetSnapshotTextureOptions, VideoStreamOptions, VideoViewOptions, ViewOptions, VisemeWeights, VisibleObjectsContext, WeatherData, WebXRJointRotations };
+type sdk_AI = AI;
+declare const sdk_AI: typeof AI;
+type sdk_AIModel = AIModel;
+type sdk_AIOptions = AIOptions;
+declare const sdk_AIOptions: typeof AIOptions;
+declare const sdk_AVERAGE_IPD_METERS: typeof AVERAGE_IPD_METERS;
+type sdk_ActiveControllers = ActiveControllers;
+declare const sdk_ActiveControllers: typeof ActiveControllers;
+type sdk_Agent = Agent;
+declare const sdk_Agent: typeof Agent;
+type sdk_AgentLifecycleCallbacks = AgentLifecycleCallbacks;
+type sdk_AnimatableNumber = AnimatableNumber;
+declare const sdk_AnimatableNumber: typeof AnimatableNumber;
+type sdk_AudioListener = AudioListener;
+declare const sdk_AudioListener: typeof AudioListener;
+type sdk_AudioListenerOptions = AudioListenerOptions;
+type sdk_AudioPlayer = AudioPlayer;
+declare const sdk_AudioPlayer: typeof AudioPlayer;
+type sdk_AudioPlayerOptions = AudioPlayerOptions;
+type sdk_AutomationModeOptions = AutomationModeOptions;
+declare const sdk_BACK: typeof BACK;
+type sdk_BackgroundMusic = BackgroundMusic;
+declare const sdk_BackgroundMusic: typeof BackgroundMusic;
+type sdk_CameraParametersSnapshot = CameraParametersSnapshot;
+type sdk_CameraSnapshot = CameraSnapshot;
+type sdk_CategoryVolumes = CategoryVolumes;
+declare const sdk_CategoryVolumes: typeof CategoryVolumes;
+type sdk_Col = Col;
+declare const sdk_Col: typeof Col;
+type sdk_ColOptions = ColOptions;
+type sdk_Constructor<T = object> = Constructor<T>;
+type sdk_Context = Context;
+declare const sdk_Context: typeof Context;
+type sdk_ContextOptions = ContextOptions;
+declare const sdk_ContextOptions: typeof ContextOptions;
+type sdk_Core = Core;
+declare const sdk_Core: typeof Core;
+type sdk_CoreSound = CoreSound;
+declare const sdk_CoreSound: typeof CoreSound;
+declare const sdk_DEFAULT_DEVICE_CAMERA_HEIGHT: typeof DEFAULT_DEVICE_CAMERA_HEIGHT;
+declare const sdk_DEFAULT_DEVICE_CAMERA_WIDTH: typeof DEFAULT_DEVICE_CAMERA_WIDTH;
+declare const sdk_DEFAULT_RGB_TO_DEPTH_PARAMS: typeof DEFAULT_RGB_TO_DEPTH_PARAMS;
+declare const sdk_DEVICE_CAMERA_PARAMETERS: typeof DEVICE_CAMERA_PARAMETERS;
+declare const sdk_DOWN: typeof DOWN;
+type sdk_DeepPartial<T> = DeepPartial<T>;
+type sdk_DeepReadonly<T> = DeepReadonly<T>;
+type sdk_Depth = Depth;
+declare const sdk_Depth: typeof Depth;
+type sdk_DepthArray = DepthArray;
+type sdk_DepthMesh = DepthMesh;
+declare const sdk_DepthMesh: typeof DepthMesh;
+type sdk_DepthMeshOptions = DepthMeshOptions;
+declare const sdk_DepthMeshOptions: typeof DepthMeshOptions;
+type sdk_DepthOptions = DepthOptions;
+declare const sdk_DepthOptions: typeof DepthOptions;
+type sdk_DepthTextures = DepthTextures;
+declare const sdk_DepthTextures: typeof DepthTextures;
+type sdk_DetectedBodyPose = DetectedBodyPose;
+declare const sdk_DetectedBodyPose: typeof DetectedBodyPose;
+type sdk_DetectedFace = DetectedFace;
+declare const sdk_DetectedFace: typeof DetectedFace;
+type sdk_DetectedMesh = DetectedMesh;
+declare const sdk_DetectedMesh: typeof DetectedMesh;
+type sdk_DetectedObject<T> = DetectedObject<T>;
+declare const sdk_DetectedObject: typeof DetectedObject;
+type sdk_DetectedPlane = DetectedPlane;
+declare const sdk_DetectedPlane: typeof DetectedPlane;
+type sdk_DeviceCameraOptions = DeviceCameraOptions;
+declare const sdk_DeviceCameraOptions: typeof DeviceCameraOptions;
+type sdk_DeviceCameraParameters = DeviceCameraParameters;
+type sdk_DigitName = DigitName;
+type sdk_DragManager = DragManager;
+declare const sdk_DragManager: typeof DragManager;
+type sdk_DragMode = DragMode;
+declare const sdk_DragMode: typeof DragMode;
+type sdk_Draggable = Draggable;
+type sdk_ExitButton = ExitButton;
+declare const sdk_ExitButton: typeof ExitButton;
+declare const sdk_FINGER_ORDER: typeof FINGER_ORDER;
+declare const sdk_FORWARD: typeof FORWARD;
+type sdk_FaceBlendshape = FaceBlendshape;
+type sdk_FaceLandmark = FaceLandmark;
+type sdk_FaceLandmarkName = FaceLandmarkName;
+declare const sdk_FaceLandmarkName: typeof FaceLandmarkName;
+type sdk_FaceRecognizer = FaceRecognizer;
+declare const sdk_FaceRecognizer: typeof FaceRecognizer;
+type sdk_FacesOptions = FacesOptions;
+declare const sdk_FacesOptions: typeof FacesOptions;
+type sdk_FingerName = FingerName;
+type sdk_FormFactor = FormFactor;
+type sdk_FreestandingSlider = FreestandingSlider;
+declare const sdk_FreestandingSlider: typeof FreestandingSlider;
+declare const sdk_GEMINI_DEFAULT_FLASH_MODEL: typeof GEMINI_DEFAULT_FLASH_MODEL;
+declare const sdk_GEMINI_DEFAULT_IMAGE_MODEL: typeof GEMINI_DEFAULT_IMAGE_MODEL;
+declare const sdk_GEMINI_DEFAULT_LIVE_MODEL: typeof GEMINI_DEFAULT_LIVE_MODEL;
+type sdk_GLTFData = GLTFData;
+type sdk_GamepadAction = GamepadAction;
+type sdk_GamepadBindings = GamepadBindings;
+declare const sdk_GamepadBindings: typeof GamepadBindings;
+type sdk_GamepadController = GamepadController;
+declare const sdk_GamepadController: typeof GamepadController;
+type sdk_GazeController = GazeController;
+declare const sdk_GazeController: typeof GazeController;
+type sdk_Gemini = Gemini;
+declare const sdk_Gemini: typeof Gemini;
+type sdk_GeminiOptions = GeminiOptions;
+declare const sdk_GeminiOptions: typeof GeminiOptions;
+type sdk_GeminiQueryInput = GeminiQueryInput;
+type sdk_GenerateSkyboxTool = GenerateSkyboxTool;
+declare const sdk_GenerateSkyboxTool: typeof GenerateSkyboxTool;
+type sdk_GestureConfiguration = GestureConfiguration;
+type sdk_GestureDetectionResult = GestureDetectionResult;
+type sdk_GestureEvent = GestureEvent;
+type sdk_GestureEventDetail = GestureEventDetail;
+type sdk_GestureEventType = GestureEventType;
+type sdk_GestureHandedness = GestureHandedness;
+type sdk_GestureRecognition = GestureRecognition;
+declare const sdk_GestureRecognition: typeof GestureRecognition;
+type sdk_GestureRecognitionOptions = GestureRecognitionOptions;
+declare const sdk_GestureRecognitionOptions: typeof GestureRecognitionOptions;
+type sdk_GestureRecognizer = GestureRecognizer;
+type sdk_GestureScoreMap = GestureScoreMap;
+type sdk_GetWeatherArgs = GetWeatherArgs;
+type sdk_GetWeatherTool = GetWeatherTool;
+declare const sdk_GetWeatherTool: typeof GetWeatherTool;
+type sdk_Grid = Grid;
+declare const sdk_Grid: typeof Grid;
+type sdk_GridOptions = GridOptions;
+declare const sdk_HAND_BONE_IDX_CONNECTION_MAP: typeof HAND_BONE_IDX_CONNECTION_MAP;
+declare const sdk_HAND_INDEX_TO_LABEL: typeof HAND_INDEX_TO_LABEL;
+declare const sdk_HAND_JOINT_COUNT: typeof HAND_JOINT_COUNT;
+declare const sdk_HAND_JOINT_IDX_CONNECTION_MAP: typeof HAND_JOINT_IDX_CONNECTION_MAP;
+declare const sdk_HAND_JOINT_NAMES: typeof HAND_JOINT_NAMES;
+type sdk_HandContext = HandContext;
+type sdk_HandLabel = HandLabel;
+type sdk_Handedness = Handedness;
+declare const sdk_Handedness: typeof Handedness;
+type sdk_Hands = Hands;
+declare const sdk_Hands: typeof Hands;
+type sdk_HandsOptions = HandsOptions;
+declare const sdk_HandsOptions: typeof HandsOptions;
+type sdk_HasDraggingMode = HasDraggingMode;
+type sdk_HasIgnoreReticleRaycast = HasIgnoreReticleRaycast;
+type sdk_HeadGestureConfiguration = HeadGestureConfiguration;
+type sdk_HeadGestureContext = HeadGestureContext;
+type sdk_HeadGestureDetectionResult = HeadGestureDetectionResult;
+type sdk_HeadGestureEvent = HeadGestureEvent;
+type sdk_HeadGestureEventDetail = HeadGestureEventDetail;
+type sdk_HeadGestureEventMap = HeadGestureEventMap;
+type sdk_HeadGestureRecognition = HeadGestureRecognition;
+declare const sdk_HeadGestureRecognition: typeof HeadGestureRecognition;
+type sdk_HeadGestureRecognitionOptions = HeadGestureRecognitionOptions;
+declare const sdk_HeadGestureRecognitionOptions: typeof HeadGestureRecognitionOptions;
+type sdk_HeadGestureRecognizer = HeadGestureRecognizer;
+type sdk_HeadGestureScoreMap = HeadGestureScoreMap;
+type sdk_HeadPoseSample = HeadPoseSample;
+type sdk_HeuristicGestureDetector = HeuristicGestureDetector;
+type sdk_HeuristicGestureRecognizer = HeuristicGestureRecognizer;
+declare const sdk_HeuristicGestureRecognizer: typeof HeuristicGestureRecognizer;
+type sdk_HeuristicHeadGestureDetector = HeuristicHeadGestureDetector;
+type sdk_HeuristicHeadGestureRecognizer = HeuristicHeadGestureRecognizer;
+declare const sdk_HeuristicHeadGestureRecognizer: typeof HeuristicHeadGestureRecognizer;
+type sdk_HeuristicHeadGestureRecognizerOptions = HeuristicHeadGestureRecognizerOptions;
+type sdk_HorizontalPager = HorizontalPager;
+declare const sdk_HorizontalPager: typeof HorizontalPager;
+type sdk_HumanRecognizer = HumanRecognizer;
+declare const sdk_HumanRecognizer: typeof HumanRecognizer;
+type sdk_HumansOptions = HumansOptions;
+declare const sdk_HumansOptions: typeof HumansOptions;
+type sdk_ISimulatorSettingsPanelElement = ISimulatorSettingsPanelElement;
+type sdk_IconButton = IconButton;
+declare const sdk_IconButton: typeof IconButton;
+type sdk_IconButtonOptions = IconButtonOptions;
+type sdk_IconView = IconView;
+declare const sdk_IconView: typeof IconView;
+type sdk_IconViewOptions = IconViewOptions;
+type sdk_ImageView = ImageView;
+declare const sdk_ImageView: typeof ImageView;
+type sdk_ImageViewOptions = ImageViewOptions;
+type sdk_Injectable = Injectable;
+type sdk_InjectableConstructor = InjectableConstructor;
+type sdk_Input = Input;
+declare const sdk_Input: typeof Input;
+type sdk_InputOptions = InputOptions;
+declare const sdk_InputOptions: typeof InputOptions;
+type sdk_JointName = JointName;
+type sdk_JointPositions = JointPositions;
+type sdk_KeyEvent = KeyEvent;
+type sdk_Keycodes = Keycodes;
+declare const sdk_Keycodes: typeof Keycodes;
+type sdk_KeysJson = KeysJson;
+declare const sdk_LEFT: typeof LEFT;
+declare const sdk_LEFT_VIEW_ONLY_LAYER: typeof LEFT_VIEW_ONLY_LAYER;
+type sdk_LabelView = LabelView;
+declare const sdk_LabelView: typeof LabelView;
+type sdk_LabelViewOptions = LabelViewOptions;
+type sdk_Lighting = Lighting;
+declare const sdk_Lighting: typeof Lighting;
+type sdk_LightingOptions = LightingOptions;
+declare const sdk_LightingOptions: typeof LightingOptions;
+type sdk_LipMetrics = LipMetrics;
+type sdk_LiveSessionState = LiveSessionState;
+type sdk_LoadingSpinnerManager = LoadingSpinnerManager;
+declare const sdk_LoadingSpinnerManager: typeof LoadingSpinnerManager;
+type sdk_MaterialSymbolsView = MaterialSymbolsView;
+declare const sdk_MaterialSymbolsView: typeof MaterialSymbolsView;
+type sdk_MaterialSymbolsViewOptions = MaterialSymbolsViewOptions;
+type sdk_MaybeHasIgnoreReticleRaycast = MaybeHasIgnoreReticleRaycast;
+type sdk_MediaOrSimulatorMediaDeviceInfo = MediaOrSimulatorMediaDeviceInfo;
+type sdk_MediaPipeHandContext = MediaPipeHandContext;
+declare const sdk_MediaPipeHandContext: typeof MediaPipeHandContext;
+type sdk_MediaPipeHandLandmark = MediaPipeHandLandmark;
+type sdk_MediaPipeHandPoseEstimator = MediaPipeHandPoseEstimator;
+declare const sdk_MediaPipeHandPoseEstimator: typeof MediaPipeHandPoseEstimator;
+type sdk_MeshDetectionOptions = MeshDetectionOptions;
+declare const sdk_MeshDetectionOptions: typeof MeshDetectionOptions;
+type sdk_MeshDetector = MeshDetector;
+declare const sdk_MeshDetector: typeof MeshDetector;
+type sdk_MeshScript<TGeometry extends THREE.BufferGeometry = THREE.BufferGeometry, TMaterial extends THREE.Material | THREE.Material[] = THREE.Material | THREE.Material[], TEventMap extends THREE.Object3DEventMap = THREE.Object3DEventMap> = MeshScript<TGeometry, TMaterial, TEventMap>;
+declare const sdk_MeshScript: typeof MeshScript;
+type sdk_ModelClass = ModelClass;
+type sdk_ModelLoader = ModelLoader;
+declare const sdk_ModelLoader: typeof ModelLoader;
+type sdk_ModelLoaderLoadGLTFOptions = ModelLoaderLoadGLTFOptions;
+type sdk_ModelLoaderLoadOptions = ModelLoaderLoadOptions;
+type sdk_ModelOptions = ModelOptions;
+type sdk_ModelViewer = ModelViewer;
+declare const sdk_ModelViewer: typeof ModelViewer;
+type sdk_MouseController = MouseController;
+declare const sdk_MouseController: typeof MouseController;
+declare const sdk_NUM_HANDS: typeof NUM_HANDS;
+type sdk_NormalizedDetectedObject<T> = NormalizedDetectedObject<T>;
+declare const sdk_OCCLUDABLE_ITEMS_LAYER: typeof OCCLUDABLE_ITEMS_LAYER;
+type sdk_ObjectDetector = ObjectDetector;
+declare const sdk_ObjectDetector: typeof ObjectDetector;
+type sdk_ObjectGrabEvent = ObjectGrabEvent;
+type sdk_ObjectTouchEvent = ObjectTouchEvent;
+type sdk_ObjectsOptions = ObjectsOptions;
+declare const sdk_ObjectsOptions: typeof ObjectsOptions;
+type sdk_OcclusionPass = OcclusionPass;
+declare const sdk_OcclusionPass: typeof OcclusionPass;
+type sdk_OcclusionUtils = OcclusionUtils;
+declare const sdk_OcclusionUtils: typeof OcclusionUtils;
+type sdk_OpenAI = OpenAI;
+declare const sdk_OpenAI: typeof OpenAI;
+type sdk_OpenAIOptions = OpenAIOptions;
+declare const sdk_OpenAIOptions: typeof OpenAIOptions;
+type sdk_Options = Options;
+declare const sdk_Options: typeof Options;
+type sdk_Orbiter = Orbiter;
+declare const sdk_Orbiter: typeof Orbiter;
+type sdk_OrbiterOptions = OrbiterOptions;
+type sdk_OrbiterPosition = OrbiterPosition;
+type sdk_PageIndicator = PageIndicator;
+declare const sdk_PageIndicator: typeof PageIndicator;
+type sdk_Pager = Pager;
+declare const sdk_Pager: typeof Pager;
+type sdk_PagerOptions = PagerOptions;
+type sdk_PagerState = PagerState;
+declare const sdk_PagerState: typeof PagerState;
+type sdk_PalmPose = PalmPose;
+type sdk_Panel = Panel;
+declare const sdk_Panel: typeof Panel;
+type sdk_PanelFadeState = PanelFadeState;
+type sdk_PanelMesh = PanelMesh;
+declare const sdk_PanelMesh: typeof PanelMesh;
+type sdk_PanelOptions = PanelOptions;
+type sdk_Physics = Physics;
+declare const sdk_Physics: typeof Physics;
+type sdk_PhysicsOptions = PhysicsOptions;
+declare const sdk_PhysicsOptions: typeof PhysicsOptions;
+type sdk_PinchOnButtonAction = PinchOnButtonAction;
+declare const sdk_PinchOnButtonAction: typeof PinchOnButtonAction;
+type sdk_PlaneDetector = PlaneDetector;
+declare const sdk_PlaneDetector: typeof PlaneDetector;
+type sdk_PlanesOptions = PlanesOptions;
+declare const sdk_PlanesOptions: typeof PlanesOptions;
+type sdk_PlaySoundOptions = PlaySoundOptions;
+type sdk_PoseEstimator = PoseEstimator;
+type sdk_PoseJointName = PoseJointName;
+declare const sdk_PoseJointName: typeof PoseJointName;
+type sdk_PoseLandmark = PoseLandmark;
+type sdk_PreparedSimulatorNavMesh = PreparedSimulatorNavMesh;
+type sdk_QuatTuple = QuatTuple;
+type sdk_RAPIERCompat = RAPIERCompat;
+declare const sdk_RIGHT: typeof RIGHT;
+declare const sdk_RIGHT_VIEW_ONLY_LAYER: typeof RIGHT_VIEW_ONLY_LAYER;
+type sdk_Raycaster = Raycaster;
+declare const sdk_Raycaster: typeof Raycaster;
+type sdk_Registry = Registry;
+declare const sdk_Registry: typeof Registry;
+type sdk_ResolvedSimulatorSceneManifest = ResolvedSimulatorSceneManifest;
+type sdk_Reticle = Reticle;
+declare const sdk_Reticle: typeof Reticle;
+type sdk_ReticleOptions = ReticleOptions;
+declare const sdk_ReticleOptions: typeof ReticleOptions;
+type sdk_Reticles = Reticles;
+declare const sdk_Reticles: typeof Reticles;
+type sdk_RgbToDepthParams = RgbToDepthParams;
+type sdk_RotationRaycastMesh = RotationRaycastMesh;
+declare const sdk_RotationRaycastMesh: typeof RotationRaycastMesh;
+type sdk_Row = Row;
+declare const sdk_Row: typeof Row;
+type sdk_RowOptions = RowOptions;
+declare const sdk_SIMULATOR_HAND_COMMON_BIOMECHANICAL_CONSTRAINTS_DEGREES: typeof SIMULATOR_HAND_COMMON_BIOMECHANICAL_CONSTRAINTS_DEGREES;
+declare const sdk_SIMULATOR_HAND_POSE_NAMES: typeof SIMULATOR_HAND_POSE_NAMES;
+declare const sdk_SIMULATOR_HAND_POSE_ROTATIONS: typeof SIMULATOR_HAND_POSE_ROTATIONS;
+declare const sdk_SOUND_PRESETS: typeof SOUND_PRESETS;
+type sdk_SceneContextDetectionOptions = SceneContextDetectionOptions;
+type sdk_SceneContextDetectionResult = SceneContextDetectionResult;
+type sdk_SceneDetector = SceneDetector;
+declare const sdk_SceneDetector: typeof SceneDetector;
+type sdk_SceneOptions = SceneOptions;
+declare const sdk_SceneOptions: typeof SceneOptions;
+type sdk_SceneSetOfMarkOptions = SceneSetOfMarkOptions;
+declare const sdk_SceneSetOfMarkOptions: typeof SceneSetOfMarkOptions;
+type sdk_SceneVisibilityOptions = SceneVisibilityOptions;
+declare const sdk_SceneVisibilityOptions: typeof SceneVisibilityOptions;
+type sdk_ScreenshotSynthesizer = ScreenshotSynthesizer;
+declare const sdk_ScreenshotSynthesizer: typeof ScreenshotSynthesizer;
+type sdk_Script<TEventMap extends THREE.Object3DEventMap = THREE.Object3DEventMap> = Script<TEventMap>;
+declare const sdk_Script: typeof Script;
+declare const sdk_ScriptMixin: typeof ScriptMixin;
+type sdk_ScriptsManager = ScriptsManager;
+declare const sdk_ScriptsManager: typeof ScriptsManager;
+type sdk_ScriptsManagerEventMap = ScriptsManagerEventMap;
+type sdk_ScriptsManagerEventType = ScriptsManagerEventType;
+declare const sdk_ScriptsManagerEventType: typeof ScriptsManagerEventType;
+type sdk_ScrollingTroikaTextView = ScrollingTroikaTextView;
+declare const sdk_ScrollingTroikaTextView: typeof ScrollingTroikaTextView;
+type sdk_ScrollingTroikaTextViewOptions = ScrollingTroikaTextViewOptions;
+type sdk_SegmentCategory = SegmentCategory;
+declare const sdk_SegmentCategory: typeof SegmentCategory;
+type sdk_SegmentationMask = SegmentationMask;
+type sdk_SegmentationOptions = SegmentationOptions;
+declare const sdk_SegmentationOptions: typeof SegmentationOptions;
+type sdk_Segmenter = Segmenter;
+declare const sdk_Segmenter: typeof Segmenter;
+type sdk_SelectEvent = SelectEvent;
+type sdk_SemanticBounds = SemanticBounds;
+type sdk_SemanticMetadata = SemanticMetadata;
+type sdk_SemanticNode = SemanticNode;
+type sdk_SemanticSource = SemanticSource;
+type sdk_SemanticTree = SemanticTree;
+type sdk_SemanticViewData = SemanticViewData;
+type sdk_SetOfMark = SetOfMark;
+type sdk_SetOfMarkContext = SetOfMarkContext;
+type sdk_SetSimulatorEnvironmentEvent = SetSimulatorEnvironmentEvent;
+declare const sdk_SetSimulatorEnvironmentEvent: typeof SetSimulatorEnvironmentEvent;
+type sdk_SetSimulatorHandPhysicsEvent = SetSimulatorHandPhysicsEvent;
+declare const sdk_SetSimulatorHandPhysicsEvent: typeof SetSimulatorHandPhysicsEvent;
+type sdk_SetSimulatorModeEvent = SetSimulatorModeEvent;
+declare const sdk_SetSimulatorModeEvent: typeof SetSimulatorModeEvent;
+type sdk_Shader = Shader;
+type sdk_ShaderUniforms = ShaderUniforms;
+type sdk_ShowHandsAction = ShowHandsAction;
+declare const sdk_ShowHandsAction: typeof ShowHandsAction;
+type sdk_ShowSimulatorInstructionsEvent = ShowSimulatorInstructionsEvent;
+declare const sdk_ShowSimulatorInstructionsEvent: typeof ShowSimulatorInstructionsEvent;
+type sdk_Simulator = Simulator;
+declare const sdk_Simulator: typeof Simulator;
+type sdk_SimulatorCamera = SimulatorCamera;
+declare const sdk_SimulatorCamera: typeof SimulatorCamera;
+type sdk_SimulatorControlMode = SimulatorControlMode;
+declare const sdk_SimulatorControlMode: typeof SimulatorControlMode;
+type sdk_SimulatorControllerState = SimulatorControllerState;
+declare const sdk_SimulatorControllerState: typeof SimulatorControllerState;
+type sdk_SimulatorControls = SimulatorControls;
+declare const sdk_SimulatorControls: typeof SimulatorControls;
+type sdk_SimulatorCustomInstruction = SimulatorCustomInstruction;
+type sdk_SimulatorDepth = SimulatorDepth;
+declare const sdk_SimulatorDepth: typeof SimulatorDepth;
+type sdk_SimulatorDepthMaterial = SimulatorDepthMaterial;
+declare const sdk_SimulatorDepthMaterial: typeof SimulatorDepthMaterial;
+type sdk_SimulatorDetectedObjectInput<T = unknown> = SimulatorDetectedObjectInput<T>;
+type sdk_SimulatorEnvironment = SimulatorEnvironment;
+type sdk_SimulatorHandJointRotationArray = SimulatorHandJointRotationArray;
+type sdk_SimulatorHandPhysicsOptions = SimulatorHandPhysicsOptions;
+type sdk_SimulatorHandPose = SimulatorHandPose;
+declare const sdk_SimulatorHandPose: typeof SimulatorHandPose;
+type sdk_SimulatorHandPoseChangeRequestEvent = SimulatorHandPoseChangeRequestEvent;
+declare const sdk_SimulatorHandPoseChangeRequestEvent: typeof SimulatorHandPoseChangeRequestEvent;
+type sdk_SimulatorHandPoseHTMLElement = SimulatorHandPoseHTMLElement;
+type sdk_SimulatorHandPoseJoints = SimulatorHandPoseJoints;
+type sdk_SimulatorHandPoseRotationConstraintsDegrees = SimulatorHandPoseRotationConstraintsDegrees;
+type sdk_SimulatorHandPoseRotationRangeDegrees = SimulatorHandPoseRotationRangeDegrees;
+type sdk_SimulatorHandPoseRotations = SimulatorHandPoseRotations;
+type sdk_SimulatorHands = SimulatorHands;
+declare const sdk_SimulatorHands: typeof SimulatorHands;
+type sdk_SimulatorInterface = SimulatorInterface;
+declare const sdk_SimulatorInterface: typeof SimulatorInterface;
+type sdk_SimulatorMediaDeviceInfo = SimulatorMediaDeviceInfo;
+declare const sdk_SimulatorMediaDeviceInfo: typeof SimulatorMediaDeviceInfo;
+type sdk_SimulatorMesh = SimulatorMesh;
+type sdk_SimulatorMode = SimulatorMode;
+declare const sdk_SimulatorMode: typeof SimulatorMode;
+type sdk_SimulatorNavMesh = SimulatorNavMesh;
+declare const sdk_SimulatorNavMesh: typeof SimulatorNavMesh;
+type sdk_SimulatorNavMeshPath = SimulatorNavMeshPath;
+type sdk_SimulatorObject = SimulatorObject;
+type sdk_SimulatorObjectDefinition = SimulatorObjectDefinition;
+type sdk_SimulatorObjectDetectionSource = SimulatorObjectDetectionSource;
+type sdk_SimulatorObjectUpdate = SimulatorObjectUpdate;
+type sdk_SimulatorObjects = SimulatorObjects;
+type sdk_SimulatorOptions = SimulatorOptions;
+declare const sdk_SimulatorOptions: typeof SimulatorOptions;
+type sdk_SimulatorPhysicsMode = SimulatorPhysicsMode;
+type sdk_SimulatorPlane = SimulatorPlane;
+type sdk_SimulatorPlaneType = SimulatorPlaneType;
+type sdk_SimulatorPointerLockController = SimulatorPointerLockController;
+declare const sdk_SimulatorPointerLockController: typeof SimulatorPointerLockController;
+type sdk_SimulatorQuaternionTuple = SimulatorQuaternionTuple;
+type sdk_SimulatorRenderMode = SimulatorRenderMode;
+declare const sdk_SimulatorRenderMode: typeof SimulatorRenderMode;
+type sdk_SimulatorScene = SimulatorScene;
+declare const sdk_SimulatorScene: typeof SimulatorScene;
+type sdk_SimulatorSceneManifest = SimulatorSceneManifest;
+type sdk_SimulatorUser = SimulatorUser;
+declare const sdk_SimulatorUser: typeof SimulatorUser;
+type sdk_SimulatorUserAction = SimulatorUserAction;
+declare const sdk_SimulatorUserAction: typeof SimulatorUserAction;
+type sdk_SimulatorVector3Tuple = SimulatorVector3Tuple;
+type sdk_SketchPanel = SketchPanel;
+declare const sdk_SketchPanel: typeof SketchPanel;
+type sdk_SkyboxAgent = SkyboxAgent;
+declare const sdk_SkyboxAgent: typeof SkyboxAgent;
+type sdk_SoundOptions = SoundOptions;
+declare const sdk_SoundOptions: typeof SoundOptions;
+type sdk_SoundSynthesizer = SoundSynthesizer;
+declare const sdk_SoundSynthesizer: typeof SoundSynthesizer;
+type sdk_SparkRendererHolder = SparkRendererHolder;
+declare const sdk_SparkRendererHolder: typeof SparkRendererHolder;
+type sdk_SpatialAudio = SpatialAudio;
+declare const sdk_SpatialAudio: typeof SpatialAudio;
+type sdk_SpatialPanel = SpatialPanel;
+declare const sdk_SpatialPanel: typeof SpatialPanel;
+type sdk_SpatialPanelOptions = SpatialPanelOptions;
+type sdk_SpeechRecognizer = SpeechRecognizer;
+declare const sdk_SpeechRecognizer: typeof SpeechRecognizer;
+type sdk_SpeechRecognizerOptions = SpeechRecognizerOptions;
+declare const sdk_SpeechRecognizerOptions: typeof SpeechRecognizerOptions;
+type sdk_SpeechSynthesizer = SpeechSynthesizer;
+declare const sdk_SpeechSynthesizer: typeof SpeechSynthesizer;
+type sdk_SpeechSynthesizerOptions = SpeechSynthesizerOptions;
+declare const sdk_SpeechSynthesizerOptions: typeof SpeechSynthesizerOptions;
+type sdk_SplatAnchor = SplatAnchor;
+declare const sdk_SplatAnchor: typeof SplatAnchor;
+type sdk_SplatData = SplatData;
+type sdk_StreamState = StreamState;
+declare const sdk_StreamState: typeof StreamState;
+type sdk_StrokeEventMap = StrokeEventMap;
+type sdk_StrokeRecognizer = StrokeRecognizer;
+declare const sdk_StrokeRecognizer: typeof StrokeRecognizer;
+type sdk_StylizedFace = StylizedFace;
+declare const sdk_StylizedFace: typeof StylizedFace;
+type sdk_StylizedFaceOptions = StylizedFaceOptions;
+type sdk_TensorFlowHandPoseEstimator = TensorFlowHandPoseEstimator;
+declare const sdk_TensorFlowHandPoseEstimator: typeof TensorFlowHandPoseEstimator;
+type sdk_TextButton = TextButton;
+declare const sdk_TextButton: typeof TextButton;
+type sdk_TextButtonOptions = TextButtonOptions;
+type sdk_TextScrollerState = TextScrollerState;
+declare const sdk_TextScrollerState: typeof TextScrollerState;
+type sdk_TextView = TextView;
+declare const sdk_TextView: typeof TextView;
+type sdk_TextViewOptions = TextViewOptions;
+type sdk_Tool = Tool;
+declare const sdk_Tool: typeof Tool;
+type sdk_ToolCall = ToolCall;
+type sdk_ToolOptions = ToolOptions;
+type sdk_ToolResult<T = unknown> = ToolResult<T>;
+type sdk_ToolSchema = ToolSchema;
+type sdk_UI = UI;
+declare const sdk_UI: typeof UI;
+type sdk_UIJsonNode = UIJsonNode;
+type sdk_UIJsonNodeOptions = UIJsonNodeOptions;
+type sdk_UIKitOptions = UIKitOptions;
+declare const sdk_UIKitOptions: typeof UIKitOptions;
+declare const sdk_UI_OVERLAY_LAYER: typeof UI_OVERLAY_LAYER;
+declare const sdk_UP: typeof UP;
+type sdk_UX = UX;
+declare const sdk_UX: typeof UX;
+type sdk_User = User;
+declare const sdk_User: typeof User;
+declare const sdk_VIEW_DEPTH_GAP: typeof VIEW_DEPTH_GAP;
+type sdk_Vec2Tuple = Vec2Tuple;
+type sdk_Vec3Tuple = Vec3Tuple;
+type sdk_VerticalPager = VerticalPager;
+declare const sdk_VerticalPager: typeof VerticalPager;
+type sdk_VideoFileStream = VideoFileStream;
+declare const sdk_VideoFileStream: typeof VideoFileStream;
+type sdk_VideoFileStreamOptions = VideoFileStreamOptions;
+type sdk_VideoStream<T extends VideoStreamDetails = VideoStreamDetails> = VideoStream<T>;
+declare const sdk_VideoStream: typeof VideoStream;
+type sdk_VideoStreamDetails = VideoStreamDetails;
+type sdk_VideoStreamEventMap<T> = VideoStreamEventMap<T>;
+type sdk_VideoStreamGetSnapshotBase64Options = VideoStreamGetSnapshotBase64Options;
+type sdk_VideoStreamGetSnapshotBlobOptions = VideoStreamGetSnapshotBlobOptions;
+type sdk_VideoStreamGetSnapshotImageDataOptions = VideoStreamGetSnapshotImageDataOptions;
+type sdk_VideoStreamGetSnapshotOptions = VideoStreamGetSnapshotOptions;
+type sdk_VideoStreamGetSnapshotTextureOptions = VideoStreamGetSnapshotTextureOptions;
+type sdk_VideoStreamOptions = VideoStreamOptions;
+type sdk_VideoView = VideoView;
+declare const sdk_VideoView: typeof VideoView;
+type sdk_VideoViewOptions = VideoViewOptions;
+type sdk_View<TEventMap extends THREE.Object3DEventMap = THREE.Object3DEventMap> = View<TEventMap>;
+declare const sdk_View: typeof View;
+type sdk_ViewOptions = ViewOptions;
+type sdk_VisemeWeights = VisemeWeights;
+type sdk_VisibleObjectsContext = VisibleObjectsContext;
+type sdk_VolumeCategory = VolumeCategory;
+declare const sdk_VolumeCategory: typeof VolumeCategory;
+type sdk_WaitFrame = WaitFrame;
+declare const sdk_WaitFrame: typeof WaitFrame;
+type sdk_WalkTowardsPanelAction = WalkTowardsPanelAction;
+declare const sdk_WalkTowardsPanelAction: typeof WalkTowardsPanelAction;
+type sdk_WeatherData = WeatherData;
+type sdk_WebXRHandContext = WebXRHandContext;
+declare const sdk_WebXRHandContext: typeof WebXRHandContext;
+type sdk_WebXRHandPoseEstimator = WebXRHandPoseEstimator;
+declare const sdk_WebXRHandPoseEstimator: typeof WebXRHandPoseEstimator;
+type sdk_WebXRJointRotations = WebXRJointRotations;
+type sdk_World = World;
+declare const sdk_World: typeof World;
+type sdk_WorldOptions = WorldOptions;
+declare const sdk_WorldOptions: typeof WorldOptions;
+type sdk_XRButton = XRButton;
+declare const sdk_XRButton: typeof XRButton;
+type sdk_XRDeviceCamera = XRDeviceCamera;
+declare const sdk_XRDeviceCamera: typeof XRDeviceCamera;
+type sdk_XREffects = XREffects;
+declare const sdk_XREffects: typeof XREffects;
+type sdk_XRPass = XRPass;
+declare const sdk_XRPass: typeof XRPass;
+type sdk_XRTransitionOptions = XRTransitionOptions;
+declare const sdk_XRTransitionOptions: typeof XRTransitionOptions;
+declare const sdk_XR_BLOCKS_ASSETS_PATH: typeof XR_BLOCKS_ASSETS_PATH;
+declare const sdk_ZERO_VECTOR3: typeof ZERO_VECTOR3;
+declare const sdk_ZERO_VISEME: typeof ZERO_VISEME;
+declare const sdk__getBvhImportStatus: typeof _getBvhImportStatus;
+declare const sdk_add: typeof add;
+declare const sdk_ai: typeof ai;
+declare const sdk_applyBVH: typeof applyBVH;
+declare const sdk_applySimulatorHandPoseRotationConstraints: typeof applySimulatorHandPoseRotationConstraints;
+declare const sdk_average: typeof average;
+declare const sdk_callInitWithDependencyInjection: typeof callInitWithDependencyInjection;
+declare const sdk_camera: typeof camera;
+declare const sdk_clamp: typeof clamp;
+declare const sdk_clamp01: typeof clamp01;
+declare const sdk_clampRotationToAngle: typeof clampRotationToAngle;
+declare const sdk_context: typeof context;
+declare const sdk_core: typeof core;
+declare const sdk_cropImage: typeof cropImage;
+declare const sdk_depth: typeof depth;
+declare const sdk_disposeBVH: typeof disposeBVH;
+declare const sdk_enableAcceleratedRaycast: typeof enableAcceleratedRaycast;
+declare const sdk_estimateHandScale: typeof estimateHandScale;
+declare const sdk_extractYaw: typeof extractYaw;
+declare const sdk_getAdjacentFingerSpreads: typeof getAdjacentFingerSpreads;
+declare const sdk_getBoneVectors: typeof getBoneVectors;
+declare const sdk_getCameraParametersSnapshot: typeof getCameraParametersSnapshot;
+declare const sdk_getColorHex: typeof getColorHex;
+declare const sdk_getDeltaTime: typeof getDeltaTime;
+declare const sdk_getDeviceCameraClipFromView: typeof getDeviceCameraClipFromView;
+declare const sdk_getDeviceCameraWorldFromClip: typeof getDeviceCameraWorldFromClip;
+declare const sdk_getDeviceCameraWorldFromView: typeof getDeviceCameraWorldFromView;
+declare const sdk_getElapsedTime: typeof getElapsedTime;
+declare const sdk_getFingerBendAngles: typeof getFingerBendAngles;
+declare const sdk_getFingerCurl: typeof getFingerCurl;
+declare const sdk_getFingerDirection: typeof getFingerDirection;
+declare const sdk_getFingerJoint: typeof getFingerJoint;
+declare const sdk_getFingerPalmAlignment: typeof getFingerPalmAlignment;
+declare const sdk_getFingerSpread: typeof getFingerSpread;
+declare const sdk_getFingerStraightness: typeof getFingerStraightness;
+declare const sdk_getFingertipDistance: typeof getFingertipDistance;
+declare const sdk_getFingertipPalmDistance: typeof getFingertipPalmDistance;
+declare const sdk_getPalmNormal: typeof getPalmNormal;
+declare const sdk_getPalmPose: typeof getPalmPose;
+declare const sdk_getPalmRight: typeof getPalmRight;
+declare const sdk_getPalmUp: typeof getPalmUp;
+declare const sdk_getPalmWidth: typeof getPalmWidth;
+declare const sdk_getRelativeBoneAngles: typeof getRelativeBoneAngles;
+declare const sdk_getThumbBendAngles: typeof getThumbBendAngles;
+declare const sdk_getThumbCurl: typeof getThumbCurl;
+declare const sdk_getThumbDirection: typeof getThumbDirection;
+declare const sdk_getThumbOpposition: typeof getThumbOpposition;
+declare const sdk_getThumbStraightness: typeof getThumbStraightness;
+declare const sdk_getThumbVerticalDirection: typeof getThumbVerticalDirection;
+declare const sdk_getUrlParamBool: typeof getUrlParamBool;
+declare const sdk_getUrlParamFloat: typeof getUrlParamFloat;
+declare const sdk_getUrlParamInt: typeof getUrlParamInt;
+declare const sdk_getUrlParameter: typeof getUrlParameter;
+declare const sdk_getVec4ByColorString: typeof getVec4ByColorString;
+declare const sdk_getXrCameraLeft: typeof getXrCameraLeft;
+declare const sdk_getXrCameraRight: typeof getXrCameraRight;
+declare const sdk_init: typeof init;
+declare const sdk_initScript: typeof initScript;
+declare const sdk_input: typeof input;
+declare const sdk_intrinsicsToProjectionMatrix: typeof intrinsicsToProjectionMatrix;
+declare const sdk_isBVHReady: typeof isBVHReady;
+declare const sdk_isDeviceCameraPoseAvailable: typeof isDeviceCameraPoseAvailable;
+declare const sdk_lerp: typeof lerp;
+declare const sdk_loadStereoImageAsTextures: typeof loadStereoImageAsTextures;
+declare const sdk_loadingSpinnerManager: typeof loadingSpinnerManager;
+declare const sdk_lookAtRotation: typeof lookAtRotation;
+declare const sdk_objectIsDescendantOf: typeof objectIsDescendantOf;
+declare const sdk_parseBase64DataURL: typeof parseBase64DataURL;
+declare const sdk_parseSimulatorHandPoseRotations: typeof parseSimulatorHandPoseRotations;
+declare const sdk_placeObjectAtIntersectionFacingTarget: typeof placeObjectAtIntersectionFacingTarget;
+declare const sdk_print: typeof print;
+declare const sdk_resolveSimulatorHandPoseRotations: typeof resolveSimulatorHandPoseRotations;
+declare const sdk_resolveSimulatorRotationsFromKeypoints: typeof resolveSimulatorRotationsFromKeypoints;
+declare const sdk_scene: typeof scene;
+declare const sdk_showOnlyInLeftEye: typeof showOnlyInLeftEye;
+declare const sdk_showOnlyInRightEye: typeof showOnlyInRightEye;
+declare const sdk_showReticleOnDepthMesh: typeof showReticleOnDepthMesh;
+declare const sdk_sound: typeof sound;
+declare const sdk_timer: typeof timer;
+declare const sdk_transformRgbUvToWorld: typeof transformRgbUvToWorld;
+declare const sdk_traverseUtil: typeof traverseUtil;
+declare const sdk_uninitScript: typeof uninitScript;
+declare const sdk_urlParams: typeof urlParams;
+declare const sdk_user: typeof user;
+declare const sdk_visualizeDepth: typeof visualizeDepth;
+declare const sdk_visualizeDepthMap: typeof visualizeDepthMap;
+declare const sdk_world: typeof world;
+declare const sdk_xrDepthMeshOptions: typeof xrDepthMeshOptions;
+declare const sdk_xrDepthMeshPhysicsOptions: typeof xrDepthMeshPhysicsOptions;
+declare const sdk_xrDepthMeshVisualizationOptions: typeof xrDepthMeshVisualizationOptions;
+declare const sdk_xrDeviceCameraEnvironmentContinuousOptions: typeof xrDeviceCameraEnvironmentContinuousOptions;
+declare const sdk_xrDeviceCameraEnvironmentOptions: typeof xrDeviceCameraEnvironmentOptions;
+declare const sdk_xrDeviceCameraUserContinuousOptions: typeof xrDeviceCameraUserContinuousOptions;
+declare const sdk_xrDeviceCameraUserOptions: typeof xrDeviceCameraUserOptions;
+declare namespace sdk {
+  export { sdk_AI as AI, sdk_AIOptions as AIOptions, sdk_AVERAGE_IPD_METERS as AVERAGE_IPD_METERS, sdk_ActiveControllers as ActiveControllers, sdk_Agent as Agent, sdk_AnimatableNumber as AnimatableNumber, sdk_AudioListener as AudioListener, sdk_AudioPlayer as AudioPlayer, sdk_BACK as BACK, sdk_BackgroundMusic as BackgroundMusic, sdk_CategoryVolumes as CategoryVolumes, sdk_Col as Col, sdk_Context as Context, sdk_ContextOptions as ContextOptions, sdk_Core as Core, sdk_CoreSound as CoreSound, sdk_DEFAULT_DEVICE_CAMERA_HEIGHT as DEFAULT_DEVICE_CAMERA_HEIGHT, sdk_DEFAULT_DEVICE_CAMERA_WIDTH as DEFAULT_DEVICE_CAMERA_WIDTH, sdk_DEFAULT_RGB_TO_DEPTH_PARAMS as DEFAULT_RGB_TO_DEPTH_PARAMS, sdk_DEVICE_CAMERA_PARAMETERS as DEVICE_CAMERA_PARAMETERS, sdk_DOWN as DOWN, sdk_Depth as Depth, sdk_DepthMesh as DepthMesh, sdk_DepthMeshOptions as DepthMeshOptions, sdk_DepthOptions as DepthOptions, sdk_DepthTextures as DepthTextures, sdk_DetectedBodyPose as DetectedBodyPose, sdk_DetectedFace as DetectedFace, sdk_DetectedMesh as DetectedMesh, sdk_DetectedObject as DetectedObject, sdk_DetectedPlane as DetectedPlane, sdk_DeviceCameraOptions as DeviceCameraOptions, sdk_DragManager as DragManager, sdk_DragMode as DragMode, sdk_ExitButton as ExitButton, sdk_FINGER_ORDER as FINGER_ORDER, sdk_FORWARD as FORWARD, sdk_FaceLandmarkName as FaceLandmarkName, sdk_FaceRecognizer as FaceRecognizer, sdk_FacesOptions as FacesOptions, sdk_FreestandingSlider as FreestandingSlider, sdk_GEMINI_DEFAULT_FLASH_MODEL as GEMINI_DEFAULT_FLASH_MODEL, sdk_GEMINI_DEFAULT_IMAGE_MODEL as GEMINI_DEFAULT_IMAGE_MODEL, sdk_GEMINI_DEFAULT_LIVE_MODEL as GEMINI_DEFAULT_LIVE_MODEL, sdk_GamepadBindings as GamepadBindings, sdk_GamepadController as GamepadController, sdk_GazeController as GazeController, sdk_Gemini as Gemini, sdk_GeminiOptions as GeminiOptions, sdk_GenerateSkyboxTool as GenerateSkyboxTool, sdk_GestureRecognition as GestureRecognition, sdk_GestureRecognitionOptions as GestureRecognitionOptions, sdk_GetWeatherTool as GetWeatherTool, sdk_Grid as Grid, sdk_HAND_BONE_IDX_CONNECTION_MAP as HAND_BONE_IDX_CONNECTION_MAP, sdk_HAND_INDEX_TO_LABEL as HAND_INDEX_TO_LABEL, sdk_HAND_JOINT_COUNT as HAND_JOINT_COUNT, sdk_HAND_JOINT_IDX_CONNECTION_MAP as HAND_JOINT_IDX_CONNECTION_MAP, sdk_HAND_JOINT_NAMES as HAND_JOINT_NAMES, sdk_Handedness as Handedness, sdk_Hands as Hands, sdk_HandsOptions as HandsOptions, sdk_HeadGestureRecognition as HeadGestureRecognition, sdk_HeadGestureRecognitionOptions as HeadGestureRecognitionOptions, sdk_HeuristicGestureRecognizer as HeuristicGestureRecognizer, sdk_HeuristicHeadGestureRecognizer as HeuristicHeadGestureRecognizer, sdk_HorizontalPager as HorizontalPager, sdk_HumanRecognizer as HumanRecognizer, sdk_HumansOptions as HumansOptions, sdk_IconButton as IconButton, sdk_IconView as IconView, sdk_ImageView as ImageView, sdk_Input as Input, sdk_InputOptions as InputOptions, sdk_Keycodes as Keycodes, sdk_LEFT as LEFT, sdk_LEFT_VIEW_ONLY_LAYER as LEFT_VIEW_ONLY_LAYER, sdk_LabelView as LabelView, sdk_Lighting as Lighting, sdk_LightingOptions as LightingOptions, sdk_LoadingSpinnerManager as LoadingSpinnerManager, sdk_MaterialSymbolsView as MaterialSymbolsView, sdk_MediaPipeHandContext as MediaPipeHandContext, sdk_MediaPipeHandPoseEstimator as MediaPipeHandPoseEstimator, sdk_MeshDetectionOptions as MeshDetectionOptions, sdk_MeshDetector as MeshDetector, sdk_MeshScript as MeshScript, sdk_ModelLoader as ModelLoader, sdk_ModelViewer as ModelViewer, sdk_MouseController as MouseController, sdk_NUM_HANDS as NUM_HANDS, sdk_OCCLUDABLE_ITEMS_LAYER as OCCLUDABLE_ITEMS_LAYER, sdk_ObjectDetector as ObjectDetector, sdk_ObjectsOptions as ObjectsOptions, sdk_OcclusionPass as OcclusionPass, sdk_OcclusionUtils as OcclusionUtils, sdk_OpenAI as OpenAI, sdk_OpenAIOptions as OpenAIOptions, sdk_Options as Options, sdk_Orbiter as Orbiter, sdk_PageIndicator as PageIndicator, sdk_Pager as Pager, sdk_PagerState as PagerState, sdk_Panel as Panel, sdk_PanelMesh as PanelMesh, sdk_Physics as Physics, sdk_PhysicsOptions as PhysicsOptions, sdk_PinchOnButtonAction as PinchOnButtonAction, sdk_PlaneDetector as PlaneDetector, sdk_PlanesOptions as PlanesOptions, sdk_PoseJointName as PoseJointName, sdk_RIGHT as RIGHT, sdk_RIGHT_VIEW_ONLY_LAYER as RIGHT_VIEW_ONLY_LAYER, sdk_Raycaster as Raycaster, sdk_Registry as Registry, sdk_Reticle as Reticle, sdk_ReticleOptions as ReticleOptions, sdk_Reticles as Reticles, sdk_RotationRaycastMesh as RotationRaycastMesh, sdk_Row as Row, sdk_SIMULATOR_HAND_COMMON_BIOMECHANICAL_CONSTRAINTS_DEGREES as SIMULATOR_HAND_COMMON_BIOMECHANICAL_CONSTRAINTS_DEGREES, sdk_SIMULATOR_HAND_POSE_NAMES as SIMULATOR_HAND_POSE_NAMES, sdk_SIMULATOR_HAND_POSE_ROTATIONS as SIMULATOR_HAND_POSE_ROTATIONS, sdk_SOUND_PRESETS as SOUND_PRESETS, sdk_SceneDetector as SceneDetector, sdk_SceneOptions as SceneOptions, sdk_SceneSetOfMarkOptions as SceneSetOfMarkOptions, sdk_SceneVisibilityOptions as SceneVisibilityOptions, sdk_ScreenshotSynthesizer as ScreenshotSynthesizer, sdk_Script as Script, sdk_ScriptMixin as ScriptMixin, sdk_ScriptsManager as ScriptsManager, sdk_ScriptsManagerEventType as ScriptsManagerEventType, sdk_ScrollingTroikaTextView as ScrollingTroikaTextView, sdk_SegmentCategory as SegmentCategory, sdk_SegmentationOptions as SegmentationOptions, sdk_Segmenter as Segmenter, sdk_SetSimulatorEnvironmentEvent as SetSimulatorEnvironmentEvent, sdk_SetSimulatorHandPhysicsEvent as SetSimulatorHandPhysicsEvent, sdk_SetSimulatorModeEvent as SetSimulatorModeEvent, sdk_ShowHandsAction as ShowHandsAction, sdk_ShowSimulatorInstructionsEvent as ShowSimulatorInstructionsEvent, sdk_Simulator as Simulator, sdk_SimulatorCamera as SimulatorCamera, sdk_SimulatorControlMode as SimulatorControlMode, sdk_SimulatorControllerState as SimulatorControllerState, sdk_SimulatorControls as SimulatorControls, sdk_SimulatorDepth as SimulatorDepth, sdk_SimulatorDepthMaterial as SimulatorDepthMaterial, sdk_SimulatorHandPose as SimulatorHandPose, sdk_SimulatorHandPoseChangeRequestEvent as SimulatorHandPoseChangeRequestEvent, sdk_SimulatorHands as SimulatorHands, sdk_SimulatorInterface as SimulatorInterface, sdk_SimulatorMediaDeviceInfo as SimulatorMediaDeviceInfo, sdk_SimulatorMode as SimulatorMode, sdk_SimulatorNavMesh as SimulatorNavMesh, sdk_SimulatorOptions as SimulatorOptions, sdk_SimulatorPointerLockController as SimulatorPointerLockController, sdk_SimulatorRenderMode as SimulatorRenderMode, sdk_SimulatorScene as SimulatorScene, sdk_SimulatorUser as SimulatorUser, sdk_SimulatorUserAction as SimulatorUserAction, sdk_SketchPanel as SketchPanel, sdk_SkyboxAgent as SkyboxAgent, sdk_SoundOptions as SoundOptions, sdk_SoundSynthesizer as SoundSynthesizer, sdk_SparkRendererHolder as SparkRendererHolder, sdk_SpatialAudio as SpatialAudio, sdk_SpatialPanel as SpatialPanel, sdk_SpeechRecognizer as SpeechRecognizer, sdk_SpeechRecognizerOptions as SpeechRecognizerOptions, sdk_SpeechSynthesizer as SpeechSynthesizer, sdk_SpeechSynthesizerOptions as SpeechSynthesizerOptions, sdk_SplatAnchor as SplatAnchor, sdk_StreamState as StreamState, sdk_StrokeRecognizer as StrokeRecognizer, sdk_StylizedFace as StylizedFace, sdk_TensorFlowHandPoseEstimator as TensorFlowHandPoseEstimator, sdk_TextButton as TextButton, sdk_TextScrollerState as TextScrollerState, sdk_TextView as TextView, sdk_Tool as Tool, sdk_UI as UI, sdk_UIKitOptions as UIKitOptions, sdk_UI_OVERLAY_LAYER as UI_OVERLAY_LAYER, sdk_UP as UP, sdk_UX as UX, sdk_User as User, sdk_VIEW_DEPTH_GAP as VIEW_DEPTH_GAP, sdk_VerticalPager as VerticalPager, sdk_VideoFileStream as VideoFileStream, sdk_VideoStream as VideoStream, sdk_VideoView as VideoView, sdk_View as View, sdk_VolumeCategory as VolumeCategory, sdk_WaitFrame as WaitFrame, sdk_WalkTowardsPanelAction as WalkTowardsPanelAction, sdk_WebXRHandContext as WebXRHandContext, sdk_WebXRHandPoseEstimator as WebXRHandPoseEstimator, sdk_World as World, sdk_WorldOptions as WorldOptions, sdk_XRButton as XRButton, sdk_XRDeviceCamera as XRDeviceCamera, sdk_XREffects as XREffects, sdk_XRPass as XRPass, sdk_XRTransitionOptions as XRTransitionOptions, sdk_XR_BLOCKS_ASSETS_PATH as XR_BLOCKS_ASSETS_PATH, sdk_ZERO_VECTOR3 as ZERO_VECTOR3, sdk_ZERO_VISEME as ZERO_VISEME, sdk__getBvhImportStatus as _getBvhImportStatus, sdk_add as add, sdk_ai as ai, sdk_applyBVH as applyBVH, sdk_applySimulatorHandPoseRotationConstraints as applySimulatorHandPoseRotationConstraints, sdk_average as average, sdk_callInitWithDependencyInjection as callInitWithDependencyInjection, sdk_camera as camera, sdk_clamp as clamp, sdk_clamp01 as clamp01, sdk_clampRotationToAngle as clampRotationToAngle, sdk_context as context, sdk_core as core, sdk_cropImage as cropImage, sdk_depth as depth, sdk_disposeBVH as disposeBVH, sdk_enableAcceleratedRaycast as enableAcceleratedRaycast, sdk_estimateHandScale as estimateHandScale, sdk_extractYaw as extractYaw, sdk_getAdjacentFingerSpreads as getAdjacentFingerSpreads, sdk_getBoneVectors as getBoneVectors, sdk_getCameraParametersSnapshot as getCameraParametersSnapshot, sdk_getColorHex as getColorHex, sdk_getDeltaTime as getDeltaTime, sdk_getDeviceCameraClipFromView as getDeviceCameraClipFromView, sdk_getDeviceCameraWorldFromClip as getDeviceCameraWorldFromClip, sdk_getDeviceCameraWorldFromView as getDeviceCameraWorldFromView, sdk_getElapsedTime as getElapsedTime, sdk_getFingerBendAngles as getFingerBendAngles, sdk_getFingerCurl as getFingerCurl, sdk_getFingerDirection as getFingerDirection, sdk_getFingerJoint as getFingerJoint, sdk_getFingerPalmAlignment as getFingerPalmAlignment, sdk_getFingerSpread as getFingerSpread, sdk_getFingerStraightness as getFingerStraightness, sdk_getFingertipDistance as getFingertipDistance, sdk_getFingertipPalmDistance as getFingertipPalmDistance, sdk_getPalmNormal as getPalmNormal, sdk_getPalmPose as getPalmPose, sdk_getPalmRight as getPalmRight, sdk_getPalmUp as getPalmUp, sdk_getPalmWidth as getPalmWidth, sdk_getRelativeBoneAngles as getRelativeBoneAngles, sdk_getThumbBendAngles as getThumbBendAngles, sdk_getThumbCurl as getThumbCurl, sdk_getThumbDirection as getThumbDirection, sdk_getThumbOpposition as getThumbOpposition, sdk_getThumbStraightness as getThumbStraightness, sdk_getThumbVerticalDirection as getThumbVerticalDirection, sdk_getUrlParamBool as getUrlParamBool, sdk_getUrlParamFloat as getUrlParamFloat, sdk_getUrlParamInt as getUrlParamInt, sdk_getUrlParameter as getUrlParameter, sdk_getVec4ByColorString as getVec4ByColorString, sdk_getXrCameraLeft as getXrCameraLeft, sdk_getXrCameraRight as getXrCameraRight, sdk_init as init, sdk_initScript as initScript, sdk_input as input, sdk_intrinsicsToProjectionMatrix as intrinsicsToProjectionMatrix, sdk_isBVHReady as isBVHReady, sdk_isDeviceCameraPoseAvailable as isDeviceCameraPoseAvailable, sdk_lerp as lerp, sdk_loadStereoImageAsTextures as loadStereoImageAsTextures, sdk_loadingSpinnerManager as loadingSpinnerManager, sdk_lookAtRotation as lookAtRotation, sdk_objectIsDescendantOf as objectIsDescendantOf, sdk_parseBase64DataURL as parseBase64DataURL, sdk_parseSimulatorHandPoseRotations as parseSimulatorHandPoseRotations, sdk_placeObjectAtIntersectionFacingTarget as placeObjectAtIntersectionFacingTarget, sdk_print as print, sdk_resolveSimulatorHandPoseRotations as resolveSimulatorHandPoseRotations, sdk_resolveSimulatorRotationsFromKeypoints as resolveSimulatorRotationsFromKeypoints, sdk_scene as scene, sdk_showOnlyInLeftEye as showOnlyInLeftEye, sdk_showOnlyInRightEye as showOnlyInRightEye, sdk_showReticleOnDepthMesh as showReticleOnDepthMesh, sdk_sound as sound, sdk_timer as timer, sdk_transformRgbUvToWorld as transformRgbUvToWorld, sdk_traverseUtil as traverseUtil, sdk_uninitScript as uninitScript, sdk_urlParams as urlParams, sdk_user as user, sdk_visualizeDepth as visualizeDepth, sdk_visualizeDepthMap as visualizeDepthMap, sdk_world as world, sdk_xrDepthMeshOptions as xrDepthMeshOptions, sdk_xrDepthMeshPhysicsOptions as xrDepthMeshPhysicsOptions, sdk_xrDepthMeshVisualizationOptions as xrDepthMeshVisualizationOptions, sdk_xrDeviceCameraEnvironmentContinuousOptions as xrDeviceCameraEnvironmentContinuousOptions, sdk_xrDeviceCameraEnvironmentOptions as xrDeviceCameraEnvironmentOptions, sdk_xrDeviceCameraUserContinuousOptions as xrDeviceCameraUserContinuousOptions, sdk_xrDeviceCameraUserOptions as xrDeviceCameraUserOptions };
+  export type { sdk_AIModel as AIModel, sdk_AgentLifecycleCallbacks as AgentLifecycleCallbacks, sdk_AudioListenerOptions as AudioListenerOptions, sdk_AudioPlayerOptions as AudioPlayerOptions, sdk_AutomationModeOptions as AutomationModeOptions, sdk_CameraParametersSnapshot as CameraParametersSnapshot, sdk_CameraSnapshot as CameraSnapshot, sdk_ColOptions as ColOptions, sdk_Constructor as Constructor, sdk_DeepPartial as DeepPartial, sdk_DeepReadonly as DeepReadonly, sdk_DepthArray as DepthArray, sdk_DeviceCameraParameters as DeviceCameraParameters, sdk_DigitName as DigitName, sdk_Draggable as Draggable, sdk_FaceBlendshape as FaceBlendshape, sdk_FaceLandmark as FaceLandmark, sdk_FingerName as FingerName, sdk_FormFactor as FormFactor, sdk_GLTFData as GLTFData, sdk_GamepadAction as GamepadAction, sdk_GeminiQueryInput as GeminiQueryInput, sdk_GestureConfiguration as GestureConfiguration, sdk_GestureDetectionResult as GestureDetectionResult, sdk_GestureEvent as GestureEvent, sdk_GestureEventDetail as GestureEventDetail, sdk_GestureEventType as GestureEventType, sdk_GestureHandedness as GestureHandedness, sdk_GestureRecognizer as GestureRecognizer, sdk_GestureScoreMap as GestureScoreMap, sdk_GetWeatherArgs as GetWeatherArgs, sdk_GridOptions as GridOptions, sdk_HandContext as HandContext, sdk_HandLabel as HandLabel, sdk_HasDraggingMode as HasDraggingMode, sdk_HasIgnoreReticleRaycast as HasIgnoreReticleRaycast, sdk_HeadGestureConfiguration as HeadGestureConfiguration, sdk_HeadGestureContext as HeadGestureContext, sdk_HeadGestureDetectionResult as HeadGestureDetectionResult, sdk_HeadGestureEvent as HeadGestureEvent, sdk_HeadGestureEventDetail as HeadGestureEventDetail, sdk_HeadGestureEventMap as HeadGestureEventMap, sdk_HeadGestureRecognizer as HeadGestureRecognizer, sdk_HeadGestureScoreMap as HeadGestureScoreMap, sdk_HeadPoseSample as HeadPoseSample, sdk_HeuristicGestureDetector as HeuristicGestureDetector, sdk_HeuristicHeadGestureDetector as HeuristicHeadGestureDetector, sdk_HeuristicHeadGestureRecognizerOptions as HeuristicHeadGestureRecognizerOptions, sdk_ISimulatorSettingsPanelElement as ISimulatorSettingsPanelElement, sdk_IconButtonOptions as IconButtonOptions, sdk_IconViewOptions as IconViewOptions, sdk_ImageViewOptions as ImageViewOptions, sdk_Injectable as Injectable, sdk_InjectableConstructor as InjectableConstructor, sdk_JointName as JointName, sdk_JointPositions as JointPositions, sdk_KeyEvent as KeyEvent, sdk_KeysJson as KeysJson, sdk_LabelViewOptions as LabelViewOptions, sdk_LipMetrics as LipMetrics, sdk_LiveSessionState as LiveSessionState, sdk_MaterialSymbolsViewOptions as MaterialSymbolsViewOptions, sdk_MaybeHasIgnoreReticleRaycast as MaybeHasIgnoreReticleRaycast, sdk_MediaOrSimulatorMediaDeviceInfo as MediaOrSimulatorMediaDeviceInfo, sdk_MediaPipeHandLandmark as MediaPipeHandLandmark, sdk_ModelClass as ModelClass, sdk_ModelLoaderLoadGLTFOptions as ModelLoaderLoadGLTFOptions, sdk_ModelLoaderLoadOptions as ModelLoaderLoadOptions, sdk_ModelOptions as ModelOptions, sdk_NormalizedDetectedObject as NormalizedDetectedObject, sdk_ObjectGrabEvent as ObjectGrabEvent, sdk_ObjectTouchEvent as ObjectTouchEvent, sdk_OrbiterOptions as OrbiterOptions, sdk_OrbiterPosition as OrbiterPosition, sdk_PagerOptions as PagerOptions, sdk_PalmPose as PalmPose, sdk_PanelFadeState as PanelFadeState, sdk_PanelOptions as PanelOptions, sdk_PlaySoundOptions as PlaySoundOptions, sdk_PoseEstimator as PoseEstimator, sdk_PoseLandmark as PoseLandmark, sdk_PreparedSimulatorNavMesh as PreparedSimulatorNavMesh, sdk_QuatTuple as QuatTuple, sdk_RAPIERCompat as RAPIERCompat, sdk_ResolvedSimulatorSceneManifest as ResolvedSimulatorSceneManifest, sdk_RgbToDepthParams as RgbToDepthParams, sdk_RowOptions as RowOptions, sdk_SceneContextDetectionOptions as SceneContextDetectionOptions, sdk_SceneContextDetectionResult as SceneContextDetectionResult, sdk_ScriptsManagerEventMap as ScriptsManagerEventMap, sdk_ScrollingTroikaTextViewOptions as ScrollingTroikaTextViewOptions, sdk_SegmentationMask as SegmentationMask, sdk_SelectEvent as SelectEvent, sdk_SemanticBounds as SemanticBounds, sdk_SemanticMetadata as SemanticMetadata, sdk_SemanticNode as SemanticNode, sdk_SemanticSource as SemanticSource, sdk_SemanticTree as SemanticTree, sdk_SemanticViewData as SemanticViewData, sdk_SetOfMark as SetOfMark, sdk_SetOfMarkContext as SetOfMarkContext, sdk_Shader as Shader, sdk_ShaderUniforms as ShaderUniforms, sdk_SimulatorCustomInstruction as SimulatorCustomInstruction, sdk_SimulatorDetectedObjectInput as SimulatorDetectedObjectInput, sdk_SimulatorEnvironment as SimulatorEnvironment, sdk_SimulatorHandJointRotationArray as SimulatorHandJointRotationArray, sdk_SimulatorHandPhysicsOptions as SimulatorHandPhysicsOptions, sdk_SimulatorHandPoseHTMLElement as SimulatorHandPoseHTMLElement, sdk_SimulatorHandPoseJoints as SimulatorHandPoseJoints, sdk_SimulatorHandPoseRotationConstraintsDegrees as SimulatorHandPoseRotationConstraintsDegrees, sdk_SimulatorHandPoseRotationRangeDegrees as SimulatorHandPoseRotationRangeDegrees, sdk_SimulatorHandPoseRotations as SimulatorHandPoseRotations, sdk_SimulatorMesh as SimulatorMesh, sdk_SimulatorNavMeshPath as SimulatorNavMeshPath, sdk_SimulatorObject as SimulatorObject, sdk_SimulatorObjectDefinition as SimulatorObjectDefinition, sdk_SimulatorObjectDetectionSource as SimulatorObjectDetectionSource, sdk_SimulatorObjectUpdate as SimulatorObjectUpdate, sdk_SimulatorObjects as SimulatorObjects, sdk_SimulatorPhysicsMode as SimulatorPhysicsMode, sdk_SimulatorPlane as SimulatorPlane, sdk_SimulatorPlaneType as SimulatorPlaneType, sdk_SimulatorQuaternionTuple as SimulatorQuaternionTuple, sdk_SimulatorSceneManifest as SimulatorSceneManifest, sdk_SimulatorVector3Tuple as SimulatorVector3Tuple, sdk_SpatialPanelOptions as SpatialPanelOptions, sdk_SplatData as SplatData, sdk_StrokeEventMap as StrokeEventMap, sdk_StylizedFaceOptions as StylizedFaceOptions, sdk_TextButtonOptions as TextButtonOptions, sdk_TextViewOptions as TextViewOptions, sdk_ToolCall as ToolCall, sdk_ToolOptions as ToolOptions, sdk_ToolResult as ToolResult, sdk_ToolSchema as ToolSchema, sdk_UIJsonNode as UIJsonNode, sdk_UIJsonNodeOptions as UIJsonNodeOptions, sdk_Vec2Tuple as Vec2Tuple, sdk_Vec3Tuple as Vec3Tuple, sdk_VideoFileStreamOptions as VideoFileStreamOptions, sdk_VideoStreamDetails as VideoStreamDetails, sdk_VideoStreamEventMap as VideoStreamEventMap, sdk_VideoStreamGetSnapshotBase64Options as VideoStreamGetSnapshotBase64Options, sdk_VideoStreamGetSnapshotBlobOptions as VideoStreamGetSnapshotBlobOptions, sdk_VideoStreamGetSnapshotImageDataOptions as VideoStreamGetSnapshotImageDataOptions, sdk_VideoStreamGetSnapshotOptions as VideoStreamGetSnapshotOptions, sdk_VideoStreamGetSnapshotTextureOptions as VideoStreamGetSnapshotTextureOptions, sdk_VideoStreamOptions as VideoStreamOptions, sdk_VideoViewOptions as VideoViewOptions, sdk_ViewOptions as ViewOptions, sdk_VisemeWeights as VisemeWeights, sdk_VisibleObjectsContext as VisibleObjectsContext, sdk_WeatherData as WeatherData, sdk_WebXRJointRotations as WebXRJointRotations };
+}
+
+declare global {
+    interface Window {
+        xb?: typeof sdk;
+        xbReady?: Promise<void>;
+    }
+}
+
+export { AI, AIOptions, AVERAGE_IPD_METERS, ActiveControllers, Agent, AnimatableNumber, AudioListener, AudioPlayer, BACK, BackgroundMusic, CategoryVolumes, Col, Context, ContextOptions, Core, CoreSound, DEFAULT_DEVICE_CAMERA_HEIGHT, DEFAULT_DEVICE_CAMERA_WIDTH, DEFAULT_RGB_TO_DEPTH_PARAMS, DEVICE_CAMERA_PARAMETERS, DOWN, Depth, DepthMesh, DepthMeshOptions, DepthOptions, DepthTextures, DetectedBodyPose, DetectedFace, DetectedMesh, DetectedObject, DetectedPlane, DeviceCameraOptions, DragManager, DragMode, ExitButton, FINGER_ORDER, FORWARD, FaceLandmarkName, FaceRecognizer, FacesOptions, FreestandingSlider, GEMINI_DEFAULT_FLASH_MODEL, GEMINI_DEFAULT_IMAGE_MODEL, GEMINI_DEFAULT_LIVE_MODEL, GamepadBindings, GamepadController, GazeController, Gemini, GeminiOptions, GenerateSkyboxTool, GestureRecognition, GestureRecognitionOptions, GetWeatherTool, Grid, HAND_BONE_IDX_CONNECTION_MAP, HAND_INDEX_TO_LABEL, HAND_JOINT_COUNT, HAND_JOINT_IDX_CONNECTION_MAP, HAND_JOINT_NAMES, Handedness, Hands, HandsOptions, HeadGestureRecognition, HeadGestureRecognitionOptions, HeuristicGestureRecognizer, HeuristicHeadGestureRecognizer, HorizontalPager, HumanRecognizer, HumansOptions, IconButton, IconView, ImageView, Input, InputOptions, Keycodes, LEFT, LEFT_VIEW_ONLY_LAYER, LabelView, Lighting, LightingOptions, LoadingSpinnerManager, MaterialSymbolsView, MediaPipeHandContext, MediaPipeHandPoseEstimator, MeshDetectionOptions, MeshDetector, MeshScript, ModelLoader, ModelViewer, MouseController, NUM_HANDS, OCCLUDABLE_ITEMS_LAYER, ObjectDetector, ObjectsOptions, OcclusionPass, OcclusionUtils, OpenAI, OpenAIOptions, Options, Orbiter, PageIndicator, Pager, PagerState, Panel, PanelMesh, Physics, PhysicsOptions, PinchOnButtonAction, PlaneDetector, PlanesOptions, PoseJointName, RIGHT, RIGHT_VIEW_ONLY_LAYER, Raycaster, Registry, Reticle, ReticleOptions, Reticles, RotationRaycastMesh, Row, SIMULATOR_HAND_COMMON_BIOMECHANICAL_CONSTRAINTS_DEGREES, SIMULATOR_HAND_POSE_NAMES, SIMULATOR_HAND_POSE_ROTATIONS, SOUND_PRESETS, SceneDetector, SceneOptions, SceneSetOfMarkOptions, SceneVisibilityOptions, ScreenshotSynthesizer, Script, ScriptMixin, ScriptsManager, ScriptsManagerEventType, ScrollingTroikaTextView, SegmentCategory, SegmentationOptions, Segmenter, SetSimulatorEnvironmentEvent, SetSimulatorHandPhysicsEvent, SetSimulatorModeEvent, ShowHandsAction, ShowSimulatorInstructionsEvent, Simulator, SimulatorCamera, SimulatorControlMode, SimulatorControllerState, SimulatorControls, SimulatorDepth, SimulatorDepthMaterial, SimulatorHandPose, SimulatorHandPoseChangeRequestEvent, SimulatorHands, SimulatorInterface, SimulatorMediaDeviceInfo, SimulatorMode, SimulatorNavMesh, SimulatorOptions, SimulatorPointerLockController, SimulatorRenderMode, SimulatorScene, SimulatorUser, SimulatorUserAction, SketchPanel, SkyboxAgent, SoundOptions, SoundSynthesizer, SparkRendererHolder, SpatialAudio, SpatialPanel, SpeechRecognizer, SpeechRecognizerOptions, SpeechSynthesizer, SpeechSynthesizerOptions, SplatAnchor, StreamState, StrokeRecognizer, StylizedFace, TensorFlowHandPoseEstimator, TextButton, TextScrollerState, TextView, Tool, UI, UIKitOptions, UI_OVERLAY_LAYER, UP, UX, User, VIEW_DEPTH_GAP, VerticalPager, VideoFileStream, VideoStream, VideoView, View, VolumeCategory, WaitFrame, WalkTowardsPanelAction, WebXRHandContext, WebXRHandPoseEstimator, World, WorldOptions, XRButton, XRDeviceCamera, XREffects, XRPass, XRTransitionOptions, XR_BLOCKS_ASSETS_PATH, ZERO_VECTOR3, ZERO_VISEME, _getBvhImportStatus, add, ai, applyBVH, applySimulatorHandPoseRotationConstraints, average, callInitWithDependencyInjection, camera, clamp, clamp01, clampRotationToAngle, context, core, cropImage, depth, disposeBVH, enableAcceleratedRaycast, estimateHandScale, extractYaw, getAdjacentFingerSpreads, getBoneVectors, getCameraParametersSnapshot, getColorHex, getDeltaTime, getDeviceCameraClipFromView, getDeviceCameraWorldFromClip, getDeviceCameraWorldFromView, getElapsedTime, getFingerBendAngles, getFingerCurl, getFingerDirection, getFingerJoint, getFingerPalmAlignment, getFingerSpread, getFingerStraightness, getFingertipDistance, getFingertipPalmDistance, getPalmNormal, getPalmPose, getPalmRight, getPalmUp, getPalmWidth, getRelativeBoneAngles, getThumbBendAngles, getThumbCurl, getThumbDirection, getThumbOpposition, getThumbStraightness, getThumbVerticalDirection, getUrlParamBool, getUrlParamFloat, getUrlParamInt, getUrlParameter, getVec4ByColorString, getXrCameraLeft, getXrCameraRight, init, initScript, input, intrinsicsToProjectionMatrix, isBVHReady, isDeviceCameraPoseAvailable, lerp, loadStereoImageAsTextures, loadingSpinnerManager, lookAtRotation, objectIsDescendantOf, parseBase64DataURL, parseSimulatorHandPoseRotations, placeObjectAtIntersectionFacingTarget, print, resolveSimulatorHandPoseRotations, resolveSimulatorRotationsFromKeypoints, scene, showOnlyInLeftEye, showOnlyInRightEye, showReticleOnDepthMesh, sound, timer, transformRgbUvToWorld, traverseUtil, uninitScript, urlParams, user, visualizeDepth, visualizeDepthMap, world, xrDepthMeshOptions, xrDepthMeshPhysicsOptions, xrDepthMeshVisualizationOptions, xrDeviceCameraEnvironmentContinuousOptions, xrDeviceCameraEnvironmentOptions, xrDeviceCameraUserContinuousOptions, xrDeviceCameraUserOptions };
+export type { AIModel, AgentLifecycleCallbacks, AudioListenerOptions, AudioPlayerOptions, AutomationModeOptions, CameraParametersSnapshot, CameraSnapshot, ColOptions, Constructor, DeepPartial, DeepReadonly, DepthArray, DeviceCameraParameters, DigitName, Draggable, FaceBlendshape, FaceLandmark, FingerName, FormFactor, GLTFData, GamepadAction, GeminiQueryInput, GestureConfiguration, GestureDetectionResult, GestureEvent, GestureEventDetail, GestureEventType, GestureHandedness, GestureRecognizer, GestureScoreMap, GetWeatherArgs, GridOptions, HandContext, HandLabel, HasDraggingMode, HasIgnoreReticleRaycast, HeadGestureConfiguration, HeadGestureContext, HeadGestureDetectionResult, HeadGestureEvent, HeadGestureEventDetail, HeadGestureEventMap, HeadGestureRecognizer, HeadGestureScoreMap, HeadPoseSample, HeuristicGestureDetector, HeuristicHeadGestureDetector, HeuristicHeadGestureRecognizerOptions, ISimulatorSettingsPanelElement, IconButtonOptions, IconViewOptions, ImageViewOptions, Injectable, InjectableConstructor, JointName, JointPositions, KeyEvent, KeysJson, LabelViewOptions, LipMetrics, LiveSessionState, MaterialSymbolsViewOptions, MaybeHasIgnoreReticleRaycast, MediaOrSimulatorMediaDeviceInfo, MediaPipeHandLandmark, ModelClass, ModelLoaderLoadGLTFOptions, ModelLoaderLoadOptions, ModelOptions, NormalizedDetectedObject, ObjectGrabEvent, ObjectTouchEvent, OrbiterOptions, OrbiterPosition, PagerOptions, PalmPose, PanelFadeState, PanelOptions, PlaySoundOptions, PoseEstimator, PoseLandmark, PreparedSimulatorNavMesh, QuatTuple, RAPIERCompat, ResolvedSimulatorSceneManifest, RgbToDepthParams, RowOptions, SceneContextDetectionOptions, SceneContextDetectionResult, ScriptsManagerEventMap, ScrollingTroikaTextViewOptions, SegmentationMask, SelectEvent, SemanticBounds, SemanticMetadata, SemanticNode, SemanticSource, SemanticTree, SemanticViewData, SetOfMark, SetOfMarkContext, Shader, ShaderUniforms, SimulatorCustomInstruction, SimulatorDetectedObjectInput, SimulatorEnvironment, SimulatorHandJointRotationArray, SimulatorHandPhysicsOptions, SimulatorHandPoseHTMLElement, SimulatorHandPoseJoints, SimulatorHandPoseRotationConstraintsDegrees, SimulatorHandPoseRotationRangeDegrees, SimulatorHandPoseRotations, SimulatorMesh, SimulatorNavMeshPath, SimulatorObject, SimulatorObjectDefinition, SimulatorObjectDetectionSource, SimulatorObjectUpdate, SimulatorObjects, SimulatorPhysicsMode, SimulatorPlane, SimulatorPlaneType, SimulatorQuaternionTuple, SimulatorSceneManifest, SimulatorVector3Tuple, SpatialPanelOptions, SplatData, StrokeEventMap, StylizedFaceOptions, TextButtonOptions, TextViewOptions, ToolCall, ToolOptions, ToolResult, ToolSchema, UIJsonNode, UIJsonNodeOptions, Vec2Tuple, Vec3Tuple, VideoFileStreamOptions, VideoStreamDetails, VideoStreamEventMap, VideoStreamGetSnapshotBase64Options, VideoStreamGetSnapshotBlobOptions, VideoStreamGetSnapshotImageDataOptions, VideoStreamGetSnapshotOptions, VideoStreamGetSnapshotTextureOptions, VideoStreamOptions, VideoViewOptions, ViewOptions, VisemeWeights, VisibleObjectsContext, WeatherData, WebXRJointRotations };
