@@ -1,0 +1,19 @@
+{
+  "name": "objects3d-server",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Offloaded 3D object detection server for the objects_3d_server demo",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@google/genai": "^2.7.0",
+    "@huggingface/transformers": "^3.7.6",
+    "sharp": "^0.34.4",
+    "three": "^0.184.0",
+    "three-mesh-bvh": "^0.9.10",
+    "ws": "^8.18.3"
+  }
+}

@@ -9,13 +9,19 @@
  */
 
 import * as THREE from 'three';
-import {Script, core, enableAcceleratedRaycast} from 'xrblocks';
+import {
+  Script,
+  core,
+  enableAcceleratedRaycast,
+  getCameraParametersSnapshot,
+} from 'xrblocks';
 
 import {Detected3DObject} from './Detected3DObject';
 import {
   anchorFromBboxCenter,
   sampleDepthInMaskAcrossFrames,
 } from './geometry/DepthSampling';
+import {buildFrozenCamera} from './geometry/FrozenCamera';
 import {
   fuseIntoBoxes,
   snapBoxToFloor,
@@ -67,6 +73,25 @@ export interface Object3DDetectorOptions {
    * @defaultValue `false`
    */
   showDebugBoxes?: boolean;
+  /**
+   * Maximum ray-hit distance in metres when sampling the depth mesh.
+   * @defaultValue `12`
+   */
+  maxRayDistance?: number;
+  /**
+   * World-space sanity bounds; fitted boxes whose centre falls outside are
+   * rejected. Tuned for a room-scale scene around the session origin.
+   * @defaultValue `{maxXZ: 6, minY: -1, maxY: 5}`
+   */
+  sceneBounds?: {maxXZ?: number; minY?: number; maxY?: number};
+  /**
+   * Assumed distance in metres from the session origin to the cardinal
+   * walls, used by the tiny-flat fitter (switches, outlets) to snap onto a
+   * wall plane. The default matches the simulator's wood-cabin scene; tune
+   * it (or avoid tiny-flat labels) for real rooms.
+   * @defaultValue `3`
+   */
+  roomHalf?: number;
 }
 
 // Kick off the three-mesh-bvh dynamic import at module load so it is ready
@@ -90,7 +115,9 @@ const _bvhReady: Promise<boolean> = enableAcceleratedRaycast().catch(
  * ```
  */
 export class Object3DDetector extends Script {
-  private readonly _opts: Required<Object3DDetectorOptions>;
+  private readonly _opts: Required<
+    Omit<Object3DDetectorOptions, 'sceneBounds'>
+  > & {sceneBounds: {maxXZ: number; minY: number; maxY: number}};
   private _results: Detected3DObject[] = [];
   private _detectInFlight = false;
 
@@ -104,6 +131,13 @@ export class Object3DDetector extends Script {
       maskBackend: options.maskBackend ?? 'slimsam',
       fuseAcrossViews: options.fuseAcrossViews ?? true,
       showDebugBoxes: options.showDebugBoxes ?? false,
+      maxRayDistance: options.maxRayDistance ?? 12,
+      sceneBounds: {
+        maxXZ: options.sceneBounds?.maxXZ ?? 6,
+        minY: options.sceneBounds?.minY ?? -1,
+        maxY: options.sceneBounds?.maxY ?? 5,
+      },
+      roomHalf: options.roomHalf ?? 3,
     };
   }
 
@@ -196,20 +230,16 @@ export class Object3DDetector extends Script {
     b64Canvas.getContext('2d')!.putImageData(snapImageData, 0, 0);
     const snapBase64 = b64Canvas.toDataURL('image/jpeg', 0.9);
 
-    // Freeze the camera matrix so raycasts align with snapshot pixels.
-    const liveCam = core.camera;
-    const frozenCam = liveCam.clone() as THREE.PerspectiveCamera;
-    frozenCam.matrixAutoUpdate = false;
-    liveCam.updateMatrixWorld();
-    frozenCam.matrix.copy(liveCam.matrix);
-    frozenCam.matrixWorld.copy(liveCam.matrixWorld);
-    frozenCam.matrixWorldInverse.copy(liveCam.matrixWorld).invert();
-    frozenCam.projectionMatrix.copy(liveCam.projectionMatrix);
-    frozenCam.projectionMatrixInverse.copy(liveCam.projectionMatrixInverse);
-    frozenCam.position.copy(liveCam.position);
-    frozenCam.quaternion.copy(liveCam.quaternion);
+    // Freeze the camera model at snapshot time so raycasts align with the
+    // snapshot pixels. The RGB frame comes from the physical passthrough
+    // camera, whose intrinsics and pose differ from the XR render camera
+    // (e.g. on Galaxy XR: ~48° vertical FOV near the right eye, versus the
+    // ~90°+ union frustum between the eyes), so build the frozen camera from
+    // the SDK's device-camera model. In the simulator both models coincide.
     const snapAspect = snapImageData.width / snapImageData.height;
-    frozenCam.userData = {...frozenCam.userData, snapAspect};
+    const frozenCam =
+      this._buildDeviceFrozenCamera(snapAspect) ??
+      this._buildRenderFrozenCamera(snapAspect);
 
     // Wait for the BVH patch before building the per-press bounds tree.
     await _bvhReady;
@@ -334,7 +364,8 @@ export class Object3DDetector extends Script {
             3,
             frozenCam,
             frozenDepthMesh,
-            snapAspect
+            snapAspect,
+            this._opts.maxRayDistance
           );
           mask.close();
 
@@ -391,6 +422,7 @@ export class Object3DDetector extends Script {
             anchor,
             box2d,
             tinyFlat: isTinyFlatLabel(obj.label),
+            roomHalf: this._opts.roomHalf,
           });
           if (!obb) return null;
 
@@ -399,8 +431,12 @@ export class Object3DDetector extends Script {
           }
 
           const c = obb.center;
+          const bounds = this._opts.sceneBounds;
           const farFromRoom =
-            Math.abs(c.x) > 6 || Math.abs(c.z) > 6 || c.y < -1 || c.y > 5;
+            Math.abs(c.x) > bounds.maxXZ ||
+            Math.abs(c.z) > bounds.maxXZ ||
+            c.y < bounds.minY ||
+            c.y > bounds.maxY;
           const minPoints =
             cat === 'small' ? 4 : cat === 'light' ? 8 : cat === 'flat' ? 8 : 20;
           const tinyFlat = isTinyFlatLabel(obj.label);
@@ -487,10 +523,69 @@ export class Object3DDetector extends Script {
     }
   }
 
+  /**
+   * Build the frozen camera from the SDK's device-camera model (physical
+   * passthrough intrinsics + pose on device; render-camera-derived square
+   * crop in the simulator). Returns `null` when no camera parameters are
+   * available yet (e.g. before init or outside an XR session).
+   */
+  private _buildDeviceFrozenCamera(
+    snapAspect: number
+  ): THREE.PerspectiveCamera | null {
+    const deviceCamera = core.deviceCamera;
+    if (!deviceCamera) return null;
+    try {
+      const params = getCameraParametersSnapshot(
+        core.camera,
+        core.renderer.xr.getCamera(),
+        deviceCamera,
+        core.world?.objects?.targetDevice ?? 'galaxyxr'
+      );
+      if (!params) return null;
+      return buildFrozenCamera({
+        worldFromView: params.worldFromView,
+        clipFromView: params.clipFromView,
+        viewFromClip: params.viewFromClip,
+        snapAspect,
+      });
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  /**
+   * Legacy fallback: freeze a clone of the render camera. Only correct when
+   * the snapshot was rendered from that camera (simulator / non-XR); kept as
+   * a fallback for callers without device-camera parameters.
+   */
+  private _buildRenderFrozenCamera(
+    snapAspect: number
+  ): THREE.PerspectiveCamera {
+    const liveCam = core.camera;
+    const frozenCam = liveCam.clone() as THREE.PerspectiveCamera;
+    frozenCam.matrixAutoUpdate = false;
+    liveCam.updateMatrixWorld();
+    frozenCam.matrix.copy(liveCam.matrix);
+    frozenCam.matrixWorld.copy(liveCam.matrixWorld);
+    frozenCam.matrixWorldInverse.copy(liveCam.matrixWorld).invert();
+    frozenCam.projectionMatrix.copy(liveCam.projectionMatrix);
+    frozenCam.projectionMatrixInverse.copy(liveCam.projectionMatrixInverse);
+    frozenCam.position.copy(liveCam.position);
+    frozenCam.quaternion.copy(liveCam.quaternion);
+    frozenCam.userData = {...frozenCam.userData, snapAspect};
+    return frozenCam;
+  }
+
   /** Clone the live depth mesh into a static snapshot. */
   private _snapshotDepthMesh(): THREE.Mesh | null {
-    const live = core.depth?.depthMesh;
+    const depth = core.depth;
+    const live = depth?.depthMesh;
     if (!live || !live.geometry) return null;
+    // The full-resolution geometry is only rebuilt per-frame when
+    // options.depth.depthMesh.updateFullResolutionGeometry is set (default
+    // false), so force a rebuild from the cached CPU depth to avoid cloning
+    // a stale mesh.
+    depth.updateFullResolutionDepthMesh();
     const clonedGeom = live.geometry.clone();
     clonedGeom.computeBoundingSphere();
     clonedGeom.computeBoundingBox();

@@ -35,6 +35,12 @@ export interface ObbFitOptions {
   box2d?: THREE.Box2 | null;
   /** Whether the label is a tiny flat item (switch, outlet, etc.). */
   tinyFlat?: boolean;
+  /**
+   * Assumed distance in metres from the session origin to the cardinal walls
+   * (`x = ±roomHalf`, `z = ±roomHalf`), used by {@link fitTinyFlatOBB}.
+   * Defaults to 3, matching the simulator's wood-cabin scene.
+   */
+  roomHalf?: number;
 }
 
 // Module-level scratch objects reused across calls to reduce GC pressure.
@@ -395,14 +401,19 @@ export function fitTinyFlatOBB(opts: ObbFitOptions): InternalObb | null {
   _tfRay.setFromCamera(_tfNdc, cam);
   const o = _tfRay.ray.origin,
     d = _tfRay.ray.direction;
+  const roomHalf = opts.roomHalf ?? 3.0;
   let anchorOk = false;
   if (opts.anchor) {
     const a = opts.anchor;
-    if (Math.abs(a.x) <= 4 && Math.abs(a.z) <= 4 && a.y >= -0.5 && a.y <= 4) {
+    if (
+      Math.abs(a.x) <= roomHalf + 1 &&
+      Math.abs(a.z) <= roomHalf + 1 &&
+      a.y >= -0.5 &&
+      a.y <= 4
+    ) {
       anchorOk = true;
     }
   }
-  const roomHalf = 3.0;
   const candidates = [
     {n: new THREE.Vector3(1, 0, 0), d: -roomHalf},
     {n: new THREE.Vector3(-1, 0, 0), d: -roomHalf},

@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>3D Object Boxes (Server Offload)</title>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, user-scalable=no"
+    />
+    <meta
+      http-equiv="Cache-Control"
+      content="no-cache, no-store, must-revalidate"
+    />
+    <link type="text/css" rel="stylesheet" href="../../samples/main.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
+          "three/": "https://cdn.jsdelivr.net/npm/three@0.184.0/",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/",
+          "xrblocks": "../../build/xrblocks.js",
+          "xrblocks/addons/": "../../build/addons/"
+        }
+      }
+    </script>
+    <style>
+      .panel {
+        position: fixed;
+        bottom: 24px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        background: rgba(20, 20, 20, 0.85);
+        padding: 14px 18px;
+        border-radius: 12px;
+        font-family: system-ui, sans-serif;
+        color: #eee;
+        max-width: 540px;
+        width: 92%;
+      }
+      .panel .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .panel button {
+        padding: 9px 14px;
+        border-radius: 8px;
+        border: 1px solid #444;
+        background: #2a2a2a;
+        color: white;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      .panel button:hover:not(:disabled) {
+        background: #3a3a3a;
+      }
+      .panel button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      .panel input {
+        flex: 1;
+        padding: 7px 9px;
+        border-radius: 6px;
+        border: 1px solid #444;
+        background: #2a2a2a;
+        color: white;
+        font-size: 13px;
+      }
+      .panel .status {
+        font-size: 12px;
+        color: #aaa;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <div class="row">
+        <input
+          id="serverUrl"
+          type="text"
+          placeholder="ws://localhost:8081"
+          spellcheck="false"
+        />
+        <button id="connectBtn">Connect</button>
+      </div>
+      <div class="row">
+        <button id="detectBtn" disabled>Detect</button>
+        <button id="clearBtn">Clear</button>
+      </div>
+      <div class="status" id="status">
+        Not connected. In XR, pinch / trigger to detect.
+      </div>
+    </div>
+
+    <script type="module">
+      import * as THREE from 'three';
+      import * as xb from 'xrblocks';
+      import {
+        buildBoxGroup,
+        CAT_COLOR,
+      } from 'xrblocks/addons/objects3d/visuals/BoxGroup.js';
+
+      const statusEl = document.getElementById('status');
+      const detectBtn = document.getElementById('detectBtn');
+      const clearBtn = document.getElementById('clearBtn');
+      const connectBtn = document.getElementById('connectBtn');
+      const serverUrlEl = document.getElementById('serverUrl');
+
+      const params = new URLSearchParams(window.location.search);
+      serverUrlEl.value =
+        params.get('server') ??
+        localStorage.getItem('objects3d-server-url') ??
+        'ws://localhost:8081';
+
+      function setStatus(text) {
+        statusEl.textContent = text;
+        console.log('[objects3d-server]', text);
+      }
+
+      /** Base64-encode an ArrayBuffer(view) in chunks. */
+      function bufferToBase64(view) {
+        const bytes = new Uint8Array(
+          view.buffer,
+          view.byteOffset,
+          view.byteLength
+        );
+        let binary = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        }
+        return btoa(binary);
+      }
+
+      /** Scene container for the boxes returned by the server. */
+      class RemoteBoxes extends xb.Script {
+        clear() {
+          for (const child of [...this.children]) {
+            child.traverse((o) => {
+              o.geometry?.dispose?.();
+              if (Array.isArray(o.material)) {
+                o.material.forEach((m) => m.dispose?.());
+              } else {
+                o.material?.dispose?.();
+              }
+            });
+            this.remove(child);
+          }
+        }
+
+        addResult(obj) {
+          const obb = {
+            center: new THREE.Vector3().fromArray(obj.center),
+            size: new THREE.Vector3().fromArray(obj.size),
+            angle: obj.angle,
+          };
+          const color = CAT_COLOR[obj.category] ?? 0x4cd964;
+          this.add(buildBoxGroup(obb, obj.label, color));
+        }
+      }
+      const remoteBoxes = new RemoteBoxes();
+
+      // ---------------------------------------------------------------------
+      // Capture: freeze pixels + camera model + depth mesh in one place.
+      // ---------------------------------------------------------------------
+      function captureFrame() {
+        const snapshot = xb.core.deviceCamera?.getSnapshot({
+          outputFormat: 'imageData',
+        });
+        if (!snapshot) {
+          setStatus('No camera frame available yet.');
+          return null;
+        }
+
+        // Device-camera matrices (physical passthrough camera on device, the
+        // render-camera square crop in the simulator), frozen at this moment.
+        const targetDevice = /OculusBrowser|Quest/i.test(navigator.userAgent)
+          ? 'quest3'
+          : 'galaxyxr';
+        let cameraParams = null;
+        try {
+          cameraParams = xb.getCameraParametersSnapshot(
+            xb.core.camera,
+            xb.core.renderer.xr.getCamera(),
+            xb.core.deviceCamera,
+            targetDevice
+          );
+        } catch (_e) {
+          cameraParams = null;
+        }
+        if (!cameraParams) {
+          setStatus('Camera parameters not available yet.');
+          return null;
+        }
+
+        // Depth mesh, forced fresh at full resolution.
+        xb.core.depth?.updateFullResolutionDepthMesh();
+        const depthMesh = xb.core.depth?.depthMesh;
+        const position = depthMesh?.geometry?.attributes?.position;
+        if (!position) {
+          setStatus('No depth mesh available yet.');
+          return null;
+        }
+        depthMesh.updateMatrixWorld();
+        const index = depthMesh.geometry.index;
+
+        // JPEG from the same ImageData (no second video-frame read).
+        const canvas = document.createElement('canvas');
+        canvas.width = snapshot.width;
+        canvas.height = snapshot.height;
+        canvas.getContext('2d').putImageData(snapshot, 0, 0);
+        const base64 = canvas.toDataURL('image/jpeg', 0.9);
+
+        return {
+          type: 'detect',
+          captureId: crypto.randomUUID(),
+          image: {base64, width: snapshot.width, height: snapshot.height},
+          camera: {
+            worldFromView: cameraParams.worldFromView.toArray(),
+            clipFromView: cameraParams.clipFromView.toArray(),
+            viewFromClip: cameraParams.viewFromClip.toArray(),
+            snapAspect: snapshot.width / snapshot.height,
+          },
+          depthMesh: {
+            position: bufferToBase64(position.array),
+            index: index ? bufferToBase64(index.array) : null,
+            indexType:
+              index && index.array instanceof Uint16Array ? 'uint16' : 'uint32',
+            matrixWorld: depthMesh.matrixWorld.toArray(),
+          },
+        };
+      }
+
+      // ---------------------------------------------------------------------
+      // WebSocket client
+      // ---------------------------------------------------------------------
+      let ws = null;
+      let inFlight = false;
+
+      function connect() {
+        const url = serverUrlEl.value.trim();
+        if (!url) return;
+        localStorage.setItem('objects3d-server-url', url);
+        ws?.close();
+        setStatus(`Connecting to ${url} …`);
+        ws = new WebSocket(url);
+        ws.onopen = () => {
+          setStatus('Connected. Detect (or pinch in XR) to scan.');
+          detectBtn.disabled = false;
+        };
+        ws.onclose = () => {
+          setStatus('Disconnected.');
+          detectBtn.disabled = true;
+          inFlight = false;
+        };
+        ws.onerror = () => setStatus(`Connection error (${url}).`);
+        ws.onmessage = (event) => {
+          let msg;
+          try {
+            msg = JSON.parse(event.data);
+          } catch (_e) {
+            return;
+          }
+          if (msg.type === 'status') {
+            setStatus(`Server: ${msg.message}`);
+          } else if (msg.type === 'result') {
+            inFlight = false;
+            detectBtn.disabled = false;
+            for (const obj of msg.objects) remoteBoxes.addResult(obj);
+            setStatus(
+              `Placed ${msg.objects.length} boxes ` +
+                `(${(msg.timings.totalMs / 1000).toFixed(1)} s).`
+            );
+          } else if (msg.type === 'error') {
+            inFlight = false;
+            detectBtn.disabled = false;
+            setStatus(`Server error: ${msg.message}`);
+          }
+        };
+      }
+
+      function detect() {
+        if (inFlight) return;
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          setStatus('Not connected to the server.');
+          return;
+        }
+        const payload = captureFrame();
+        if (!payload) return;
+        inFlight = true;
+        detectBtn.disabled = true;
+        setStatus('Uploading capture …');
+        ws.send(JSON.stringify(payload));
+      }
+
+      connectBtn.addEventListener('click', connect);
+      detectBtn.addEventListener('click', detect);
+      clearBtn.addEventListener('click', () => {
+        remoteBoxes.clear();
+        setStatus('Cleared.');
+      });
+
+      // ---------------------------------------------------------------------
+      // XR Blocks init
+      // ---------------------------------------------------------------------
+      const options = new xb.Options();
+      options.enableCamera();
+      options.enableDepth();
+      // Keep the full-resolution depth geometry fresh so captures are never
+      // stale (matches the objects_3d demo's settings).
+      options.depth.depthMesh.updateFullResolutionGeometry = true;
+      options.depth.depthTexture.enabled = false;
+      options.depth.matchDepthView = false;
+      options.reticles.enabled = true;
+      options.setAppTitle('3D Object Boxes (Server Offload)');
+
+      xb.add(remoteBoxes);
+      await xb.init(options);
+
+      // In immersive XR the DOM panel is not visible: pinch / controller
+      // trigger runs a detection instead.
+      xb.core.renderer.xr.addEventListener('sessionstart', () => {
+        const session = xb.core.renderer.xr.getSession();
+        session?.addEventListener('select', () => detect());
+        // World-space boxes are only valid while the reference space is
+        // stable; a recenter shifts the world, so flush stale boxes.
+        const refSpace = xb.core.renderer.xr.getReferenceSpace();
+        refSpace?.addEventListener('reset', () => {
+          remoteBoxes.clear();
+          setStatus('Reference space reset — cleared stale boxes.');
+        });
+      });
+
+      // Auto-connect when a server URL is already known.
+      if (serverUrlEl.value) connect();
+    </script>
+  </body>
+</html>
