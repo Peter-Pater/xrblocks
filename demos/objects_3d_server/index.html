@@ -168,7 +168,23 @@
       // ---------------------------------------------------------------------
       // Capture: freeze pixels + camera model + depth mesh in one place.
       // ---------------------------------------------------------------------
-      function captureFrame() {
+      async function captureFrame() {
+        // Wait for a fresh video frame first: inside an immersive session the
+        // hidden <video> can be throttled, so getSnapshot would otherwise read
+        // a stale frame from an older head pose while the camera matrices
+        // below are frozen at the current one — every box from that capture
+        // would come back rotated by the intervening head motion.
+        const meta = await xb.core.deviceCamera?.waitForFreshFrame?.();
+        if (meta?.captureTime) {
+          console.info(
+            '[objects3d-server] camera frame latency ~' +
+              `${(performance.now() - meta.captureTime).toFixed(0)} ms`
+          );
+        } else if (meta === null) {
+          console.info(
+            '[objects3d-server] no fresh-frame signal; snapshot may be stale'
+          );
+        }
         const snapshot = xb.core.deviceCamera?.getSnapshot({
           outputFormat: 'imageData',
         });
@@ -284,13 +300,13 @@
         };
       }
 
-      function detect() {
+      async function detect() {
         if (inFlight) return;
         if (!ws || ws.readyState !== WebSocket.OPEN) {
           setStatus('Not connected to the server.');
           return;
         }
-        const payload = captureFrame();
+        const payload = await captureFrame();
         if (!payload) return;
         inFlight = true;
         detectBtn.disabled = true;

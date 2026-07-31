@@ -7,12 +7,16 @@
 
 export {Detected3DObject} from './Detected3DObject';
 export {Object3DDetector} from './Object3DDetector';
-export type {Object3DDetectorOptions} from './Object3DDetector';
+export type {
+  Object3DDetectorOptions,
+  Object3DDetectorDiagnostics,
+} from './Object3DDetector';
 
 // Pure helpers worth reusing from application code.
 export {uvToNdc, sampleDepthInMask} from './geometry/DepthSampling';
 export {buildFrozenCamera} from './geometry/FrozenCamera';
 export type {FrozenCameraMatrices} from './geometry/FrozenCamera';
+export {PoseRing} from './geometry/PoseRing';
 export {fitYawOBB} from './geometry/ObbFitting';
 export {box2dIoU, snapBoxToFloor, unionDetections} from './geometry/Fusion';
 export type {FusionRecord} from './geometry/Fusion';

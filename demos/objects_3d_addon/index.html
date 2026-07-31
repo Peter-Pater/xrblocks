@@ -11,6 +11,8 @@
       http-equiv="Cache-Control"
       content="no-cache, no-store, must-revalidate"
     />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <link type="text/css" rel="stylesheet" href="../../samples/main.css" />
     <script type="importmap">
       {
@@ -18,6 +20,19 @@
           "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
           "three/": "https://cdn.jsdelivr.net/npm/three@0.184.0/",
           "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/",
+          "troika-three-text": "https://cdn.jsdelivr.net/gh/protectwise/troika@028b81cf308f0f22e5aa8e78196be56ec1997af5/packages/troika-three-text/src/index.js",
+          "troika-three-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-three-utils/src/index.js",
+          "troika-worker-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-worker-utils/src/index.js",
+          "bidi-js": "https://esm.sh/bidi-js@%5E1.0.2?target=es2022",
+          "webgl-sdf-generator": "https://esm.sh/webgl-sdf-generator@1.1.1/es2022/webgl-sdf-generator.mjs",
+          "lit": "https://cdn.jsdelivr.net/gh/lit/dist@3/core/lit-core.min.js",
+          "lit/": "https://esm.run/lit@3/",
+          "@pmndrs/uikit": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit@1.0.64/dist/index.min.js",
+          "@pmndrs/uikit-pub-sub": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit-pub-sub@1.0.64/dist/index.min.js",
+          "@pmndrs/msdfonts": "https://cdn.jsdelivr.net/npm/@pmndrs/msdfonts@1.0.64/dist/index.min.js",
+          "@preact/signals-core": "https://cdn.jsdelivr.net/npm/@preact/signals-core@1.12.1/dist/signals-core.mjs",
+          "yoga-layout/load": "https://cdn.jsdelivr.net/npm/yoga-layout@3.2.1/dist/src/load.js",
+          "uiblocks": "../../build/addons/uiblocks/src/index.js",
           "xrblocks": "../../build/xrblocks.js",
           "xrblocks/addons/": "../../build/addons/",
           "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.34/vision_bundle.mjs",
@@ -35,61 +50,292 @@
         transform: translateX(-50%);
         z-index: 10;
         display: flex;
+        flex-direction: column;
         gap: 10px;
-        align-items: center;
-        background: rgba(20, 20, 20, 0.85);
+        background: rgba(20, 20, 20, 0.88);
         padding: 14px 18px;
         border-radius: 12px;
         font-family: system-ui, sans-serif;
         color: #eee;
+        max-width: 620px;
+      }
+      .panel .row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
       }
       .panel button {
-        padding: 9px 14px;
+        padding: 8px 13px;
         border-radius: 8px;
         border: 1px solid #444;
         background: #2a2a2a;
         color: white;
         cursor: pointer;
-        font-size: 14px;
+        font-size: 13px;
+      }
+      .panel button:hover {
+        background: #3a3a3a;
       }
       .panel button:disabled {
         opacity: 0.4;
         cursor: default;
       }
-      .panel .status {
+      .panel label {
         font-size: 12px;
         color: #aaa;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .panel .status {
+        font-size: 12px;
+        color: #9ad;
+      }
+      .panel .hint {
+        font-size: 11px;
+        color: #777;
+      }
+      #diagnostics {
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+        font-size: 11px;
+        line-height: 1.5;
+        color: #bbb;
+        background: rgba(0, 0, 0, 0.35);
+        border-radius: 8px;
+        padding: 8px 10px;
+        margin: 0;
+        max-height: 220px;
+        overflow-y: auto;
+        white-space: pre;
       }
     </style>
   </head>
   <body>
     <div class="panel">
-      <button id="detectBtn">Detect</button>
-      <button id="clearBtn">Clear</button>
-      <span class="status" id="status">Ready. In XR, pinch to detect.</span>
+      <div class="row">
+        <button id="detectBtn">Detect</button>
+        <button id="clearBtn">Clear</button>
+        <button id="copyBtn">Copy diagnostics</button>
+        <span class="status" id="status">Ready.</span>
+      </div>
+      <div class="row">
+        <label
+          >yaw°
+          <input
+            id="yawInput"
+            type="number"
+            step="1"
+            value="0"
+            style="width: 64px"
+        /></label>
+        <label
+          >pitch°
+          <input
+            id="pitchInput"
+            type="number"
+            step="1"
+            value="0"
+            style="width: 64px"
+        /></label>
+        <label
+          >roll°
+          <input
+            id="rollInput"
+            type="number"
+            step="1"
+            value="0"
+            style="width: 64px"
+        /></label>
+        <button id="resetRotBtn">Reset rotation</button>
+      </div>
+      <div class="row">
+        <label
+          ><input id="matchDepthViewInput" type="checkbox" />
+          matchDepthView</label
+        >
+        <label
+          ><input id="fullResDepthInput" type="checkbox" /> per-frame full-res
+          depth mesh</label
+        >
+        <label
+          >detector
+          <select id="detectorSelect">
+            <option value="gemini">gemini</option>
+            <option value="mediapipe">mediapipe</option>
+            <option value="both">both</option>
+          </select></label
+        >
+        <label
+          >mask
+          <select id="maskSelect">
+            <option value="slimsam">slimsam</option>
+            <option value="mediapipe">mediapipe</option>
+          </select></label
+        >
+      </div>
+      <div class="hint">
+        Rotation offsets apply live to the next detect. The three checkboxes and
+        the two pickers reload the page (they must be set before xb.init).
+      </div>
+      <pre id="diagnostics">No detection yet.</pre>
     </div>
 
     <script type="module">
+      import * as THREE from 'three';
       import * as xb from 'xrblocks';
+      import {
+        ManipulationBehavior,
+        UICore,
+        UIIcon,
+        UIPanel,
+        UIText,
+      } from 'uiblocks';
       import {Object3DDetector} from 'xrblocks/addons/objects3d/index.js';
 
+      // -----------------------------------------------------------------
+      // Settings. Anything that must be decided before xb.init() lives in
+      // the query string and is changed by reloading; anything the detector
+      // reads per-detect is applied live.
+      // -----------------------------------------------------------------
+      const params = new URLSearchParams(location.search);
+      const num = (name, fallback = 0) => {
+        const v = parseFloat(params.get(name));
+        return Number.isFinite(v) ? v : fallback;
+      };
+      const flag = (name) => params.get(name) === '1';
+
+      const SETTINGS = {
+        yawDeg: num('camYawDeg'),
+        pitchDeg: num('camPitchDeg'),
+        rollDeg: num('camRollDeg'),
+        matchDepthView: flag('matchDepthView'),
+        // Mirrors what the objects_3d demo does. Off by default here, which
+        // is the main reason this page runs faster — see README.
+        fullResDepth: flag('fullResDepth'),
+        detector: params.get('backend') ?? 'gemini',
+        mask: params.get('mask') ?? 'slimsam',
+      };
+
+      function reloadWith(overrides) {
+        const p = new URLSearchParams(location.search);
+        for (const [k, v] of Object.entries(overrides)) {
+          if (v === false || v === null) p.delete(k);
+          else p.set(k, v === true ? '1' : String(v));
+        }
+        location.search = '?' + p.toString();
+      }
+
+      const detector = new Object3DDetector({
+        detectBackend: SETTINGS.detector,
+        maskBackend: SETTINGS.mask === 'mediapipe' ? 'mediapipe' : 'slimsam',
+        showDebugBoxes: true,
+        cameraRotationOffset: {
+          yaw: THREE.MathUtils.degToRad(SETTINGS.yawDeg),
+          pitch: THREE.MathUtils.degToRad(SETTINGS.pitchDeg),
+          roll: THREE.MathUtils.degToRad(SETTINGS.rollDeg),
+        },
+      });
+
+      // -----------------------------------------------------------------
+      // Diagnostics formatting, shared by the DOM readout and the XR panel.
+      // -----------------------------------------------------------------
+      const ms = (v) => (v == null ? '—' : `${v.toFixed(0)} ms`);
+      const DIAG_ROWS = [
+        [
+          'frame latency',
+          (d) =>
+            d.frameLatencyMs == null
+              ? 'no captureTime (may be stale)'
+              : ms(d.frameLatencyMs),
+        ],
+        [
+          'pose match',
+          (d) =>
+            d.poseMatchErrorMs == null ? 'live pose' : ms(d.poseMatchErrorMs),
+        ],
+        ['pose ring', (d) => `${d.poseRingSize} poses`],
+        [
+          'camera model',
+          (d) =>
+            `${d.usedDeviceCameraModel ? 'device' : 'RENDER (fallback)'}` +
+            ` · fov ${d.cameraFovDeg.toFixed(1)}° · aspect ${d.cameraAspect.toFixed(2)}`,
+        ],
+        [
+          'rot offset',
+          (d) =>
+            `yaw ${d.cameraRotationOffsetDeg.yaw.toFixed(1)}° ` +
+            `pitch ${d.cameraRotationOffsetDeg.pitch.toFixed(1)}° ` +
+            `roll ${d.cameraRotationOffsetDeg.roll.toFixed(1)}°`,
+        ],
+        ['snapshot', (d) => `${d.snapshotWidth}×${d.snapshotHeight}`],
+        [
+          'depth remap',
+          (d) =>
+            d.depthRemapIsIdentity == null
+              ? '—'
+              : d.depthRemapIsIdentity
+                ? 'identity'
+                : 'NON-identity',
+        ],
+        [
+          'depth vs eye',
+          (d) =>
+            d.depthVsEyeRotationDeg == null
+              ? '—'
+              : `${d.depthVsEyeRotationDeg.toFixed(1)}°`,
+        ],
+        ['depth verts', (d) => (d.depthMeshVertices ?? '—').toLocaleString()],
+        ['detections', (d) => `${d.detections2d} in 2D → ${d.fitted3d} fitted`],
+        [
+          'rejections',
+          (d) => {
+            const e = Object.entries(d.rejections);
+            return e.length ? e.map(([k, v]) => `${k}:${v}`).join(' ') : 'none';
+          },
+        ],
+        [
+          'timings',
+          (d) =>
+            `wait ${d.timings.freshFrameWait.toFixed(0)} · ` +
+            `snap ${d.timings.snapshot.toFixed(0)} · ` +
+            `mesh ${d.timings.depthMeshSnapshot.toFixed(0)} · ` +
+            `2d ${d.timings.detect2d.toFixed(0)} · ` +
+            `fit ${d.timings.masksAndFit.toFixed(0)} · ` +
+            `total ${d.timings.total.toFixed(0)}`,
+        ],
+        ['error', (d) => d.error ?? 'none'],
+      ];
+
+      const LABEL_WIDTH = Math.max(...DIAG_ROWS.map(([l]) => l.length)) + 2;
+
+      function diagnosticsText() {
+        const d = detector.diagnostics;
+        if (!d) return 'No detection yet.';
+        return DIAG_ROWS.map(
+          ([label, fn]) => label.padEnd(LABEL_WIDTH) + fn(d)
+        ).join('\n');
+      }
+
+      // -----------------------------------------------------------------
+      // Shared actions
+      // -----------------------------------------------------------------
       const statusEl = document.getElementById('status');
+      const diagnosticsEl = document.getElementById('diagnostics');
       const detectBtn = document.getElementById('detectBtn');
-      const clearBtn = document.getElementById('clearBtn');
+      let xrStatusText = null;
+      let inFlight = false;
 
       function setStatus(text) {
         statusEl.textContent = text;
+        xrStatusText?.setText(text);
         console.log('[objects3d-addon]', text);
       }
 
-      // The whole demo: construct the detector, add it, call detect().
-      const detector = new Object3DDetector({
-        detectBackend: 'gemini',
-        maskBackend: 'slimsam',
-        showDebugBoxes: true,
-      });
+      function refreshDiagnostics() {
+        diagnosticsEl.textContent = diagnosticsText();
+      }
 
-      let inFlight = false;
       async function detect() {
         if (inFlight) return;
         inFlight = true;
@@ -97,43 +343,507 @@
         setStatus('detecting…');
         try {
           const objects = await detector.detect();
-          setStatus(`${objects.length} objects.`);
+          const d = detector.diagnostics;
+          setStatus(
+            `${objects.length} objects · ${d ? (d.timings.total / 1000).toFixed(1) : '?'}s`
+          );
+          if (d) console.info('[objects3d-addon] diagnostics', d);
         } catch (e) {
           console.error(e);
           setStatus(`failed: ${e?.message ?? e}`);
         } finally {
+          refreshDiagnostics();
           inFlight = false;
           detectBtn.disabled = false;
         }
       }
 
-      detectBtn.addEventListener('click', detect);
-      clearBtn.addEventListener('click', () => {
+      function clearAll() {
         detector.clearDetections();
         setStatus('cleared.');
+      }
+
+      function copyDiagnostics() {
+        const json = JSON.stringify(detector.diagnostics ?? {}, null, 2);
+        console.info('[objects3d-addon] diagnostics JSON\n' + json);
+        navigator.clipboard
+          ?.writeText(json)
+          .then(() => setStatus('diagnostics copied to clipboard.'))
+          .catch(() => setStatus('diagnostics logged to console.'));
+      }
+
+      // Applies immediately — the detector reads the offset at capture time.
+      function setRotation(axis, deg) {
+        SETTINGS[axis + 'Deg'] = deg;
+        detector.setCameraRotationOffset({
+          [axis]: THREE.MathUtils.degToRad(deg),
+        });
+        document.getElementById(axis + 'Input').value = String(deg);
+        xrRotationLabels[axis]?.setText(`${deg.toFixed(0)}°`);
+        setStatus(
+          `rotation offset yaw ${SETTINGS.yawDeg}° pitch ${SETTINGS.pitchDeg}° ` +
+            `roll ${SETTINGS.rollDeg}° — press detect to apply`
+        );
+      }
+
+      // -----------------------------------------------------------------
+      // DOM controls
+      // -----------------------------------------------------------------
+      detectBtn.addEventListener('click', detect);
+      document.getElementById('clearBtn').addEventListener('click', clearAll);
+      document
+        .getElementById('copyBtn')
+        .addEventListener('click', copyDiagnostics);
+      for (const axis of ['yaw', 'pitch', 'roll']) {
+        const input = document.getElementById(axis + 'Input');
+        input.value = String(SETTINGS[axis + 'Deg']);
+        input.addEventListener('change', () =>
+          setRotation(axis, parseFloat(input.value) || 0)
+        );
+      }
+      document.getElementById('resetRotBtn').addEventListener('click', () => {
+        for (const axis of ['yaw', 'pitch', 'roll']) setRotation(axis, 0);
       });
 
+      const matchDepthViewInput = document.getElementById(
+        'matchDepthViewInput'
+      );
+      matchDepthViewInput.checked = SETTINGS.matchDepthView;
+      matchDepthViewInput.addEventListener('change', () =>
+        reloadWith({matchDepthView: matchDepthViewInput.checked})
+      );
+      const fullResDepthInput = document.getElementById('fullResDepthInput');
+      fullResDepthInput.checked = SETTINGS.fullResDepth;
+      fullResDepthInput.addEventListener('change', () =>
+        reloadWith({fullResDepth: fullResDepthInput.checked})
+      );
+      const detectorSelect = document.getElementById('detectorSelect');
+      const maskSelect = document.getElementById('maskSelect');
+      detectorSelect.value = SETTINGS.detector;
+      maskSelect.value = SETTINGS.mask;
+      detectorSelect.addEventListener('change', () =>
+        reloadWith({backend: detectorSelect.value})
+      );
+      maskSelect.addEventListener('change', () =>
+        reloadWith({mask: maskSelect.value})
+      );
+
+      // -----------------------------------------------------------------
+      // Spatial control + diagnostics panel for immersive XR. Built as an
+      // xb.Script so UICore gets its lifecycle hooks. Mirrors the DOM
+      // controls, which are invisible once the session starts.
+      // -----------------------------------------------------------------
+      const xrRotationLabels = {};
+      let xrDiagnosticsRows = null;
+
+      class DebugPanel extends xb.Script {
+        init() {
+          this.uiCore = new UICore(this);
+          const card = this.uiCore.createCard({
+            name: 'Objects3dDebugCard',
+            position: new THREE.Vector3(0, 1.35, -0.95),
+            sizeX: 0.95,
+            sizeY: 0.6,
+          });
+          const root = new UIPanel({
+            width: '100%',
+            height: '100%',
+            fillColor: 'rgba(15, 18, 25, 0.92)',
+            innerShadowColor: 'rgba(100, 180, 255, 0.12)',
+            innerShadowBlur: 60,
+            strokeWidth: 3,
+            strokeColor: {
+              gradientType: 'linear',
+              rotation: 45,
+              stops: [
+                {position: 0, color: '#4796e3'},
+                {position: 1, color: '#9b5de5'},
+              ],
+            },
+            cornerRadius: 20,
+            padding: 16,
+            flexDirection: 'column',
+            gap: 8,
+            alignItems: 'stretch',
+          });
+
+          root.add(
+            new UIText('3D OBJECT BOXES · ADDON', {
+              fontSize: 18,
+              fontWeight: 'bold',
+              color: '#00f0ff',
+              textAlign: 'center',
+              width: '100%',
+            })
+          );
+          xrStatusText = new UIText(statusEl.textContent, {
+            fontSize: 12,
+            color: '#9ad',
+            textAlign: 'center',
+            width: '100%',
+          });
+          root.add(xrStatusText);
+          root.add(
+            new UIPanel({
+              width: '100%',
+              height: 2,
+              fillColor: 'rgba(255, 255, 255, 0.12)',
+            })
+          );
+
+          // Two columns: controls on the left, live diagnostics on the right.
+          const body = new UIPanel({
+            width: '100%',
+            flexGrow: 1,
+            flexDirection: 'row',
+            gap: 14,
+            alignItems: 'stretch',
+          });
+          body.add(this.buildControls());
+          body.add(this.buildDiagnostics());
+          root.add(body);
+
+          card.add(root);
+          card.addBehavior(
+            new ManipulationBehavior({draggable: true, faceCamera: true})
+          );
+        }
+
+        buildControls() {
+          const col = new UIPanel({
+            width: '42%',
+            flexDirection: 'column',
+            gap: 6,
+            alignItems: 'stretch',
+          });
+
+          const buttons = new UIPanel({
+            width: '100%',
+            flexDirection: 'row',
+            gap: 8,
+            justifyContent: 'center',
+          });
+          buttons.add(this.iconButton('search', 'detect', detect));
+          buttons.add(this.iconButton('delete_sweep', 'clear', clearAll));
+          buttons.add(this.iconButton('content_copy', 'copy', copyDiagnostics));
+          col.add(buttons);
+
+          // Nudge the camera rotation offset live, ±5° per press.
+          for (const axis of ['yaw', 'pitch', 'roll']) {
+            col.add(this.rotationRow(axis));
+          }
+
+          // Everything below needs a reload to take effect.
+          const toggles = new UIPanel({
+            width: '100%',
+            flexDirection: 'row',
+            gap: 6,
+            justifyContent: 'center',
+            flexWrap: 'wrap',
+          });
+          toggles.add(
+            this.toggleButton('matchDepth', SETTINGS.matchDepthView, () =>
+              reloadWith({matchDepthView: !SETTINGS.matchDepthView})
+            )
+          );
+          toggles.add(
+            this.toggleButton('fullResDepth', SETTINGS.fullResDepth, () =>
+              reloadWith({fullResDepth: !SETTINGS.fullResDepth})
+            )
+          );
+          col.add(toggles);
+
+          const pickers = new UIPanel({
+            width: '100%',
+            flexDirection: 'row',
+            gap: 6,
+            justifyContent: 'center',
+          });
+          pickers.add(
+            this.cycleButton(
+              'detector',
+              SETTINGS.detector,
+              ['gemini', 'mediapipe', 'both'],
+              (next) => reloadWith({backend: next})
+            )
+          );
+          pickers.add(
+            this.cycleButton(
+              'mask',
+              SETTINGS.mask,
+              ['slimsam', 'mediapipe'],
+              (next) => reloadWith({mask: next})
+            )
+          );
+          col.add(pickers);
+          return col;
+        }
+
+        buildDiagnostics() {
+          const col = new UIPanel({
+            width: '58%',
+            flexDirection: 'column',
+            gap: 1,
+            alignItems: 'stretch',
+            paddingLeft: 10,
+            paddingTop: 4,
+            paddingBottom: 4,
+            cornerRadius: 10,
+            fillColor: 'rgba(0, 0, 0, 0.3)',
+          });
+          xrDiagnosticsRows = DIAG_ROWS.map(([label]) => {
+            const row = new UIPanel({
+              width: '100%',
+              flexDirection: 'row',
+              gap: 6,
+              alignItems: 'center',
+            });
+            row.add(
+              new UIText(label, {
+                width: '38%',
+                fontSize: 9,
+                color: '#7d8794',
+                depthTest: false,
+                renderOrder: 100,
+              })
+            );
+            const value = new UIText('—', {
+              width: '62%',
+              fontSize: 9,
+              color: '#d0d6dd',
+              depthTest: false,
+              renderOrder: 100,
+            });
+            row.add(value);
+            col.add(row);
+            return value;
+          });
+          return col;
+        }
+
+        rotationRow(axis) {
+          const row = new UIPanel({
+            width: '100%',
+            flexDirection: 'row',
+            gap: 5,
+            alignItems: 'center',
+            justifyContent: 'center',
+          });
+          row.add(
+            new UIText(axis, {
+              width: 34,
+              fontSize: 10,
+              color: '#888888',
+              depthTest: false,
+              renderOrder: 100,
+            })
+          );
+          row.add(
+            this.smallButton('−5°', () =>
+              setRotation(axis, SETTINGS[axis + 'Deg'] - 5)
+            )
+          );
+          const label = new UIText(`${SETTINGS[axis + 'Deg'].toFixed(0)}°`, {
+            width: 42,
+            fontSize: 12,
+            fontWeight: 'bold',
+            color: '#ffffff',
+            textAlign: 'center',
+            depthTest: false,
+            renderOrder: 100,
+          });
+          xrRotationLabels[axis] = label;
+          row.add(label);
+          row.add(
+            this.smallButton('+5°', () =>
+              setRotation(axis, SETTINGS[axis + 'Deg'] + 5)
+            )
+          );
+          row.add(this.smallButton('0', () => setRotation(axis, 0)));
+          return row;
+        }
+
+        // A button that shows both its name and its current on/off state.
+        toggleButton(label, on, onClick) {
+          return this.cycleButton(label, on ? 'on' : 'off', [], onClick);
+        }
+
+        smallButton(text, onClick) {
+          const idle = '#2a2a2a';
+          const btn = new UIPanel({
+            paddingTop: 3,
+            paddingBottom: 3,
+            paddingLeft: 7,
+            paddingRight: 7,
+            cornerRadius: 7,
+            fillColor: idle,
+            strokeWidth: 1,
+            strokeColor: '#444444',
+            alignItems: 'center',
+            justifyContent: 'center',
+            renderOrder: 10,
+            onHoverEnter: () => btn.setFillColor('#3a3a3a'),
+            onHoverExit: () => btn.setFillColor(idle),
+            onClick: () => {
+              btn.setFillColor('#4796e3');
+              setTimeout(() => btn.setFillColor(idle), 180);
+              onClick();
+            },
+          });
+          btn.add(
+            new UIText(text, {
+              fontSize: 11,
+              color: '#ffffff',
+              depthTest: false,
+              renderOrder: 100,
+            })
+          );
+          return btn;
+        }
+
+        iconButton(iconName, label, onClick) {
+          const idle = '#2a2a2a';
+          const btn = new UIPanel({
+            paddingTop: 6,
+            paddingBottom: 6,
+            paddingLeft: 10,
+            paddingRight: 10,
+            cornerRadius: 10,
+            fillColor: idle,
+            strokeWidth: 1,
+            strokeColor: '#444444',
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 5,
+            renderOrder: 10,
+            onHoverEnter: () => btn.setFillColor('#3a3a3a'),
+            onHoverExit: () => btn.setFillColor(idle),
+            onClick: () => {
+              btn.setFillColor('#4796e3');
+              setTimeout(() => btn.setFillColor(idle), 180);
+              onClick();
+            },
+          });
+          btn.add(
+            new UIIcon(iconName, {
+              color: 'white',
+              width: 16,
+              height: 16,
+              renderOrder: 12,
+            })
+          );
+          btn.add(
+            new UIText(label, {
+              fontSize: 11,
+              color: '#ffffff',
+              fontWeight: 'bold',
+              depthTest: false,
+              renderOrder: 100,
+            })
+          );
+          return btn;
+        }
+
+        // Tap to advance to the next value and reload, mirroring the DOM
+        // <select>s (all of these must be set before xb.init()).
+        cycleButton(label, current, values, onChange) {
+          const idle = '#2a2a2a';
+          const btn = new UIPanel({
+            paddingTop: 4,
+            paddingBottom: 4,
+            paddingLeft: 8,
+            paddingRight: 8,
+            cornerRadius: 8,
+            fillColor: idle,
+            strokeWidth: 1,
+            strokeColor: '#444444',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            renderOrder: 10,
+            onHoverEnter: () => btn.setFillColor('#3a3a3a'),
+            onHoverExit: () => btn.setFillColor(idle),
+            onClick: () => {
+              if (values.length === 0) {
+                onChange();
+                return;
+              }
+              const idx = values.indexOf(current);
+              onChange(values[(idx + 1) % values.length]);
+            },
+          });
+          btn.add(
+            new UIText(label, {
+              fontSize: 8,
+              color: '#888888',
+              textAlign: 'center',
+              depthTest: false,
+              renderOrder: 100,
+            })
+          );
+          btn.add(
+            new UIText(current, {
+              fontSize: 11,
+              color: current === 'off' ? '#888888' : '#ffffff',
+              fontWeight: 'bold',
+              textAlign: 'center',
+              depthTest: false,
+              renderOrder: 100,
+            })
+          );
+          return btn;
+        }
+
+        // Repainting uikit text allocates, so only touch rows whose value
+        // actually changed, and only a few times a second.
+        update() {
+          if (!xrDiagnosticsRows) return;
+          const now = performance.now();
+          if (now - (this._lastRefresh ?? 0) < 250) return;
+          this._lastRefresh = now;
+          const d = detector.diagnostics;
+          this._cache ??= new Array(DIAG_ROWS.length).fill(null);
+          for (let i = 0; i < DIAG_ROWS.length; ++i) {
+            const text = d ? DIAG_ROWS[i][1](d) : '—';
+            if (text !== this._cache[i]) {
+              this._cache[i] = text;
+              xrDiagnosticsRows[i].setText(text);
+            }
+          }
+        }
+      }
+
+      // -----------------------------------------------------------------
+      // Init
+      // -----------------------------------------------------------------
       const options = new xb.Options();
+      options.enableUI();
       options.enableAI();
       options.enableCamera();
       options.enableDepth();
+      // Off by default: the per-frame full-resolution rebuild unprojects
+      // ~23.7k vertices every depth frame, which is what makes the
+      // objects_3d demo heavier than this one. The detector rebuilds the
+      // full-res mesh on demand inside detect() instead.
+      options.depth.depthMesh.updateFullResolutionGeometry =
+        SETTINGS.fullResDepth;
       options.depth.depthTexture.enabled = false;
-      options.depth.matchDepthView = false;
+      options.depth.matchDepthView = SETTINGS.matchDepthView;
       options.enableObjectDetection();
       options.world.objects.showDebugVisualizations = false;
       options.reticles.enabled = true;
       options.setAppTitle('3D Object Boxes (Addon)');
 
       xb.add(detector);
+      xb.add(new DebugPanel());
       await xb.init(options);
 
-      // In immersive XR the DOM panel is invisible, so pinch / trigger runs
-      // a detection instead.
-      xb.core.renderer.xr.addEventListener('sessionstart', () => {
-        xb.core.renderer.xr
-          .getSession()
-          ?.addEventListener('select', () => detect());
-      });
+      refreshDiagnostics();
+      setStatus(
+        `Ready · detector=${SETTINGS.detector} mask=${SETTINGS.mask}` +
+          ` matchDepthView=${SETTINGS.matchDepthView} fullResDepth=${SETTINGS.fullResDepth}`
+      );
     </script>
   </body>
 </html>
