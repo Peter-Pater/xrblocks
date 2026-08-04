@@ -213,12 +213,16 @@
         return Number.isFinite(v) ? v : fallback;
       };
       const flag = (name) => params.get(name) === '1';
+      // For flags that default on: only an explicit '0' turns them off.
+      const flagOn = (name) => params.get(name) !== '0';
 
       const SETTINGS = {
         yawDeg: num('camYawDeg'),
         pitchDeg: num('camPitchDeg'),
         rollDeg: num('camRollDeg'),
-        matchDepthView: flag('matchDepthView'),
+        // On by default: raw depth-sensor frames need a depth-camera-to-view
+        // remap that measures worse on device. See README.
+        matchDepthView: flagOn('matchDepthView'),
         // Mirrors what the objects_3d demo does. Off by default here, which
         // is the main reason this page runs faster — see README.
         fullResDepth: flag('fullResDepth'),
@@ -232,8 +236,11 @@
       function reloadWith(overrides) {
         const p = new URLSearchParams(location.search);
         for (const [k, v] of Object.entries(overrides)) {
-          if (v === false || v === null) p.delete(k);
-          else p.set(k, v === true ? '1' : String(v));
+          // Write '0' rather than deleting: some flags default on, so a
+          // missing param is not the same as an unchecked box.
+          if (v === null) p.delete(k);
+          else if (typeof v === 'boolean') p.set(k, v ? '1' : '0');
+          else p.set(k, String(v));
         }
         location.search = '?' + p.toString();
       }

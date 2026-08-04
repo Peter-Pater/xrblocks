@@ -46,12 +46,12 @@ extrinsics and the actual hardware. Also available as `?camYawDeg=-30` etc.
 
 **Toggles that reload the page**, because they must be set before `xb.init()`:
 
-| Control        | Query param         | What it does                                                               |
-| -------------- | ------------------- | -------------------------------------------------------------------------- |
-| `matchDepth`   | `?matchDepthView=1` | Ask the platform for view-aligned depth instead of raw depth-sensor frames |
-| `fullResDepth` | `?fullResDepth=1`   | Rebuild the full-resolution depth mesh every frame (see below)             |
-| `detector`     | `?backend=`         | `gemini` / `mediapipe` / `both`                                            |
-| `mask`         | `?mask=`            | `slimsam` / `mediapipe`                                                    |
+| Control        | Query param         | What it does                                                                                  |
+| -------------- | ------------------- | --------------------------------------------------------------------------------------------- |
+| `matchDepth`   | `?matchDepthView=0` | **On by default.** Ask the platform for view-aligned depth instead of raw depth-sensor frames |
+| `fullResDepth` | `?fullResDepth=1`   | Rebuild the full-resolution depth mesh every frame (see below)                                |
+| `detector`     | `?backend=`         | `gemini` / `mediapipe` / `both`                                                               |
+| `mask`         | `?mask=`            | `slimsam` / `mediapipe`                                                                       |
 
 **Diagnostics**, refreshed after each detection (4 Hz in XR):
 
@@ -77,9 +77,10 @@ while turning your head:
 - **Rotation identical in both** (same axis, same angle) → a constant
   calibration error. Null it with the yaw/pitch/roll buttons, then bake the
   value into `cameraRotationOffset`.
-- **`depth vs eye` is large** → try `matchDepth`. If that removes the rotation,
-  the depth mesh (the surface every ray lands on) was the rotated ingredient,
-  not the RGB camera model.
+- **`depth vs eye` is large** → check `matchDepth` is still on (it is by
+  default). Turning it off measurably rotates the boxes on Galaxy XR, which is
+  how we learned the depth mesh — the surface every ray lands on — was the
+  rotated ingredient rather than the RGB camera model.
 
 ## Why this page runs faster than `objects_3d`
 
