@@ -265,6 +265,9 @@
         RawImage,
         SamModel,
       } from '@huggingface/transformers';
+      // Shared with the objects3d addon so both build the frozen camera from
+      // exactly the same matrices.
+      import {buildFrozenCamera} from 'xrblocks/addons/objects3d/geometry/FrozenCamera.js';
 
       // Route Mesh.raycast() through the BVH-accelerated path via the SDK
       // helper (xb.applyBVH / xb.enableAcceleratedRaycast, added in the
@@ -1748,6 +1751,26 @@
         //      awaits and may end up reading two *different* video
         //      frames, so SAM and the detectors would see different
         //      pixels. One drawImage, one frame, two formats.
+        // Wait for a fresh video frame before snapshotting: inside an
+        // immersive session the hidden <video> can be throttled, so
+        // getSnapshot would otherwise read a stale frame captured at an
+        // older head pose — every box from that capture then lands rotated
+        // by the intervening head motion.
+        try {
+          const meta = await xb.core.deviceCamera.waitForFreshFrame?.();
+          if (meta?.captureTime) {
+            console.info(
+              '[objects_3d] camera frame latency ~' +
+                `${(performance.now() - meta.captureTime).toFixed(0)} ms`
+            );
+          } else if (meta === null) {
+            console.info(
+              '[objects_3d] no fresh-frame signal; snapshot may be stale'
+            );
+          }
+        } catch (_e) {
+          // Freshness signal is best-effort only.
+        }
         let snapImageData;
         try {
           snapImageData = await xb.core.deviceCamera.getSnapshot({
@@ -1768,31 +1791,68 @@
         _b64Canvas.height = snapImageData.height;
         _b64Canvas.getContext('2d').putImageData(snapImageData, 0, 0);
         const snapBase64 = _b64Canvas.toDataURL('image/jpeg', 0.9);
-        // Now freeze the camera. State here reflects whatever the live
-        // camera became *after* the snapshot's drawImage finished, which
-        // is at most one render-loop tick later — close enough that the
-        // pixels and the matrix represent the same view.
-        const liveCam = xb.core.camera;
-        const frozenCam = liveCam.clone();
-        frozenCam.matrixAutoUpdate = false;
-        liveCam.updateMatrixWorld();
-        frozenCam.matrix.copy(liveCam.matrix);
-        frozenCam.matrixWorld.copy(liveCam.matrixWorld);
-        frozenCam.matrixWorldInverse.copy(liveCam.matrixWorld).invert();
-        frozenCam.projectionMatrix.copy(liveCam.projectionMatrix);
-        frozenCam.projectionMatrixInverse.copy(liveCam.projectionMatrixInverse);
-        frozenCam.position.copy(liveCam.position);
-        frozenCam.quaternion.copy(liveCam.quaternion);
-        // Diagnostic: if the snapshot aspect doesn't match the camera
-        // aspect, bbox-centre → NDC conversion will systematically miss
-        // along the mismatched axis (uvToNdc corrects for this; the warn
-        // is here so a regression in the correction surfaces quickly).
-        // Fire once per session: the simulator setup is constant, and
-        // logging on every Detect press is just noise after the first.
+        // Now freeze the camera model. The pixels came from the physical
+        // passthrough camera, whose intrinsics and pose differ from the XR
+        // render camera (on Galaxy XR: ~48° vertical FOV, mounted near the
+        // right eye, versus the ~90°+ union frustum between the eyes), so
+        // build the frozen camera from the SDK's device-camera model rather
+        // than from xb.core.camera. Raycasting the render camera is what put
+        // the boxes metres away from their objects on device; in the
+        // simulator the two models coincide, which is why it looked correct
+        // there. Falls back to the render camera when device parameters
+        // aren't available (pre-session warm-up).
         const snapAspect = snapImageData.width / snapImageData.height;
+        const liveCam = xb.core.camera;
+        let frozenCam = null;
+        try {
+          const targetDevice =
+            xb.core.world?.objects?.targetDevice ?? 'galaxyxr';
+          const camParams = xb.getCameraParametersSnapshot(
+            liveCam,
+            xb.core.renderer.xr.getCamera(),
+            xb.core.deviceCamera,
+            targetDevice
+          );
+          if (camParams) {
+            frozenCam = buildFrozenCamera({
+              worldFromView: camParams.worldFromView,
+              clipFromView: camParams.clipFromView,
+              viewFromClip: camParams.viewFromClip,
+              snapAspect,
+            });
+          }
+        } catch (e) {
+          console.warn('[objects_3d] device camera parameters unavailable', e);
+        }
+        if (!frozenCam) {
+          console.warn(
+            '[objects_3d] falling back to the render camera; boxes will be ' +
+              'misplaced on a real headset'
+          );
+          frozenCam = liveCam.clone();
+          frozenCam.matrixAutoUpdate = false;
+          liveCam.updateMatrixWorld();
+          frozenCam.matrix.copy(liveCam.matrix);
+          frozenCam.matrixWorld.copy(liveCam.matrixWorld);
+          frozenCam.matrixWorldInverse.copy(liveCam.matrixWorld).invert();
+          frozenCam.projectionMatrix.copy(liveCam.projectionMatrix);
+          frozenCam.projectionMatrixInverse.copy(
+            liveCam.projectionMatrixInverse
+          );
+          frozenCam.position.copy(liveCam.position);
+          frozenCam.quaternion.copy(liveCam.quaternion);
+          // Stash the snapshot aspect so every helper that has the camera
+          // (rayToPlane, fitTinyFlatOBB, etc.) can do the snapshot-vs-camera
+          // NDC correction without explicit threading.
+          frozenCam.userData.snapAspect = snapAspect;
+        }
+        // Diagnostic: if the snapshot aspect doesn't match the frozen
+        // camera's aspect, bbox-centre → NDC conversion would systematically
+        // miss along the mismatched axis (uvToNdc corrects for this; the log
+        // is here so a regression in the correction surfaces quickly).
         if (
           !window._aspectWarned &&
-          Math.abs(snapAspect - liveCam.aspect) > 0.02
+          Math.abs(snapAspect - frozenCam.aspect) > 0.02
         ) {
           window._aspectWarned = true;
           console.info(
@@ -1801,13 +1861,9 @@
             snapImageData.width + 'x' + snapImageData.height,
             '(' + snapAspect.toFixed(3) + ')',
             'cam',
-            liveCam.aspect.toFixed(3)
+            frozenCam.aspect.toFixed(3)
           );
         }
-        // Stash the snapshot aspect on the frozen camera so every helper
-        // that has the camera (rayToPlane, fitTinyFlatOBB, etc.) can do
-        // the snapshot-vs-camera NDC correction without explicit threading.
-        frozenCam.userData.snapAspect = snapAspect;
         // Snapshot the depth mesh in the same tick as the camera freeze
         // so all three (pixels, camera, depth geometry) are coherent.
         // Make sure the BVH prototype patch is installed before we build

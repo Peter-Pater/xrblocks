@@ -25,6 +25,11 @@ import {
 import {buildFrozenCamera} from './geometry/FrozenCamera';
 import {PoseRing} from './geometry/PoseRing';
 import {
+  estimateRoomYawFromMesh,
+  RoomFrameAccumulator,
+  yawRelativeToRoom,
+} from './geometry/RoomFrame';
+import {
   fuseIntoBoxes,
   snapBoxToFloor,
   unionDetections,
@@ -36,6 +41,7 @@ import {
   rejectByAnchorDepth,
   rejectByY,
 } from './geometry/ObbFitting';
+import type {OrientationMode, OrientationOptions} from './geometry/ObbFitting';
 import {categorize, isSurfaceLabel, isTinyFlatLabel} from './labels/Categories';
 import {samEncodeSnapshot, samMaskFromBbox, getSam} from './masks/SamMask';
 import {segmenterMaskFromSnapshot} from './masks/SegmenterMask';
@@ -103,6 +109,14 @@ export interface Object3DDetectorOptions {
    * @defaultValue `{yaw: 0, pitch: 0, roll: 0}`
    */
   cameraRotationOffset?: {yaw?: number; pitch?: number; roll?: number};
+  /**
+   * How fitted yaws are reconciled with the room. Defaults to
+   * `{mode: 'roomFrame'}`, which estimates the room's own wall direction from
+   * the depth mesh and falls back to it only when an object's own orientation
+   * is ill-determined. Pass `{mode: 'cardinal'}` for the legacy behaviour of
+   * snapping every box to the session origin's axes.
+   */
+  orientation?: OrientationOptions;
 }
 
 /**
@@ -160,6 +174,27 @@ export interface Object3DDetectorDiagnostics {
   };
   /** Populated when the call bailed out early. */
   error: string | null;
+  /** Orientation policy in force for this call. */
+  orientationMode: OrientationMode;
+  /** Estimated room yaw in degrees, or `null` when no frame was available. */
+  roomYawDeg: number | null;
+  /** Confidence of the room frame, in `[0, 1]`. */
+  roomYawConfidence: number | null;
+  /** Vertical surface area that voted for the room frame, in m². */
+  roomFrameSupportM2: number | null;
+  /**
+   * Per-object yaw outcome. `roomRelativeYawDeg` is the useful one on device:
+   * if wall-aligned furniture reads ≈0 here but the boxes still look wrong,
+   * the fault is upstream in the camera model rather than in fitting.
+   */
+  yawStats: Array<{
+    label: string;
+    category: string;
+    yawDeg: number;
+    roomRelativeYawDeg: number;
+    confidence: number;
+    method: string;
+  }>;
 }
 
 // Kick off the three-mesh-bvh dynamic import at module load so it is ready
@@ -184,16 +219,23 @@ const _bvhReady: Promise<boolean> = enableAcceleratedRaycast().catch(
  */
 export class Object3DDetector extends Script {
   private readonly _opts: Required<
-    Omit<Object3DDetectorOptions, 'sceneBounds' | 'cameraRotationOffset'>
+    Omit<
+      Object3DDetectorOptions,
+      'sceneBounds' | 'cameraRotationOffset' | 'orientation'
+    >
   > & {
     sceneBounds: {maxXZ: number; minY: number; maxY: number};
     cameraRotationOffset: {yaw: number; pitch: number; roll: number};
+    orientation: Required<Omit<OrientationOptions, 'roomYaw'>> & {
+      roomYaw: number | null;
+    };
   };
   private _results: Detected3DObject[] = [];
   private _detectInFlight = false;
   // ~1.3 s of pose history at 90 fps, enough to cover passthrough video
   // pipeline latency when pairing a capture with its capture-time pose.
   private readonly _poseRing = new PoseRing(120);
+  private readonly _roomFrame = new RoomFrameAccumulator();
   private _diagnostics: Object3DDetectorDiagnostics | null = null;
 
   /**
@@ -217,6 +259,14 @@ export class Object3DDetector extends Script {
         yaw: options.cameraRotationOffset?.yaw ?? 0,
         pitch: options.cameraRotationOffset?.pitch ?? 0,
         roll: options.cameraRotationOffset?.roll ?? 0,
+      },
+      orientation: {
+        mode: options.orientation?.mode ?? 'roomFrame',
+        roomYaw: options.orientation?.roomYaw ?? null,
+        roomYawConfidence: options.orientation?.roomYawConfidence ?? 0,
+        snapToleranceRad:
+          options.orientation?.snapToleranceRad ?? (12 * Math.PI) / 180,
+        minYawConfidence: options.orientation?.minYawConfidence ?? 0.35,
       },
     };
   }
@@ -287,6 +337,32 @@ export class Object3DDetector extends Script {
     current.roll = offset.roll ?? current.roll;
   }
 
+  /** The orientation policy currently in force. */
+  get orientationMode(): OrientationMode {
+    return this._opts.orientation.mode;
+  }
+
+  /**
+   * Switch orientation policy between detections, so the modes can be
+   * A/B compared on device without reloading.
+   */
+  setOrientationMode(mode: OrientationMode): void {
+    this._opts.orientation.mode = mode;
+  }
+
+  /** The room frame accumulated so far, or `null` before any usable estimate. */
+  get roomFrame(): ReturnType<RoomFrameAccumulator['push']> {
+    return this._roomFrame.current;
+  }
+
+  /**
+   * Discard the accumulated room frame. Call this after the user recenters or
+   * moves to a different space; {@link clearDetections} does it too.
+   */
+  resetRoomFrame(): void {
+    this._roomFrame.reset();
+  }
+
   /**
    * Remove all existing results and their debug visuals from the scene.
    * Call this to reset the detector before a new area scan.
@@ -308,6 +384,7 @@ export class Object3DDetector extends Script {
       this.remove(obj);
     }
     this._results = [];
+    this._roomFrame.reset();
   }
 
   /**
@@ -375,6 +452,11 @@ export class Object3DDetector extends Script {
         total: 0,
       },
       error: null,
+      orientationMode: this._opts.orientation.mode,
+      roomYawDeg: null,
+      roomYawConfidence: null,
+      roomFrameSupportM2: null,
+      yawStats: [],
     };
     const bail = (message: string): Detected3DObject[] => {
       console.warn(`[Object3DDetector] ${message}`);
@@ -461,6 +543,32 @@ export class Object3DDetector extends Script {
     }
     diag.depthMeshVertices =
       frozenDepthMesh.geometry.attributes['position']?.count ?? null;
+
+    // Estimate the room's dominant wall direction from this capture's depth
+    // mesh, so ill-determined object yaws fall back to the room's axes rather
+    // than to wherever the user happened to be facing at session start.
+    try {
+      this._roomFrame.push(
+        estimateRoomYawFromMesh(frozenDepthMesh, {
+          viewerPosition: frozenCam.position,
+        })
+      );
+    } catch (_e) {
+      // Room estimation is an optimisation; fitting still works without it.
+    }
+    const roomFrame = this._roomFrame.current;
+    if (roomFrame) {
+      diag.roomYawDeg = THREE.MathUtils.radToDeg(roomFrame.yaw);
+      diag.roomYawConfidence = roomFrame.confidence;
+      diag.roomFrameSupportM2 = roomFrame.supportArea;
+    }
+    const orientation: OrientationOptions = {
+      ...this._opts.orientation,
+      roomYaw: roomFrame?.yaw ?? this._opts.orientation.roomYaw,
+      roomYawConfidence:
+        roomFrame?.confidence ?? this._opts.orientation.roomYawConfidence,
+    };
+
     const tAfterDepthMesh = performance.now();
     diag.timings.depthMeshSnapshot = tAfterDepthMesh - tAfterSnapshot;
 
@@ -641,6 +749,7 @@ export class Object3DDetector extends Script {
             box2d,
             tinyFlat: isTinyFlatLabel(obj.label),
             roomHalf: this._opts.roomHalf,
+            orientation,
           });
           if (!obb) return null;
 
@@ -698,6 +807,19 @@ export class Object3DDetector extends Script {
       const pipelineResults = await Promise.all(detected.map(processOne));
       diag.timings.masksAndFit = performance.now() - tAfterDetect2d;
       diag.fitted3d = pipelineResults.filter((r) => r?.obb).length;
+      for (const r of pipelineResults) {
+        if (!r?.obb) continue;
+        diag.yawStats.push({
+          label: r.label,
+          category: r.cat,
+          yawDeg: THREE.MathUtils.radToDeg(r.obb.angle),
+          roomRelativeYawDeg: THREE.MathUtils.radToDeg(
+            yawRelativeToRoom(r.obb.angle, roomFrame)
+          ),
+          confidence: r.obb.yawConfidence ?? 0,
+          method: r.obb.yawMethod ?? 'unknown',
+        });
+      }
 
       // Serial fuse + add pass (fuseIntoBoxes mutates _results).
       for (const r of pipelineResults) {

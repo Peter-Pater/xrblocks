@@ -173,10 +173,19 @@
             <option value="mediapipe">mediapipe</option>
           </select></label
         >
+        <label
+          >orientation
+          <select id="orientSelect">
+            <option value="roomFrame">roomFrame</option>
+            <option value="free">free</option>
+            <option value="cardinal">cardinal (legacy)</option>
+          </select></label
+        >
       </div>
       <div class="hint">
-        Rotation offsets apply live to the next detect. The three checkboxes and
-        the two pickers reload the page (they must be set before xb.init).
+        Rotation offsets and orientation mode apply live to the next detect. The
+        two checkboxes and the detector/mask pickers reload the page (they must
+        be set before xb.init).
       </div>
       <pre id="diagnostics">No detection yet.</pre>
     </div>
@@ -215,6 +224,9 @@
         fullResDepth: flag('fullResDepth'),
         detector: params.get('backend') ?? 'gemini',
         mask: params.get('mask') ?? 'slimsam',
+        // Applies live via setOrientationMode, so unlike the depth toggles
+        // this one never needs a reload.
+        orient: params.get('orient') ?? 'roomFrame',
       };
 
       function reloadWith(overrides) {
@@ -235,6 +247,7 @@
           pitch: THREE.MathUtils.degToRad(SETTINGS.pitchDeg),
           roll: THREE.MathUtils.degToRad(SETTINGS.rollDeg),
         },
+        orientation: {mode: SETTINGS.orient},
       });
 
       // -----------------------------------------------------------------
@@ -293,6 +306,31 @@
             const e = Object.entries(d.rejections);
             return e.length ? e.map(([k, v]) => `${k}:${v}`).join(' ') : 'none';
           },
+        ],
+        ['orientation', (d) => d.orientationMode],
+        [
+          'room yaw',
+          (d) =>
+            d.roomYawDeg == null
+              ? 'not estimated'
+              : `${d.roomYawDeg.toFixed(1)}° · conf ` +
+                `${(d.roomYawConfidence ?? 0).toFixed(2)} · ` +
+                `${(d.roomFrameSupportM2 ?? 0).toFixed(1)} m²`,
+        ],
+        [
+          'yaws',
+          (d) =>
+            d.yawStats.length === 0
+              ? 'none'
+              : d.yawStats
+                  .slice(0, 4)
+                  .map(
+                    (y) =>
+                      `${y.label}:${y.yawDeg.toFixed(0)}°` +
+                      `(rel ${y.roomRelativeYawDeg.toFixed(0)}°,` +
+                      `${y.confidence.toFixed(2)},${y.method})`
+                  )
+                  .join(' '),
         ],
         [
           'timings',
@@ -372,6 +410,16 @@
           .catch(() => setStatus('diagnostics logged to console.'));
       }
 
+      // Applies immediately — the detector reads the mode at fit time.
+      const ORIENT_MODES = ['roomFrame', 'free', 'cardinal'];
+      function setOrientation(mode) {
+        SETTINGS.orient = mode;
+        detector.setOrientationMode(mode);
+        document.getElementById('orientSelect').value = mode;
+        xrOrientLabel?.setText(mode);
+        setStatus(`orientation = ${mode} — press detect to apply`);
+      }
+
       // Applies immediately — the detector reads the offset at capture time.
       function setRotation(axis, deg) {
         SETTINGS[axis + 'Deg'] = deg;
@@ -427,6 +475,11 @@
       maskSelect.addEventListener('change', () =>
         reloadWith({mask: maskSelect.value})
       );
+      const orientSelect = document.getElementById('orientSelect');
+      orientSelect.value = SETTINGS.orient;
+      orientSelect.addEventListener('change', () =>
+        setOrientation(orientSelect.value)
+      );
 
       // -----------------------------------------------------------------
       // Spatial control + diagnostics panel for immersive XR. Built as an
@@ -435,6 +488,7 @@
       // -----------------------------------------------------------------
       const xrRotationLabels = {};
       let xrDiagnosticsRows = null;
+      let xrOrientLabel = null;
 
       class DebugPanel extends xb.Script {
         init() {
@@ -552,6 +606,26 @@
             )
           );
           col.add(toggles);
+
+          // Orientation cycles live, so it sits apart from the reload pickers.
+          const orientRow = new UIPanel({
+            width: '100%',
+            flexDirection: 'row',
+            gap: 6,
+            justifyContent: 'center',
+          });
+          orientRow.add(
+            this.cycleButton(
+              'orientation',
+              SETTINGS.orient,
+              ORIENT_MODES,
+              setOrientation,
+              (label) => {
+                xrOrientLabel = label;
+              }
+            )
+          );
+          col.add(orientRow);
 
           const pickers = new UIPanel({
             width: '100%',
@@ -745,10 +819,13 @@
           return btn;
         }
 
-        // Tap to advance to the next value and reload, mirroring the DOM
-        // <select>s (all of these must be set before xb.init()).
-        cycleButton(label, current, values, onChange) {
+        // Tap to advance to the next value. Most of these reload the page
+        // (their setting must be applied before xb.init), but the ones that
+        // apply live track their own value, so pass onLabelReady to keep the
+        // caption in sync.
+        cycleButton(label, current, values, onChange, onLabelReady) {
           const idle = '#2a2a2a';
+          let value = current;
           const btn = new UIPanel({
             paddingTop: 4,
             paddingBottom: 4,
@@ -769,8 +846,8 @@
                 onChange();
                 return;
               }
-              const idx = values.indexOf(current);
-              onChange(values[(idx + 1) % values.length]);
+              value = values[(values.indexOf(value) + 1) % values.length];
+              onChange(value);
             },
           });
           btn.add(
@@ -782,16 +859,16 @@
               renderOrder: 100,
             })
           );
-          btn.add(
-            new UIText(current, {
-              fontSize: 11,
-              color: current === 'off' ? '#888888' : '#ffffff',
-              fontWeight: 'bold',
-              textAlign: 'center',
-              depthTest: false,
-              renderOrder: 100,
-            })
-          );
+          const valueText = new UIText(current, {
+            fontSize: 11,
+            color: current === 'off' ? '#888888' : '#ffffff',
+            fontWeight: 'bold',
+            textAlign: 'center',
+            depthTest: false,
+            renderOrder: 100,
+          });
+          btn.add(valueText);
+          onLabelReady?.(valueText);
           return btn;
         }
 
