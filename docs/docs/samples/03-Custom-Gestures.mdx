@@ -9,7 +9,8 @@ pagination_prev: null
 import {SamplesIFrame} from './SamplesIFrame';
 
 This sample uses the new gesture pipeline with a custom `GestureRecognizer`.
-The recognizer receives `HandContext`, builds bone-angle features with
+The recognizer receives `HandGestureContext`, which preserves the current-pose
+`HandContext` API and adds cloned timestamped `samples`. This static recognizer builds bone-angle features with
 `getRelativeBoneAngles(context)`, and returns string gesture names with
 confidence scores.
 

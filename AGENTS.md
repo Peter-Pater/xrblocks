@@ -77,7 +77,7 @@ XR Blocks is a **singleton engine driven by a script lifecycle**:
 | Folder                                      | Responsibility                                                                                                 |
 | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `core/`                                     | `Core` singleton, `Script`, `Options`, `User`, DI `Registry`, `XRButton`, WebXR session mgmt                   |
-| `input/`                                    | controllers, hands, gaze, mouse, gamepad; `gestures/`; `headGestures/`; `strokes/`                             |
+| `input/`                                    | controllers, hands, gaze, mouse, gamepad; static/temporal `gestures/`; `headGestures/`; `strokes/`             |
 | `world/`                                    | `World` + `planes/`, `mesh/`, `objects/` (Gemini & MediaPipe backends), `sounds/`                              |
 | `context/`                                  | Agent-facing scene context: semantic tree, visible objects, Set-of-Mark screenshots                            |
 | `depth/`                                    | depth sensing, depth mesh, `occlusion/` shaders & passes                                                       |

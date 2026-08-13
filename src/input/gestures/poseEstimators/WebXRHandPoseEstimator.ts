@@ -40,7 +40,7 @@ export class WebXRHandPoseEstimator implements PoseEstimator {
 
   getHandContext(handedness: Handedness) {
     if (!this.user?.hands) return null;
-    const hand = this.user.hands.hands[handedness];
+    const hand = this.getHandSpace(handedness);
     const handLabel = HAND_INDEX_TO_LABEL[handedness];
     if (!hand?.joints || !handLabel) return null;
 
@@ -61,6 +61,28 @@ export class WebXRHandPoseEstimator implements PoseEstimator {
 
     if (!joints.size) return null;
     return new WebXRHandContext(handedness, handLabel, joints, jointRotations);
+  }
+
+  private getHandSpace(handedness: Handedness) {
+    if (!this.user?.hands) return undefined;
+    const input = this.user.input;
+    const controller =
+      handedness === Handedness.LEFT
+        ? input?.leftController
+        : input?.rightController;
+    if (controller) {
+      const slot = input.controllers.indexOf(controller);
+      if (slot >= 0 && slot < this.user.hands.hands.length) {
+        return this.user.hands.hands[slot];
+      }
+    }
+
+    // Once any input source has reported handedness, an absent counterpart is
+    // genuinely untracked. Do not duplicate the connected hand into both labels.
+    if (input?.leftController || input?.rightController) return undefined;
+
+    // Legacy/custom integrations may not expose Input's handed controllers.
+    return this.user.hands.hands[handedness];
   }
 
   getHandContexts() {

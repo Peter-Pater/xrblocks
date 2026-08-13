@@ -4,9 +4,20 @@ import type {GestureRecognizer, PoseEstimator} from './GestureTypes';
 import {HeuristicGestureRecognizer} from './gestureRecognizers/HeuristicGestureRecognizer';
 import {WebXRHandPoseEstimator} from './poseEstimators/WebXRHandPoseEstimator';
 
-export type GestureConfiguration = {
+export type GestureParameters = Record<string, unknown>;
+
+export type GestureConfiguration<
+  TParameters extends object = GestureParameters,
+> = {
   enabled: boolean;
   threshold?: number;
+  parameters?: TParameters;
+};
+
+export type GestureConfigurationUpdate<
+  TParameters extends object = GestureParameters,
+> = Omit<Partial<GestureConfiguration<TParameters>>, 'parameters'> & {
+  parameters?: DeepPartial<TParameters>;
 };
 
 export class GestureRecognitionOptions {
@@ -15,6 +26,12 @@ export class GestureRecognitionOptions {
   minimumConfidence = 0.6;
 
   updateIntervalMs = 33;
+
+  /** Rolling hand-pose history made available to temporal recognizers. */
+  historyDurationMs = 1500;
+
+  /** A larger gap resets a hand's history instead of joining two motions. */
+  maximumSampleGapMs = 250;
 
   poseEstimator: PoseEstimator = new WebXRHandPoseEstimator();
 
@@ -53,9 +70,20 @@ export class GestureRecognitionOptions {
     return this;
   }
 
+  setHistoryDurationMs(historyDurationMs: number) {
+    this.historyDurationMs = historyDurationMs;
+    return this;
+  }
+
+  setMaximumSampleGapMs(maximumSampleGapMs: number) {
+    this.maximumSampleGapMs = maximumSampleGapMs;
+    return this;
+  }
+
   setGestureEnabled(name: string, enabled: boolean) {
     this.gestures[name] ??= {enabled};
     this.gestures[name].enabled = enabled;
+    this.gestureRecognizer.setGestureConfig?.(name, this.gestures[name]);
     return this;
   }
 
@@ -71,13 +99,17 @@ export class GestureRecognitionOptions {
     return this;
   }
 
-  setGestureConfig(name: string, config: Partial<GestureConfiguration>) {
+  setGestureConfig<TParameters extends object = GestureParameters>(
+    name: string,
+    config: GestureConfigurationUpdate<TParameters>
+  ) {
     const mergedConfig = {
       ...this.gestures[name],
       enabled: this.gestures[name]?.enabled ?? true,
     } as GestureConfiguration;
     deepMerge(mergedConfig, config);
     this.gestures[name] = mergedConfig;
+    this.gestureRecognizer.setGestureConfig?.(name, mergedConfig);
     return this;
   }
 

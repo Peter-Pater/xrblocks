@@ -25,6 +25,8 @@ options.enableGestures();
 // Opt specific gestures in (names: pinch, open-palm, fist, thumbs-up, point, spread).
 options.gestures.setGestureEnabled('point', true);
 options.gestures.setGestureEnabled('spread', true);
+options.gestures.setGestureEnabled('shoo', true); // temporal; opt-in
+options.gestures.setGestureEnabled('beckon', true); // temporal; opt-in
 
 options.hands.enabled = true; // gestures need hands
 options.simulator.defaultMode = xb.SimulatorMode.POSE; // pose hands on desktop
@@ -68,7 +70,24 @@ class GestureLogger extends xb.Script {
 ## Notes
 
 - Events: `gesturestart`, `gestureupdate`, `gestureend`; `event.detail = {hand, name, confidence}`.
+- Recognition publishes only the highest-confidence passing gesture per hand.
+  When the winner changes it ends the old gesture before starting the new one;
+  left and right hands remain independent.
+- Static detectors use the current `HandGestureContext` pose. Temporal detectors use its
+  cloned, timestamped `context.samples` history. History resets independently per hand on
+  tracking loss or a configured maximum sample gap.
+- Register either kind with
+  `HeuristicGestureRecognizer.registerGesture(name, detector, config)`. Detector-specific
+  `parameters` are supported and `setGestureConfig()` deep-merges overrides.
+- The built-in `shoo` and `beckon` motions are disabled by default. `shoo` uses
+  a horizontal hand axis and side-to-side wrist rotation; `beckon` applies the same
+  oscillation to a roughly upright wrist-to-knuckle axis, without requiring an open
+  hand, a particular yaw, or a viewer-facing palm. Both tolerate short pose dropouts
+  through configurable `maximumPoseDropoutMs` and briefly hold completed results for
+  normal start/end events. Applications can also configure a continuation window
+  so fresh angular travel keeps a repeated temporal gesture active between strokes.
 - Tune providers/thresholds via `options.gestures` (see
   [`src/input/gestures/GestureRecognitionOptions.ts`](../../src/input/gestures/GestureRecognitionOptions.ts)).
 - Heuristic detectors ship by default; custom TF-Lite / PyTorch gesture models can be wired in.
-- See `templates/heuristic_hand_gestures` and `demos/sim_hand_poses` for full examples.
+- See `demos/temporal_gestures`, `templates/heuristic_hand_gestures`, and
+  `demos/sim_hand_poses` for full examples.

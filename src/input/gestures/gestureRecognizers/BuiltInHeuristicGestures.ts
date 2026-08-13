@@ -1,5 +1,8 @@
+import * as THREE from 'three';
+
+import type {JointName} from '../../Hands';
 import {GestureConfiguration} from '../GestureRecognitionOptions';
-import type {HandContext} from '../GestureTypes';
+import type {HandContext, HandGestureContext} from '../GestureTypes';
 import {
   FINGER_ORDER,
   average,
@@ -7,11 +10,13 @@ import {
   estimateHandScale,
   getAdjacentFingerSpreads,
   getFingerCurl,
+  getFingerJoint,
   getFingerPalmAlignment,
   getFingerSpread,
   getFingerStraightness,
   getFingertipDistance,
   getFingertipPalmDistance,
+  getPalmPose,
   getPalmWidth,
   getThumbOpposition,
   getThumbStraightness,
@@ -19,6 +24,38 @@ import {
 } from '../HandPoseMetrics';
 
 const EPSILON = 1e-6;
+// Both mirrored simulator hands put a natural thumbs-up this far from world
+// up. Compare polar tilt rather than the full world vector so turning around
+// in the room does not rotate a valid gesture out of its reference cone.
+const SIMULATOR_THUMBS_UP_TILT_DEGREES = 24.32445969031177;
+
+export interface ThumbsUpGestureParameters {
+  /** Natural thumb tilt away from world up. */
+  preferredThumbTiltDegrees: number;
+  /** Maximum angular deviation on either side of the preferred tilt. */
+  maximumThumbTiltDeviationDegrees: number;
+  minimumThumbStraightness: number;
+  /** Minimum closed score required from every non-thumb finger. */
+  minimumOtherFingerCurl: number;
+  minimumThumbSeparation: number;
+  /** Recent history checked before accepting this static pose. */
+  motionLookbackMs: number;
+  maximumRecentAngularMovementDegrees: number;
+  /** Maximum recent palm-center movement, measured in palm widths. */
+  maximumRecentTranslation: number;
+}
+
+export const DEFAULT_THUMBS_UP_GESTURE_PARAMETERS: Readonly<ThumbsUpGestureParameters> =
+  {
+    preferredThumbTiltDegrees: SIMULATOR_THUMBS_UP_TILT_DEGREES,
+    maximumThumbTiltDeviationDegrees: 20,
+    minimumThumbStraightness: 0.7,
+    minimumOtherFingerCurl: 0.55,
+    minimumThumbSeparation: 0.35,
+    motionLookbackMs: 350,
+    maximumRecentAngularMovementDegrees: 15,
+    maximumRecentTranslation: 0.4,
+  };
 
 export function detectPinch(
   context: HandContext,
@@ -135,15 +172,31 @@ export function detectFist(context: HandContext, config: GestureConfiguration) {
 
 export function detectThumbsUp(
   context: HandContext,
-  config: GestureConfiguration
+  config: GestureConfiguration<ThumbsUpGestureParameters>
 ) {
+  const parameters = {
+    ...DEFAULT_THUMBS_UP_GESTURE_PARAMETERS,
+    ...config.parameters,
+  };
+  const trackingValid = hasCompleteThumbsUpTracking(context);
+  const recentMotion = getRecentHandMotion(
+    context,
+    parameters.motionLookbackMs
+  );
   const thumbStraightness = getThumbStraightness(context);
-  const thumbVertical = clamp01(
-    (getThumbVerticalDirection(context) - 0.35) / 0.5
+  const thumbVerticalDirection = getThumbVerticalDirection(context);
+  const thumbTiltDegrees = THREE.MathUtils.radToDeg(
+    Math.acos(THREE.MathUtils.clamp(thumbVerticalDirection, -1, 1))
   );
-  const otherCurl = average(
-    FINGER_ORDER.map((finger) => getFingerClosedScore(context, finger))
+  const thumbTiltDeviationDegrees = Math.abs(
+    thumbTiltDegrees - parameters.preferredThumbTiltDegrees
   );
+  const thumbVertical = clamp01((thumbVerticalDirection - 0.35) / 0.5);
+  const otherCurlScores = FINGER_ORDER.map((finger) =>
+    getFingerClosedScore(context, finger)
+  );
+  const otherCurl = average(otherCurlScores);
+  const allOtherFingersClosed = Math.min(...otherCurlScores);
   const indexDistance = getFingertipDistance(context, 'thumb', 'index');
   const scale = getPalmWidth(context) ?? estimateHandScale(context);
   const separation =
@@ -156,22 +209,109 @@ export function detectThumbsUp(
   );
   const thumbPose = thumbStraightness * thumbVertical;
 
-  const confidence = clamp01(
-    thumbPose *
-      (otherCurl * 0.45 + separation * 0.35 + (1 - thumbWrapPenalty) * 0.2)
-  );
+  const directionValid =
+    thumbTiltDeviationDegrees <= parameters.maximumThumbTiltDeviationDegrees;
+  const motionValid =
+    recentMotion.angularMovementDegrees <=
+      parameters.maximumRecentAngularMovementDegrees &&
+    recentMotion.translation <= parameters.maximumRecentTranslation;
+  const poseValid =
+    trackingValid &&
+    motionValid &&
+    directionValid &&
+    thumbStraightness >= parameters.minimumThumbStraightness &&
+    allOtherFingersClosed >= parameters.minimumOtherFingerCurl &&
+    separation >= parameters.minimumThumbSeparation;
+  const confidence = poseValid
+    ? clamp01(
+        thumbPose *
+          (otherCurl * 0.45 + separation * 0.35 + (1 - thumbWrapPenalty) * 0.2)
+      )
+    : 0;
 
   return {
     confidence,
     data: {
       thumbStraightness,
       thumbVertical,
+      thumbVerticalDirection,
+      thumbTiltDegrees,
+      thumbTiltDeviationDegrees,
+      directionValid,
+      trackingValid,
+      motionValid,
+      recentAngularMovement: recentMotion.angularMovementDegrees,
+      recentTranslation: recentMotion.translation,
+      poseValid,
       otherCurl,
+      allOtherFingersClosed,
       separation,
       thumbWrapPenalty,
       threshold: config.threshold,
     },
   };
+}
+
+function getRecentHandMotion(context: HandContext, lookbackMs: number) {
+  if (!hasGestureHistory(context) || context.samples.length < 2) {
+    return {angularMovementDegrees: 0, translation: 0};
+  }
+
+  const currentPalm = getPalmPose(context);
+  const latestTimestamp = context.samples.at(-1)!.timestamp;
+  if (!currentPalm) {
+    return {angularMovementDegrees: Infinity, translation: Infinity};
+  }
+
+  let angularMovement = 0;
+  let translation = 0;
+  for (const sample of context.samples) {
+    if (sample.timestamp < latestTimestamp - Math.max(0, lookbackMs)) continue;
+    const palm = getPalmPose(sample);
+    if (!palm) continue;
+    angularMovement = Math.max(
+      angularMovement,
+      currentPalm.normal.angleTo(palm.normal),
+      currentPalm.right.angleTo(palm.right),
+      currentPalm.up.angleTo(palm.up)
+    );
+    translation = Math.max(
+      translation,
+      currentPalm.center.distanceTo(palm.center) /
+        Math.max(currentPalm.width, EPSILON)
+    );
+  }
+
+  return {
+    angularMovementDegrees: THREE.MathUtils.radToDeg(angularMovement),
+    translation,
+  };
+}
+
+function hasGestureHistory(
+  context: HandContext
+): context is HandGestureContext {
+  return 'samples' in context && Array.isArray(context.samples);
+}
+
+function hasCompleteThumbsUpTracking(context: HandContext) {
+  const thumbTracked = [
+    'thumb-metacarpal',
+    'thumb-phalanx-proximal',
+    'thumb-phalanx-distal',
+    'thumb-tip',
+  ].every((joint) => context.getJoint(joint as JointName));
+  const fingerSuffixes = [
+    'metacarpal',
+    'phalanx-proximal',
+    'phalanx-intermediate',
+    'phalanx-distal',
+    'tip',
+  ];
+  const fingersTracked = FINGER_ORDER.every((finger) =>
+    fingerSuffixes.every((suffix) => getFingerJoint(context, finger, suffix))
+  );
+  return thumbTracked && fingersTracked;
 }
 
 export function detectThumbsDown(

@@ -2,7 +2,10 @@ import * as THREE from 'three';
 
 import {Handedness, JointName} from '../Hands';
 import type {User} from '../../core/User';
-import type {GestureConfiguration} from './GestureRecognitionOptions';
+import type {
+  GestureConfiguration,
+  GestureParameters,
+} from './GestureRecognitionOptions';
 
 export type HandLabel = 'left' | 'right';
 
@@ -21,6 +24,19 @@ export interface HandContext {
   getJoint(jointName: JointName): THREE.Vector3 | undefined;
 }
 
+/** A time-isolated copy of one hand pose captured by GestureRecognition. */
+export interface HandPoseSample extends HandContext {
+  readonly timestamp: number;
+}
+
+/**
+ * The current hand pose plus recent timestamped poses for temporal detectors.
+ * Static gesture detectors can continue to use this exactly like HandContext.
+ */
+export interface HandGestureContext extends HandContext {
+  readonly samples: readonly HandPoseSample[];
+}
+
 export type GestureDetectionResult = {
   confidence: number;
   data?: Record<string, unknown>;
@@ -31,15 +47,20 @@ export type GestureScoreMap = Record<
   GestureDetectionResult | undefined
 >;
 
-export type HeuristicGestureDetector = (
-  context: HandContext,
-  config: GestureConfiguration
+export type HeuristicGestureDetector<
+  TParameters extends object = GestureParameters,
+> = (
+  context: HandGestureContext,
+  config: GestureConfiguration<TParameters>
 ) => GestureDetectionResult | undefined;
 
 export interface GestureRecognizer {
   init?(): Promise<void>;
-  recognize(context: HandContext): GestureScoreMap | Promise<GestureScoreMap>;
+  recognize(
+    context: HandGestureContext
+  ): GestureScoreMap | Promise<GestureScoreMap>;
   getGestureConfigurations?(): Record<string, GestureConfiguration>;
+  setGestureConfig?(name: string, config: GestureConfiguration): void;
   dispose?(): void;
 }
 

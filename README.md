@@ -35,10 +35,11 @@ immersive applications with features like:
 
 - **Hand Tracking & Gestures:** Access advanced hand tracking, custom gestures
   with TensorFlow Lite / PyTorch models, and interaction events.
-- **Hand Gesture Recognition:** Opt into pinch, open-palm, fist, thumbs-up, point,
-  and spread detection with `options.enableGestures()`, tune providers or
-  thresholds, and subscribe to `gesturestart`/`gestureupdate`/`gestureend`
-  events from the shared subsystem.
+- **Hand Gesture Recognition:** Opt into static poses or temporal `shoo` and
+  `beckon` motions,
+  register application-defined temporal detectors over cloned pose history,
+  tune typed detector parameters, and subscribe to
+  `gesturestart`/`gestureupdate`/`gestureend` events from the shared subsystem.
 - **Head Gesture Recognition:** Detect completed nod and shake motions with
   `options.enableHeadGestures()` and subscribe through
   `xb.input.headGestures` on device or in the desktop simulator.

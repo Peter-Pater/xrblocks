@@ -60,7 +60,7 @@ const options = new xb.Options();
 options.enableUI(); // spatial UI + reticles
 options.enableReticles(); // pointing cursor
 options.enableHands(); // hand tracking
-options.enableGestures(); // pinch/fist/point/spread/thumbs-up/open-palm
+options.enableGestures(); // static poses + opt-in temporal motions + custom detectors
 options.enableHeadGestures(); // completed nod/shake events in xb.input.headGestures
 options.enableStrokes(); // $1 unistroke recognition
 options.enableDepth(); // depth sensing + depth mesh

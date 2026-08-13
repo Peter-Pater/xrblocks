@@ -8,19 +8,19 @@ title: Hand Gestures
 XR Blocks gesture recognition is split into two explicit layers:
 
 ```txt
-PoseEstimator -> HandContext -> GestureRecognizer -> gesture events
+PoseEstimator -> HandGestureContext -> GestureRecognizer -> gesture events
 ```
 
 A `PoseEstimator` converts a source of hand pose data into the SDK's canonical
-`HandContext`. A `GestureRecognizer` reads that context and returns confidence
-scores for named gestures. `GestureRecognition` handles update timing,
-confidence thresholds, and `gesturestart`, `gestureupdate`, and `gestureend`
-events.
+`HandContext`. `GestureRecognition` clones timestamped joint snapshots into a
+rolling history and passes a `HandGestureContext` to the recognizer. The runtime
+handles sampling, history lifecycle, confidence thresholds, and events; gesture
+meaning remains entirely inside registered recognizers.
 
 The default setup is:
 
 ```txt
-WebXRHandPoseEstimator -> HandContext -> HeuristicGestureRecognizer
+WebXRHandPoseEstimator -> HandGestureContext -> HeuristicGestureRecognizer
 ```
 
 ## Quick Start
@@ -35,6 +35,8 @@ options.enableGestures();
 options.gestures.minimumConfidence = 0.6;
 options.gestures.setGestureEnabled('point', true);
 options.gestures.setGestureEnabled('spread', true);
+options.gestures.setGestureEnabled('shoo', true); // temporal and opt-in
+options.gestures.setGestureEnabled('beckon', true); // temporal and opt-in
 
 await xb.init(options);
 ```
@@ -67,23 +69,23 @@ These are the shapes a custom implementation should follow.
 interface HandContext {
   handedness: xb.Handedness;
   handLabel: 'left' | 'right';
-  globalTransform: THREE.Matrix4;
   joints: Map<xb.JointName, THREE.Vector3>;
+  getJoint(jointName: xb.JointName): THREE.Vector3 | undefined;
+}
 
-  getLocalJointPositions(): Float32Array;
-  getGlobalJointPositions(): Float32Array;
-  getJoint(
-    jointName: xb.JointName,
-    global?: boolean
-  ): THREE.Vector3 | undefined;
+interface HandPoseSample extends HandContext {
+  readonly timestamp: number;
+}
+
+interface HandGestureContext extends HandContext {
+  readonly samples: readonly HandPoseSample[];
 }
 ```
 
 `joints` should contain canonical XR Blocks/WebXR-style joint names from
-`xb.HAND_JOINT_NAMES`. For the default WebXR estimator, `joints` aliases global
-positions. `getJoint(name)` defaults to global positions. Custom pose estimators
-may use the same local and global coordinates if they do not have a separate
-world transform.
+`xb.HAND_JOINT_NAMES`. Positions are in world space. The history contains
+cloned snapshots, so later pose-estimator mutation cannot change earlier
+samples.
 
 ```ts
 interface PoseEstimator {
@@ -100,11 +102,14 @@ type GestureScoreMap = Record<
 
 interface GestureRecognizer {
   init?(): Promise<void>;
-  recognize(context: HandContext): GestureScoreMap | Promise<GestureScoreMap>;
+  recognize(
+    context: HandGestureContext
+  ): GestureScoreMap | Promise<GestureScoreMap>;
   getGestureConfigurations?(): Record<
     string,
-    {enabled: boolean; threshold?: number}
+    {enabled: boolean; threshold?: number; parameters?: object}
   >;
+  setGestureConfig?(name: string, config: GestureConfiguration): void;
   dispose?(): void;
 }
 ```
@@ -122,6 +127,8 @@ options.enableGestures();
 
 options.gestures.minimumConfidence = 0.7;
 options.gestures.updateIntervalMs = 33;
+options.gestures.historyDurationMs = 1500;
+options.gestures.maximumSampleGapMs = 250;
 
 options.gestures.setPoseEstimator(new xb.WebXRHandPoseEstimator());
 options.gestures.setGestureRecognizer(new xb.HeuristicGestureRecognizer());
@@ -132,6 +139,14 @@ options.gestures.setGestureConfig('pinch', {
   threshold: 0.025,
 });
 ```
+
+History is independent for each hand and pruned to `historyDurationMs`.
+Tracking loss or a gap larger than `maximumSampleGapMs` clears that hand's
+history. Results from an asynchronous recognizer are discarded if they finish
+after such a reset.
+
+`setGestureConfig()` deep-merges `parameters`, so an application can tune one
+detector value without copying its implementation or replacing sibling values.
 
 Gesture names are strings. They are not limited to built-ins. The gesture
 catalogue is initialized from
@@ -182,7 +197,7 @@ registrations and no built-in gestures.
 
 ```js
 const recognizer = new xb.HeuristicGestureRecognizer(false)
-  .registerGesture('wave', detectWave)
+  .registerGesture('my-temporal-gesture', detectMyTemporalGesture)
   .registerGesture('pinch-ish', detectPinchish);
 ```
 
@@ -196,10 +211,182 @@ thumbs-up
 thumbs-down
 point
 spread
+shoo
+beckon
 ```
 
-`point` and `spread` are registered disabled by default; enable them by name if
-you want them emitted.
+`point`, `spread`, `shoo`, and `beckon` are registered disabled by default;
+enable them by name if you want them emitted.
+
+`thumbs-up` uses the simulator's natural pose as its mean: the thumb sits about
+24.3 degrees away from world up. The left and right poses mirror horizontally
+but share that polar tilt, so the detector compares tilt rather than a fixed
+world-space direction (turning around must not invalidate the gesture). The
+default gate allows 20 degrees on either side of the mean and is configurable
+without replacing the detector:
+
+```ts
+options.gestures.setGestureConfig<xb.ThumbsUpGestureParameters>('thumbs-up', {
+  parameters: {
+    preferredThumbTiltDegrees: 24.3,
+    maximumThumbTiltDeviationDegrees: 20,
+    minimumThumbStraightness: 0.75,
+    minimumOtherFingerCurl: 0.6,
+    minimumThumbSeparation: 0.4,
+    motionLookbackMs: 350,
+    maximumRecentAngularMovementDegrees: 15,
+    maximumRecentTranslation: 0.4,
+  },
+});
+```
+
+When timestamped history is available, `thumbs-up` also rejects recent palm
+rotation or translation. This keeps a wave or beckon from being classified as
+thumbs-up merely because one frame passes through the static pose. Direct calls
+with only a `HandContext` retain immediate static-pose behavior.
+
+## Static and Temporal Semantics
+
+Static detectors score the current pose and normally produce `gesturestart`
+when the pose is entered, `gestureupdate` while it is held, and `gestureend`
+when it is released. Existing static detectors can treat `HandGestureContext`
+as a `HandContext` and need no changes.
+
+Recognition is mutually exclusive per hand. If multiple enabled detectors pass
+the confidence threshold on the same evaluation, only the highest-confidence
+result is published. When that winner changes, its `gestureend` is emitted
+before the new winner's `gesturestart`. The other hand is evaluated
+independently and may publish its own gesture at the same time.
+
+Temporal detectors inspect `context.samples` and typically return confidence
+only after a motion completes. They should hold a completed result briefly so
+the shared event pipeline emits one `gesturestart`, followed by updates if the
+hold spans another evaluation, and then the normal `gestureend`.
+
+### Built-in Shoo and Come Here
+
+The opt-in `shoo` detects an open palm whose wrist-to-fingers axis is roughly
+horizontal while the wrist rotates side to side. The opt-in `beckon` uses the
+wrist-to-knuckle-center axis, so extended, curled, and closed fingers all work.
+It detects that axis rocking away from and back toward upright, independent of
+the hand's yaw or which way the palm faces. Both require qualifying reversals
+and reject one-way turns, slow motion, and excessive palm-center translation.
+Beckon also rejects poses that strongly match the built-in thumbs-up detector.
+
+```ts
+options.gestures.setGestureEnabled('shoo', true);
+options.gestures.setGestureConfig<xb.ShooGestureParameters>('shoo', {
+  threshold: THREE.MathUtils.degToRad(18),
+  parameters: {
+    reversalCount: 3,
+    maximumTranslation: 0.5,
+    maximumPoseDropoutMs: 120,
+    detectionHoldMs: 220,
+  },
+});
+
+options.gestures.setGestureEnabled('beckon', true);
+options.gestures.setGestureConfig<xb.BeckonGestureParameters>('beckon', {
+  threshold: THREE.MathUtils.degToRad(6),
+  parameters: {
+    reversalCount: 1,
+    verticalToleranceDegrees: 65,
+    maximumThumbsUpConfidence: 0.5,
+    minimumAngularSpeedDegreesPerSecond: 4,
+    maximumPoseDropoutMs: 600,
+    detectionHoldMs: 500,
+    continuationWindowMs: 400,
+    minimumContinuationDegrees: 1.5,
+  },
+});
+```
+
+The default stroke threshold is 15 degrees. Parameters also cover minimum and
+maximum duration, orientation tolerance, angular speed, and detection hold
+time. `shoo` additionally gates palm openness; `beckon` deliberately does not.
+`beckon` also has no viewer-position or palm-facing dependency.
+`maximumPoseDropoutMs` lets a detector bridge a brief run of noisy or
+ineligible poses without joining distinct motions;
+`continuationWindowMs` and `minimumContinuationDegrees` keep an already
+completed temporal gesture active while fresh motion continues, without
+extending its inactive tail;
+`maximumTranslation` is measured in average palm widths. Diagnostics report
+`duration`, `reversals`, `amplitude` (degrees), `peakAngularSpeed`
+(degrees/second), `openness`, orientation alignment, and `translation` (palm
+widths).
+
+The former `detectWave`, `WaveGestureParameters`, and
+`DEFAULT_WAVE_GESTURE_PARAMETERS` exports remain as deprecated aliases for the
+`shoo` implementation, but the registered built-in gesture name is `shoo`.
+
+### Complete Custom Temporal Gesture
+
+This detector recognizes a steady open palm held for a configurable duration.
+It lives in application code and needs no runtime changes or reserved name.
+
+```ts
+interface SteadyPalmParameters {
+  holdDurationMs: number;
+  minimumOpenness: number;
+  maximumTravel: number;
+}
+
+const detectSteadyPalm: xb.HeuristicGestureDetector<SteadyPalmParameters> = (
+  context,
+  config
+) => {
+  const parameters = config.parameters!;
+  const eligible = [];
+
+  for (let index = context.samples.length - 1; index >= 0; index--) {
+    const sample = context.samples[index];
+    const openness = xb.detectOpenPalm(sample, {enabled: true}).confidence;
+    const palm = xb.getPalmPose(sample);
+    if (!palm || openness < parameters.minimumOpenness) break;
+    eligible.unshift({sample, palm, openness});
+  }
+  if (eligible.length < 2) return {confidence: 0};
+
+  const duration =
+    eligible.at(-1)!.sample.timestamp - eligible[0].sample.timestamp;
+  const width = xb.average(eligible.map(({palm}) => palm.width));
+  const travel =
+    Math.max(
+      ...eligible.map(({palm}) =>
+        palm.center.distanceTo(eligible[0].palm.center)
+      )
+    ) / width;
+  const openness = xb.average(eligible.map((pose) => pose.openness));
+
+  return {
+    confidence:
+      duration >= parameters.holdDurationMs &&
+      travel <= parameters.maximumTravel
+        ? openness
+        : 0,
+    data: {duration, openness, translation: travel},
+  };
+};
+
+const recognizer =
+  new xb.HeuristicGestureRecognizer().registerGesture<SteadyPalmParameters>(
+    'steady-palm',
+    detectSteadyPalm,
+    {
+      enabled: true,
+      parameters: {
+        holdDurationMs: 650,
+        minimumOpenness: 0.65,
+        maximumTravel: 0.35,
+      },
+    }
+  );
+
+options.gestures.setGestureRecognizer(recognizer);
+options.gestures.setGestureConfig<SteadyPalmParameters>('steady-palm', {
+  parameters: {holdDurationMs: 800},
+});
+```
 
 ## Hand Pose Helpers
 
@@ -241,8 +428,8 @@ getFingertipPalmDistance(context, digit)
 Feature-vector helpers for ML/custom models:
 
 ```txt
-getBoneVectors(context, global = false)
-getRelativeBoneAngles(context, global = false)
+getBoneVectors(context)
+getRelativeBoneAngles(context)
 ```
 
 Utility helpers:
@@ -290,7 +477,8 @@ options.gestures.setGestureRecognizer(new CustomGestureRecognizer());
 ```
 
 Recognizers may return a `Promise<GestureScoreMap>`. The SDK stores the latest
-completed async result for each hand and keeps update frames moving.
+completed async result for each hand, keeps update frames moving, and prevents
+results from an older tracking generation from being published.
 
 ## Custom Pose Estimator
 
@@ -322,10 +510,7 @@ class WebcamPoseEstimator {
     return {
       handedness,
       handLabel: 'right',
-      globalTransform: new THREE.Matrix4(),
       joints,
-      getLocalJointPositions: () => jointMapToArray(joints),
-      getGlobalJointPositions: () => jointMapToArray(joints),
       getJoint: (jointName) => joints.get(jointName),
     };
   }

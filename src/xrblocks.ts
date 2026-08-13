@@ -54,6 +54,8 @@ export * from './input/gestures/poseEstimators/WebXRHandPoseEstimator';
 export * from './input/gestures/poseEstimators/MediaPipeHandPoseEstimator';
 export * from './input/gestures/poseEstimators/TensorFlowHandPoseEstimator';
 export * from './input/gestures/gestureRecognizers/HeuristicGestureRecognizer';
+export * from './input/gestures/gestureRecognizers/BuiltInHeuristicGestures';
+export * from './input/gestures/gestureRecognizers/BuiltInTemporalGestures';
 export * from './input/headGestures/HeadGestureEvents';
 export * from './input/headGestures/HeadGestureRecognition';
 export * from './input/headGestures/HeadGestureRecognitionOptions';

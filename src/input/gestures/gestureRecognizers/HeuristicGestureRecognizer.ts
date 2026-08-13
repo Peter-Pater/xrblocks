@@ -1,12 +1,16 @@
 import type {DeepReadonly} from '../../../utils/Types';
-import type {GestureConfiguration} from '../GestureRecognitionOptions';
+import type {
+  GestureConfiguration,
+  GestureParameters,
+} from '../GestureRecognitionOptions';
 import type {
   HeuristicGestureDetector,
   GestureRecognizer,
   GestureScoreMap,
-  HandContext,
+  HandGestureContext,
 } from '../GestureTypes';
 import {
+  DEFAULT_THUMBS_UP_GESTURE_PARAMETERS,
   detectFist,
   detectOpenPalm,
   detectPinch,
@@ -15,6 +19,12 @@ import {
   detectThumbsDown,
   detectThumbsUp,
 } from './BuiltInHeuristicGestures';
+import {
+  DEFAULT_BECKON_GESTURE_PARAMETERS,
+  DEFAULT_SHOO_GESTURE_PARAMETERS,
+  detectBeckon,
+  detectShoo,
+} from './BuiltInTemporalGestures';
 
 type RegisteredGesture = {
   detector: HeuristicGestureDetector;
@@ -30,17 +40,19 @@ export class HeuristicGestureRecognizer implements GestureRecognizer {
     }
   }
 
-  registerGesture(
+  registerGesture<TParameters extends object = GestureParameters>(
     name: string,
-    detector: HeuristicGestureDetector,
-    config: DeepReadonly<Partial<GestureConfiguration>> = {}
+    detector: HeuristicGestureDetector<TParameters>,
+    config: DeepReadonly<Partial<GestureConfiguration<TParameters>>> = {}
   ) {
+    const storedConfig = {
+      enabled: true,
+      ...config,
+    } as GestureConfiguration<TParameters>;
     this.gestures.set(name, {
-      detector,
-      config: {
-        enabled: true,
-        ...config,
-      },
+      detector: (context, runtimeConfig) =>
+        detector(context, runtimeConfig as GestureConfiguration<TParameters>),
+      config: storedConfig as GestureConfiguration,
     });
     return this;
   }
@@ -53,12 +65,17 @@ export class HeuristicGestureRecognizer implements GestureRecognizer {
   getGestureConfigurations(): Record<string, GestureConfiguration> {
     const configs: Record<string, GestureConfiguration> = {};
     for (const [name, gesture] of this.gestures.entries()) {
-      configs[name] = {...gesture.config};
+      configs[name] = structuredClone(gesture.config);
     }
     return configs;
   }
 
-  recognize(context: HandContext): GestureScoreMap {
+  setGestureConfig(name: string, config: GestureConfiguration) {
+    const gesture = this.gestures.get(name);
+    if (gesture) gesture.config = structuredClone(config);
+  }
+
+  recognize(context: HandGestureContext): GestureScoreMap {
     const scores: GestureScoreMap = {};
     for (const [name, gesture] of this.gestures.entries()) {
       scores[name] = gesture.detector(context, gesture.config);
@@ -73,12 +90,24 @@ export class HeuristicGestureRecognizer implements GestureRecognizer {
     });
     this.registerGesture('open-palm', detectOpenPalm);
     this.registerGesture('fist', detectFist);
-    this.registerGesture('thumbs-up', detectThumbsUp);
+    this.registerGesture('thumbs-up', detectThumbsUp, {
+      parameters: DEFAULT_THUMBS_UP_GESTURE_PARAMETERS,
+    });
     this.registerGesture('thumbs-down', detectThumbsDown);
     this.registerGesture('point', detectPoint, {enabled: false});
     this.registerGesture('spread', detectSpread, {
       enabled: false,
       threshold: 0.04,
+    });
+    this.registerGesture('shoo', detectShoo, {
+      enabled: false,
+      threshold: Math.PI / 12,
+      parameters: DEFAULT_SHOO_GESTURE_PARAMETERS,
+    });
+    this.registerGesture('beckon', detectBeckon, {
+      enabled: false,
+      threshold: Math.PI / 12,
+      parameters: DEFAULT_BECKON_GESTURE_PARAMETERS,
     });
   }
 }
