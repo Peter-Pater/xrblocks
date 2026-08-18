@@ -198,8 +198,17 @@
         UIIcon,
         UIPanel,
         UIText,
+        raycastSortFunction,
       } from 'uiblocks';
       import {Object3DDetector} from 'xrblocks/addons/objects3d/index.js';
+      import {
+        AprilTagTracker,
+        DEFAULT_TAG25H9_ID,
+        DEFAULT_TAG25H9_SIZE_METERS,
+        TAG25H9_MAX_ID,
+        TAG25H9_MIN_ID,
+        loadPersistedAprilTagCalibration,
+      } from 'xrblocks/addons/apriltags/AprilTagTracker.js';
 
       // -----------------------------------------------------------------
       // Settings. Anything that must be decided before xb.init() lives in
@@ -285,6 +294,14 @@
             `yaw ${d.cameraRotationOffsetDeg.yaw.toFixed(1)}° ` +
             `pitch ${d.cameraRotationOffsetDeg.pitch.toFixed(1)}° ` +
             `roll ${d.cameraRotationOffsetDeg.roll.toFixed(1)}°`,
+        ],
+        [
+          'extrinsic cal',
+          (d) =>
+            d.cameraExtrinsicCorrection
+              ? `${d.cameraExtrinsicCorrection.rotationDeg.toFixed(1)}° / ` +
+                `${d.cameraExtrinsicCorrection.translationCm.toFixed(1)} cm`
+              : 'none (SDK model)',
         ],
         ['snapshot', (d) => `${d.snapshotWidth}×${d.snapshotHeight}`],
         [
@@ -384,6 +401,13 @@
         inFlight = true;
         detectBtn.disabled = true;
         setStatus('detecting…');
+        // A live (unfrozen) AprilTag calibration session polls the same
+        // device camera and transfers its snapshot buffers to a worker; race
+        // that against this multi-second call and it corrupts the shared
+        // frame. Pause it for the duration, and keep a stale calibration
+        // keyframe from being paired with a frame this call has taken over.
+        const pausedForDetect = aprilTracker && !aprilTracker.isDetectionPaused;
+        if (pausedForDetect) aprilTracker.setDetectionPaused(true);
         try {
           const objects = await detector.detect();
           const d = detector.diagnostics;
@@ -398,6 +422,9 @@
           refreshDiagnostics();
           inFlight = false;
           detectBtn.disabled = false;
+          if (pausedForDetect && aprilTracker) {
+            aprilTracker.setDetectionPaused(false);
+          }
         }
       }
 
@@ -437,6 +464,111 @@
           `rotation offset yaw ${SETTINGS.yawDeg}° pitch ${SETTINGS.pitchDeg}° ` +
             `roll ${SETTINGS.rollDeg}° — press detect to apply`
         );
+      }
+
+      // -----------------------------------------------------------------
+      // Optional AprilTag camera calibration. Recovers the device camera's
+      // true 6-DOF extrinsics (rotation + translation) by tracking a
+      // physical tag and self-calibrating against the headset's own SLAM
+      // poses (see demos/apriltag_tracking). Only the extrinsic transfers
+      // here — rangeScale does not apply, because this detector gets metric
+      // range from the depth mesh rather than a monocular tag estimate.
+      // -----------------------------------------------------------------
+      let debugPanelInstance = null; // set by DebugPanel.init()
+      let aprilTracker = null; // live only during a calibration session
+      let calCard = null;
+      let calStatusText = null;
+      let calDiagText = null;
+      let calIdText = null;
+
+      function applyExtrinsic(rotation, translation, sourceLabel) {
+        detector.setCameraExtrinsicCorrection({rotation, translation});
+        // The manual Euler offsets correct the same error as the extrinsic
+        // correction; zero them so the two do not stack.
+        for (const axis of ['yaw', 'pitch', 'roll']) setRotation(axis, 0);
+        const q = new THREE.Quaternion().fromArray(rotation);
+        const rotDeg = THREE.MathUtils.radToDeg(
+          2 * Math.acos(THREE.MathUtils.clamp(Math.abs(q.w), -1, 1))
+        );
+        const cm = Math.hypot(...translation) * 100;
+        setStatus(
+          `camera model: ${sourceLabel} - ${rotDeg.toFixed(1)}deg / ` +
+            `${cm.toFixed(1)}cm - press detect to apply`
+        );
+      }
+
+      function destroyCalCard() {
+        if (calCard && debugPanelInstance) {
+          debugPanelInstance.uiCore.unregister(calCard);
+        }
+        calCard = null;
+        calStatusText = null;
+        calDiagText = null;
+        calIdText = null;
+      }
+
+      function teardownCalibrationSession() {
+        destroyCalCard();
+        if (aprilTracker) {
+          // Removal from the scene disposes the tracker: its worker is
+          // terminated and its pose ring cleared.
+          xb.core.scene.remove(aprilTracker);
+          aprilTracker = null;
+        }
+      }
+
+      function useStoredCalibration() {
+        teardownCalibrationSession();
+        if (xb.core.deviceCamera?.simulatorCamera) {
+          setStatus('simulator: SDK camera model in use.');
+          return;
+        }
+        const targetDevice = xb.core.world?.objects?.targetDevice ?? 'galaxyxr';
+        const stored = loadPersistedAprilTagCalibration(targetDevice);
+        if (stored) {
+          applyExtrinsic(
+            stored.rotation,
+            stored.translation,
+            'stored apriltag cal'
+          );
+        } else {
+          detector.setCameraExtrinsicCorrection(null);
+          setStatus('no stored calibration; using SDK camera estimate.');
+        }
+      }
+
+      function createTagOutline() {
+        const halfSize = DEFAULT_TAG25H9_SIZE_METERS / 2;
+        const geometry = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(-halfSize, halfSize, 0),
+          new THREE.Vector3(halfSize, halfSize, 0),
+          new THREE.Vector3(halfSize, -halfSize, 0),
+          new THREE.Vector3(-halfSize, -halfSize, 0),
+        ]);
+        const outline = new THREE.LineLoop(
+          geometry,
+          new THREE.LineBasicMaterial({color: 0xffffff})
+        );
+        // Display-only: the default 1 m Line raycast threshold would
+        // otherwise steal pointer rays from everything behind it.
+        outline.raycast = () => {};
+        return outline;
+      }
+
+      function freezeDetection() {
+        if (!aprilTracker) return;
+        aprilTracker.setDetectionPaused(true);
+        const cal = aprilTracker.getCalibration();
+        const converged = aprilTracker.diagnostics.calibrationConverged;
+        applyExtrinsic(
+          cal.rotation,
+          cal.translation,
+          converged ? 'apriltag (converged)' : 'apriltag (UNCONVERGED)'
+        );
+        // Close the calibration panel but keep the anchor visuals in the
+        // scene (tracker stays, paused) so the frozen registration can be
+        // eyeballed against the physical tag.
+        destroyCalCard();
       }
 
       // -----------------------------------------------------------------
@@ -497,12 +629,16 @@
 
       class DebugPanel extends xb.Script {
         init() {
+          if (xb.core.input?.raycaster) {
+            xb.core.input.raycaster.sortFunction = raycastSortFunction;
+          }
+          debugPanelInstance = this;
           this.uiCore = new UICore(this);
           const card = this.uiCore.createCard({
             name: 'Objects3dDebugCard',
             position: new THREE.Vector3(0, 1.35, -0.95),
             sizeX: 0.95,
-            sizeY: 0.6,
+            sizeY: 0.66,
           });
           const root = new UIPanel({
             width: '100%',
@@ -586,6 +722,19 @@
           buttons.add(this.iconButton('delete_sweep', 'clear', clearAll));
           buttons.add(this.iconButton('content_copy', 'copy', copyDiagnostics));
           col.add(buttons);
+
+          // Optional AprilTag camera calibration (see the section above).
+          const calRow = new UIPanel({
+            width: '100%',
+            flexDirection: 'row',
+            gap: 6,
+            justifyContent: 'center',
+          });
+          calRow.add(this.smallButton('use stored cal', useStoredCalibration));
+          calRow.add(
+            this.smallButton('apriltag cal', () => this.openCalibrationCard())
+          );
+          col.add(calRow);
 
           // Nudge the camera rotation offset live, ±5° per press.
           for (const axis of ['yaw', 'pitch', 'roll']) {
@@ -698,6 +847,116 @@
             return value;
           });
           return col;
+        }
+
+        // Pop out a dedicated panel for a live AprilTag calibration session:
+        // pick the tag ID, watch it converge, then freeze it into the
+        // detector's camera model. Reopening always starts a fresh session.
+        openCalibrationCard() {
+          teardownCalibrationSession();
+
+          aprilTracker = new AprilTagTracker({tagId: DEFAULT_TAG25H9_ID});
+          const axes = new THREE.AxesHelper(0.12);
+          axes.raycast = () => {}; // AxesHelper is a LineSegments.
+          aprilTracker.add(axes);
+          aprilTracker.add(createTagOutline());
+          xb.add(aprilTracker);
+
+          calCard = this.uiCore.createCard({
+            name: 'AprilTagCalCard',
+            position: new THREE.Vector3(0.62, 1.35, -0.95),
+            sizeX: 0.5,
+            sizeY: 0.42,
+          });
+          const root = new UIPanel({
+            width: '100%',
+            height: '100%',
+            fillColor: 'rgba(15, 18, 25, 0.92)',
+            strokeWidth: 2,
+            strokeColor: '#ffd27a',
+            cornerRadius: 20,
+            padding: 14,
+            flexDirection: 'column',
+            gap: 8,
+            alignItems: 'stretch',
+          });
+          root.add(
+            new UIText('APRILTAG CALIBRATION', {
+              fontSize: 15,
+              fontWeight: 'bold',
+              color: '#ffd27a',
+              textAlign: 'center',
+              width: '100%',
+            })
+          );
+          root.add(
+            new UIText(
+              `tag25h9 | code width ${(DEFAULT_TAG25H9_SIZE_METERS * 1000).toFixed(1)} mm`,
+              {
+                width: '100%',
+                fontSize: 10,
+                color: '#9ad',
+                textAlign: 'center',
+              }
+            )
+          );
+
+          const idRow = new UIPanel({
+            width: '100%',
+            flexDirection: 'row',
+            gap: 6,
+            alignItems: 'center',
+            justifyContent: 'center',
+          });
+          const nudgeTagId = (delta) => {
+            aprilTracker.setTagId(
+              THREE.MathUtils.clamp(
+                aprilTracker.tagId + delta,
+                TAG25H9_MIN_ID,
+                TAG25H9_MAX_ID
+              )
+            );
+          };
+          idRow.add(this.smallButton('-', () => nudgeTagId(-1)));
+          calIdText = new UIText(`Tag ID ${aprilTracker.tagId}`, {
+            fontSize: 12,
+            fontWeight: 'bold',
+            color: '#ffffff',
+            textAlign: 'center',
+            depthTest: false,
+            renderOrder: 100,
+          });
+          idRow.add(calIdText);
+          idRow.add(this.smallButton('+', () => nudgeTagId(1)));
+          root.add(idRow);
+
+          calStatusText = new UIText(aprilTracker.status, {
+            width: '100%',
+            fontSize: 11,
+            color: '#9ad',
+            textAlign: 'center',
+          });
+          root.add(calStatusText);
+          calDiagText = new UIText('', {
+            width: '100%',
+            fontSize: 10,
+            color: '#7d8794',
+            textAlign: 'center',
+          });
+          root.add(calDiagText);
+
+          const freezeRow = new UIPanel({
+            width: '100%',
+            flexDirection: 'row',
+            justifyContent: 'center',
+          });
+          freezeRow.add(this.smallButton('freeze detection', freezeDetection));
+          root.add(freezeRow);
+
+          calCard.add(root);
+          calCard.addBehavior(
+            new ManipulationBehavior({draggable: true, faceCamera: true})
+          );
         }
 
         rotationRow(axis) {
@@ -880,17 +1139,38 @@
         // Repainting uikit text allocates, so only touch rows whose value
         // actually changed, and only a few times a second.
         update() {
-          if (!xrDiagnosticsRows) return;
           const now = performance.now();
           if (now - (this._lastRefresh ?? 0) < 250) return;
           this._lastRefresh = now;
-          const d = detector.diagnostics;
-          this._cache ??= new Array(DIAG_ROWS.length).fill(null);
-          for (let i = 0; i < DIAG_ROWS.length; ++i) {
-            const text = d ? DIAG_ROWS[i][1](d) : '—';
-            if (text !== this._cache[i]) {
-              this._cache[i] = text;
-              xrDiagnosticsRows[i].setText(text);
+
+          if (xrDiagnosticsRows) {
+            const d = detector.diagnostics;
+            this._cache ??= new Array(DIAG_ROWS.length).fill(null);
+            for (let i = 0; i < DIAG_ROWS.length; ++i) {
+              const text = d ? DIAG_ROWS[i][1](d) : '—';
+              if (text !== this._cache[i]) {
+                this._cache[i] = text;
+                xrDiagnosticsRows[i].setText(text);
+              }
+            }
+          }
+
+          if (aprilTracker && calCard) {
+            const idLabel = `Tag ID ${aprilTracker.tagId}`;
+            if (idLabel !== this._lastCalId) {
+              this._lastCalId = idLabel;
+              calIdText?.setText(idLabel);
+            }
+            if (aprilTracker.status !== this._lastCalStatus) {
+              this._lastCalStatus = aprilTracker.status;
+              calStatusText?.setText(aprilTracker.status);
+            }
+            const diag = aprilTracker.hasAnchor
+              ? aprilTracker.diagnosticsSummary
+              : '';
+            if (diag !== this._lastCalDiag) {
+              this._lastCalDiag = diag;
+              calDiagText?.setText(diag);
             }
           }
         }
@@ -903,6 +1183,9 @@
       options.enableUI();
       options.enableAI();
       options.enableCamera();
+      // Both the detector's snapshot reads and an optional AprilTag
+      // calibration session's ~10 Hz polling benefit from this readback hint.
+      options.deviceCamera.willCaptureFrequently = true;
       options.enableDepth();
       // Off by default: the per-frame full-resolution rebuild unprojects
       // ~23.7k vertices every depth frame. The detector rebuilds the
