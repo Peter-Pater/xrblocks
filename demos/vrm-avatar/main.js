@@ -61,6 +61,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // real-world floor. The mesh is invisible (xrDepthMeshOptions) and downsampled
   // for raycasts, so it's cheap.
   options.enableDepth();
+  // Pixel-level occlusion: real-world geometry (desk, doorway, furniture)
+  // hides the avatar. Needs the depth texture (occlusion map compares virtual
+  // depth against it) plus the occlusion pass itself.
+  options.depth.depthTexture.enabled = true;
+  options.depth.occlusion.enabled = true;
   options.setAppTitle('VRM Avatar Companion');
 
   await xb.init(options);

@@ -33,8 +33,11 @@ export class OcclusionMapMeshMaterial extends THREE.MeshBasicMaterial {
           '#include <fog_vertex>',
           [
             '#include <fog_vertex>',
-            'vec4 view_position = modelViewMatrix * vec4( position, 1.0 );',
-            'vVirtualDepth = -view_position.z;',
+            // Use mvPosition (computed in <project_vertex> from `transformed`)
+            // instead of the raw `position` so skinned and morphed meshes
+            // (e.g. animated avatars) write their posed depth, not bind-pose
+            // depth. Identical to modelViewMatrix * position for rigid meshes.
+            'vVirtualDepth = -mvPosition.z;',
             'gl_Position = gl_Position / gl_Position.w;',
             'vTexCoord = 0.5 + 0.5 * gl_Position.xy;',
           ].join('\n')
