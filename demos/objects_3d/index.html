@@ -207,6 +207,7 @@
         DEFAULT_TAG25H9_SIZE_METERS,
         TAG25H9_MAX_ID,
         TAG25H9_MIN_ID,
+        createAprilTagAnchorVisuals,
         loadPersistedAprilTagCalibration,
       } from 'xrblocks/addons/apriltags/AprilTagTracker.js';
 
@@ -476,6 +477,7 @@
       // -----------------------------------------------------------------
       let debugPanelInstance = null; // set by DebugPanel.init()
       let aprilTracker = null; // live only during a calibration session
+      let aprilTagVisuals = null; // its axes/outline overlay, disposed with it
       let calCard = null;
       let calStatusText = null;
       let calDiagText = null;
@@ -511,8 +513,13 @@
         destroyCalCard();
         if (aprilTracker) {
           // Removal from the scene disposes the tracker: its worker is
-          // terminated and its pose ring cleared.
+          // terminated and its pose ring cleared. The overlay's GPU resources
+          // are NOT covered by that -- three.js never frees geometries or
+          // materials on removal -- so release them explicitly, since a new
+          // set is built every time the card is reopened.
           xb.core.scene.remove(aprilTracker);
+          aprilTagVisuals?.dispose();
+          aprilTagVisuals = null;
           aprilTracker = null;
         }
       }
@@ -535,24 +542,6 @@
           detector.setCameraExtrinsicCorrection(null);
           setStatus('no stored calibration; using SDK camera estimate.');
         }
-      }
-
-      function createTagOutline() {
-        const halfSize = DEFAULT_TAG25H9_SIZE_METERS / 2;
-        const geometry = new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(-halfSize, halfSize, 0),
-          new THREE.Vector3(halfSize, halfSize, 0),
-          new THREE.Vector3(halfSize, -halfSize, 0),
-          new THREE.Vector3(-halfSize, -halfSize, 0),
-        ]);
-        const outline = new THREE.LineLoop(
-          geometry,
-          new THREE.LineBasicMaterial({color: 0xffffff})
-        );
-        // Display-only: the default 1 m Line raycast threshold would
-        // otherwise steal pointer rays from everything behind it.
-        outline.raycast = () => {};
-        return outline;
       }
 
       function freezeDetection() {
@@ -856,10 +845,11 @@
           teardownCalibrationSession();
 
           aprilTracker = new AprilTagTracker({tagId: DEFAULT_TAG25H9_ID});
-          const axes = new THREE.AxesHelper(0.12);
-          axes.raycast = () => {}; // AxesHelper is a LineSegments.
-          aprilTracker.add(axes);
-          aprilTracker.add(createTagOutline());
+          // Thick axes + outline square at the printed tag, readable from
+          // across the room. Kept as a handle so the geometries and materials
+          // can be released when this calibration session is torn down.
+          aprilTagVisuals = createAprilTagAnchorVisuals();
+          aprilTracker.add(aprilTagVisuals);
           xb.add(aprilTracker);
 
           calCard = this.uiCore.createCard({
