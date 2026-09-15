@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { User, World } from 'xrblocks';
+import { getObjectTargetPoint, User, World } from 'xrblocks';
 import { DEFAULT_EMBODIED_CONTROL_OPTIONS } from './EmbodiedControlTypes.js';
 import { runTimedMotion } from './EmbodiedControlTiming.js';
 
@@ -7,9 +7,16 @@ const vector = new THREE.Vector3();
 const targetCameraPosition = new THREE.Vector3();
 const euler = new THREE.Euler();
 const quaternion = new THREE.Quaternion();
+function requirePositiveFinite(value, name) {
+    if (!Number.isFinite(value) || value <= 0) {
+        throw new RangeError(`${name} must be a finite number greater than zero.`);
+    }
+    return value;
+}
 function mergeOptions(options) {
+    const tickMs = options.tickMs ?? DEFAULT_EMBODIED_CONTROL_OPTIONS.tickMs;
     return {
-        tickMs: options.tickMs ?? DEFAULT_EMBODIED_CONTROL_OPTIONS.tickMs,
+        tickMs: requirePositiveFinite(tickMs, 'tickMs'),
         applyHandRotationConstraints: options.applyHandRotationConstraints ??
             DEFAULT_EMBODIED_CONTROL_OPTIONS.applyHandRotationConstraints,
         realTime: options.realTime ?? DEFAULT_EMBODIED_CONTROL_OPTIONS.realTime,
@@ -38,7 +45,7 @@ class EmbodiedControlExecutor {
     }
     async runTimedMotion(requestedDurationMs, applyTick) {
         return runTimedMotion({
-            requestedDurationMs,
+            requestedDurationMs: requirePositiveFinite(requestedDurationMs, 'durationMs'),
             tickMs: this.options.tickMs,
             realTime: this.options.realTime,
             applyTick,
@@ -48,18 +55,21 @@ class EmbodiedControlExecutor {
         if (this.activeStep) {
             throw new EmbodiedControlBusyError();
         }
+        this.validateControl(control);
         this.applyControlFraction(control, 1, this.dependencies.camera.quaternion.clone());
     }
     async step(step) {
         if (this.activeStep) {
             throw new EmbodiedControlBusyError();
         }
+        const control = step.control ?? {};
+        this.validateControl(control);
         this.activeStep = true;
         try {
             const durationMs = step.durationMs ?? this.options.tickMs;
             const initialCameraQuaternion = this.dependencies.camera.quaternion.clone();
             await this.runTimedMotion(durationMs, (_elapsed, currentTick, total) => {
-                this.applyControlFraction(step.control || {}, currentTick / total, initialCameraQuaternion);
+                this.applyControlFraction(control, currentTick / total, initialCameraQuaternion);
                 this.dependencies.core.stepFrame(currentTick);
             });
         }
@@ -84,7 +94,7 @@ class EmbodiedControlExecutor {
                 .multiplyScalar(fraction)
                 .applyQuaternion(initialCameraQuaternion);
             vector.add(camera.position);
-            this.dependencies.simulator.navMesh.applyUserMovement(camera, vector);
+            this.dependencies.simulator.moveUser(vector);
         }
         if (control.rotate) {
             euler.set(THREE.MathUtils.degToRad(control.rotate[0]) * fraction, THREE.MathUtils.degToRad(control.rotate[1]) * fraction, THREE.MathUtils.degToRad(control.rotate[2]) * fraction, 'YXZ');
@@ -120,7 +130,7 @@ class EmbodiedControlExecutor {
             this.applyHandSelect(handIndex, true);
             return;
         }
-        else if (control.selectEnd) {
+        if (control.selectEnd) {
             this.applyHandSelect(handIndex, false);
             return;
         }
@@ -141,24 +151,40 @@ class EmbodiedControlExecutor {
         }
     }
     applyHandSelect(handIndex, selected) {
-        const { simulator } = this.dependencies;
+        const { hands } = this.dependencies.simulator;
         if (handIndex === 0) {
-            simulator.hands.setLeftHandPinching(selected);
+            hands.setLeftHandPinching(selected);
         }
         else {
-            simulator.hands.setRightHandPinching(selected);
+            hands.setRightHandPinching(selected);
         }
     }
     applyHandRotations(handIndex, rotations) {
-        const { simulator } = this.dependencies;
+        const { hands } = this.dependencies.simulator;
         const mergedRotations = handIndex === 0
-            ? { ...simulator.hands.leftHandTargetRotations, ...rotations }
-            : { ...simulator.hands.rightHandTargetRotations, ...rotations };
+            ? { ...hands.leftHandTargetRotations, ...rotations }
+            : { ...hands.rightHandTargetRotations, ...rotations };
         if (handIndex === 0) {
-            simulator.hands.setLeftHandRotations(mergedRotations, this.options.applyHandRotationConstraints);
+            hands.setLeftHandRotations(mergedRotations, this.options.applyHandRotationConstraints);
         }
         else {
-            simulator.hands.setRightHandRotations(mergedRotations, this.options.applyHandRotationConstraints);
+            hands.setRightHandRotations(mergedRotations, this.options.applyHandRotationConstraints);
+        }
+    }
+    validateControl(control) {
+        for (const hand of [control.leftHand, control.rightHand]) {
+            if (!hand)
+                continue;
+            if (hand?.selectStart && hand.selectEnd) {
+                throw new Error('A hand control cannot contain both selectStart and selectEnd.');
+            }
+            if (hand.pose && hand.rotations) {
+                throw new Error('A hand control cannot contain both pose and rotations.');
+            }
+            if ((hand.selectStart || hand.selectEnd) &&
+                (hand.pose || hand.rotations)) {
+                throw new Error('A hand control cannot combine selection with pose or rotations.');
+            }
         }
     }
     async executeAction(actionFn) {
@@ -173,7 +199,7 @@ class EmbodiedControlExecutor {
             this.activeStep = false;
         }
     }
-    getTargetWorldPosition(target, out) {
+    getTargetWorldPosition(target, out, from) {
         if (target instanceof THREE.Vector3) {
             out.copy(target);
         }
@@ -181,7 +207,10 @@ class EmbodiedControlExecutor {
             out.fromArray(target);
         }
         else if (target instanceof THREE.Object3D) {
-            target.getWorldPosition(out);
+            if (from)
+                getObjectTargetPoint(target, from, out, 'closest');
+            else
+                target.getWorldPosition(out);
         }
     }
     async teleportTo(target, options = {}) {
@@ -197,9 +226,9 @@ class EmbodiedControlExecutor {
                 const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(target.quaternion);
                 targetCameraPosition.addScaledVector(forward, distance);
             }
-            this.dependencies.simulator.navMesh.applyUserMovement(camera, targetCameraPosition);
+            this.dependencies.simulator.moveUser(targetCameraPosition);
             if (snapToGround &&
-                !this.dependencies.simulator.navMesh.constrained &&
+                !this.dependencies.simulator.userMovementConstrained &&
                 world?.planes &&
                 user) {
                 const horizontalPlanes = world.planes.get().filter((p) => {
@@ -230,16 +259,21 @@ class EmbodiedControlExecutor {
             const { camera, core } = this.dependencies;
             const targetWorldPos = new THREE.Vector3();
             this.getTargetWorldPosition(target, targetWorldPos);
-            if (velocity === undefined || velocity <= 0) {
+            if (velocity === undefined) {
                 camera.lookAt(targetWorldPos);
                 core.stepFrame(this.options.tickMs);
                 return;
             }
+            requirePositiveFinite(velocity, 'velocity');
             const Q_s = camera.quaternion.clone();
             camera.lookAt(targetWorldPos);
             const Q_t = camera.quaternion.clone();
             camera.quaternion.copy(Q_s);
             const angle = Q_s.angleTo(Q_t);
+            if (angle === 0) {
+                core.stepFrame(this.options.tickMs);
+                return;
+            }
             const durationMs = (angle / velocity) * 1000;
             await this.runTimedMotion(durationMs, (elapsed, currentTick, total) => {
                 const u = elapsed / total;
@@ -252,22 +286,30 @@ class EmbodiedControlExecutor {
         return this.executeAction(async () => {
             const { velocity } = options;
             const { camera, simulator, core } = this.dependencies;
+            const controllerPos = simulator.simulatorControllerState.localControllerPositions[handIndex];
+            const controllerWorldPos = controllerPos
+                .clone()
+                .applyMatrix4(camera.matrixWorld);
             const targetWorldPos = new THREE.Vector3();
-            this.getTargetWorldPosition(target, targetWorldPos);
+            this.getTargetWorldPosition(target, targetWorldPos, controllerWorldPos);
             const targetCamSpace = targetWorldPos
                 .clone()
                 .applyMatrix4(camera.matrixWorldInverse);
-            const controllerPos = simulator.simulatorControllerState.localControllerPositions[handIndex];
             const up = new THREE.Vector3(0, 1, 0);
             const matrix = new THREE.Matrix4().lookAt(controllerPos, targetCamSpace, up);
             const targetQuat = new THREE.Quaternion().setFromRotationMatrix(matrix);
-            if (velocity === undefined || velocity <= 0) {
+            if (velocity === undefined) {
                 simulator.simulatorControllerState.localControllerOrientations[handIndex].copy(targetQuat);
                 core.stepFrame(this.options.tickMs);
                 return;
             }
+            requirePositiveFinite(velocity, 'velocity');
             const startQuat = simulator.simulatorControllerState.localControllerOrientations[handIndex].clone();
             const angle = startQuat.angleTo(targetQuat);
+            if (angle === 0) {
+                core.stepFrame(this.options.tickMs);
+                return;
+            }
             const durationMs = (angle / velocity) * 1000;
             await this.runTimedMotion(durationMs, (elapsed, currentTick, total) => {
                 const u = elapsed / total;
@@ -281,17 +323,29 @@ class EmbodiedControlExecutor {
             const { velocity } = options;
             const { camera, simulator, core } = this.dependencies;
             const targetWorldPos = new THREE.Vector3();
-            this.getTargetWorldPosition(target, targetWorldPos);
+            const fingertip = core.input.hands[handIndex]?.joints?.['index-finger-tip'];
+            const controller = handIndex === 0
+                ? simulator.hands.leftController
+                : simulator.hands.rightController;
+            const targetSource = new THREE.Vector3();
+            (fingertip ?? controller).getWorldPosition(targetSource);
+            this.getTargetWorldPosition(target, targetWorldPos, targetSource);
+            offsetTargetByIndexFingertip(handIndex, targetWorldPos, simulator, core.input.hands);
             const targetCamSpace = targetWorldPos
                 .clone()
                 .applyMatrix4(camera.matrixWorldInverse);
-            if (velocity === undefined || velocity <= 0) {
+            if (velocity === undefined) {
                 simulator.simulatorControllerState.localControllerPositions[handIndex].copy(targetCamSpace);
                 core.stepFrame(this.options.tickMs);
                 return;
             }
+            requirePositiveFinite(velocity, 'velocity');
             const startPos = simulator.simulatorControllerState.localControllerPositions[handIndex].clone();
             const distance = startPos.distanceTo(targetCamSpace);
+            if (distance === 0) {
+                core.stepFrame(this.options.tickMs);
+                return;
+            }
             const durationMs = (distance / velocity) * 1000;
             await this.runTimedMotion(durationMs, (elapsed, currentTick, total) => {
                 const u = elapsed / total;
@@ -302,6 +356,7 @@ class EmbodiedControlExecutor {
     }
     async click(handIndex = 1, options = {}) {
         const { durationMs = 200 } = options;
+        requirePositiveFinite(durationMs, 'durationMs');
         const { simulator } = this.dependencies;
         // Change the lerp speed to allow the hand to pinch and open all the way.
         const originalLerpSpeed = simulator.hands.lerpSpeed;
@@ -326,6 +381,19 @@ class EmbodiedControlExecutor {
             simulator.hands.lerpSpeed = originalLerpSpeed;
         }
     }
+}
+function offsetTargetByIndexFingertip(handIndex, targetWorldPosition, simulator, hands) {
+    const controller = handIndex === 0
+        ? simulator.hands.leftController
+        : simulator.hands.rightController;
+    const fingertip = hands[handIndex]?.joints?.['index-finger-tip'];
+    if (!controller || !fingertip)
+        return;
+    const controllerPosition = new THREE.Vector3();
+    const fingertipPosition = new THREE.Vector3();
+    controller.getWorldPosition(controllerPosition);
+    fingertip.getWorldPosition(fingertipPosition);
+    targetWorldPosition.sub(fingertipPosition.sub(controllerPosition));
 }
 
 export { EmbodiedControlBusyError, EmbodiedControlExecutor };
