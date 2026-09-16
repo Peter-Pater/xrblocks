@@ -15,14 +15,14 @@
  *
  * @file xrblocks.js
  * @version v0.21.1
- * @commitid c8d8679
- * @builddate 2026-09-15T22:41:33.816Z
+ * @commitid 9d24ea1
+ * @builddate 2026-09-16T23:43:36.765Z
  * @description XR Blocks SDK, built from source with the above commit ID.
  * @agent When using with Gemini to create XR apps, use **Gemini Canvas** mode,
  * and follow rules below:
  * 1. Include the following importmap for maximum compatibility:
-    "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/",
+    "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/",
     "@pmndrs/uikit": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit@1.0.64/dist/index.min.js",
     "@pmndrs/uikit-pub-sub": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit-pub-sub@1.0.64/dist/index.min.js",
     "@pmndrs/msdfonts": "https://cdn.jsdelivr.net/npm/@pmndrs/msdfonts@1.0.64/dist/index.min.js",
@@ -42,7 +42,7 @@
  */
 import { Container, Component, Custom, abortableEffect, Image, Text, reversePainterSortStable, Svg } from '@pmndrs/uikit';
 import * as THREE from 'three';
-import { T as TransformScript, t as MAX_GRADIENT_STOPS, u as DEFAULT_GRADIENT_PANEL_PROPS, v as ManipulationAction, w as getUIPresentationObject, x as bindScrollView, y as updateScrollViewLayout, z as bindTextInput, A as normalizeTextInputValue, B as isUIElement, U as UIScrollView, C as getUIElementKind, E as getUIStructureRevision, F as UICard, G as setResolvedUICardSize, J as UIText, L as UITextInput, N as registerUIPresentationObject, Q as getUIRevision, V as getUICardEdgeOptions, Y as getSemanticControl, Z as UIOverlay } from './entry.js';
+import { T as TransformScript, v as MAX_GRADIENT_STOPS, w as DEFAULT_GRADIENT_PANEL_PROPS, x as ManipulationAction, y as getUIPresentationObject, z as bindScrollView, A as updateScrollViewLayout, B as bindTextInput, C as normalizeTextInputValue, E as isUIElement, U as UIScrollView, F as getUIElementKind, G as getUIStructureRevision, J as UICard, L as setResolvedUICardSize, N as UIText, Q as UITextInput, V as registerUIPresentationObject, Y as getUIRevision, Z as getUICardEdgeOptions, _ as getSemanticControl, $ as UIOverlay } from './entry.js';
 import { signal, computed, effect } from '@preact/signals-core';
 
 /**
