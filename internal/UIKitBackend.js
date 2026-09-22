@@ -15,8 +15,8 @@
  *
  * @file xrblocks.js
  * @version v0.21.1
- * @commitid 9d24ea1
- * @builddate 2026-09-16T23:43:36.765Z
+ * @commitid 06f3c8f
+ * @builddate 2026-09-22T18:36:01.094Z
  * @description XR Blocks SDK, built from source with the above commit ID.
  * @agent When using with Gemini to create XR apps, use **Gemini Canvas** mode,
  * and follow rules below:
@@ -42,7 +42,7 @@
  */
 import { Container, Component, Custom, abortableEffect, Image, Text, reversePainterSortStable, Svg } from '@pmndrs/uikit';
 import * as THREE from 'three';
-import { T as TransformScript, v as MAX_GRADIENT_STOPS, w as DEFAULT_GRADIENT_PANEL_PROPS, x as ManipulationAction, y as getUIPresentationObject, z as bindScrollView, A as updateScrollViewLayout, B as bindTextInput, C as normalizeTextInputValue, E as isUIElement, U as UIScrollView, F as getUIElementKind, G as getUIStructureRevision, J as UICard, L as setResolvedUICardSize, N as UIText, Q as UITextInput, V as registerUIPresentationObject, Y as getUIRevision, Z as getUICardEdgeOptions, _ as getSemanticControl, $ as UIOverlay } from './entry.js';
+import { T as TransformScript, u as MAX_GRADIENT_STOPS, v as DEFAULT_GRADIENT_PANEL_PROPS, w as ManipulationAction, x as getUIPresentationObject, y as bindScrollView, z as updateScrollViewLayout, A as bindTextInput, B as normalizeTextInputValue, C as isUIElement, U as UIScrollView, E as getUIElementKind, F as getUIStructureRevision, G as UICard, J as setResolvedUICardSize, L as UIText, N as UITextInput, Q as registerUIPresentationObject, V as getUIRevision, Y as getUICardEdgeOptions, Z as getSemanticControl, _ as UIOverlay } from './entry.js';
 import { signal, computed, effect } from '@preact/signals-core';
 
 /**
@@ -3727,14 +3727,16 @@ class UIKitNodeBinding {
             this.resourceRevision !== this.appliedResourceRevision;
         let hitMappingsChanged = orderChanged;
         if (needsProperties) {
+            const base = baseState(this.element);
             this.renderOrder = order;
-            const properties = this.propertiesFor(context, baseState(this.element), order);
+            const properties = this.propertiesFor(context, base, order);
             this.applyProperties(properties);
             this.baseProperties = properties;
             this.presentedProperties = properties;
-            this.presentationKey = -1;
+            this.presentationKey = stateKey(base);
             this.revision = revision;
             this.theme = context.theme;
+            this.pointerEvents = nextPointerEvents;
             this.appliedResourceRevision = this.resourceRevision;
             this.ensurePrivateNodes(context.theme);
             this.scrollView?.commit(this.contentProperties);
@@ -3753,12 +3755,14 @@ class UIKitNodeBinding {
     present(stateFor) {
         if (this.disposed)
             return;
-        const state = {
-            ...stateFor(this.element, this.edge ? this.cursorPoints : undefined),
-            focused: this.element instanceof UITextInput && this.element.focused,
-        };
-        const key = stateKey(state);
+        const rawState = stateFor(this.element, this.edge ? this.cursorPoints : undefined);
+        const focused = this.element instanceof UITextInput && this.element.focused;
+        const key = Number(rawState.hovered) |
+            (Number(rawState.active) << 1) |
+            (Number(rawState.disabled) << 2) |
+            (Number(focused) << 3);
         if (key !== this.presentationKey) {
+            const state = { ...rawState, focused };
             const context = {
                 theme: this.theme,
                 rootStack: undefined,
@@ -3772,7 +3776,7 @@ class UIKitNodeBinding {
             this.scrollView?.commit(this.contentProperties);
             this.textInput?.commit(this.theme);
         }
-        this.edge?.setCursorPoints(state.cursorPointCount > 0 ? this.cursorPoints[0] : undefined, state.cursorPointCount > 1 ? this.cursorPoints[1] : undefined);
+        this.edge?.setCursorPoints(rawState.cursorPointCount > 0 ? this.cursorPoints[0] : undefined, rawState.cursorPointCount > 1 ? this.cursorPoints[1] : undefined);
         for (const child of this.childOrder)
             this.children.get(child).present(stateFor);
     }

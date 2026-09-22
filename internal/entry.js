@@ -15,8 +15,8 @@
  *
  * @file xrblocks.js
  * @version v0.21.1
- * @commitid 9d24ea1
- * @builddate 2026-09-16T23:43:36.765Z
+ * @commitid 06f3c8f
+ * @builddate 2026-09-22T18:36:01.094Z
  * @description XR Blocks SDK, built from source with the above commit ID.
  * @agent When using with Gemini to create XR apps, use **Gemini Canvas** mode,
  * and follow rules below:
@@ -1332,6 +1332,8 @@ class Gemini extends BaseAIModel {
         this.inited = false;
         this.isLiveMode = false;
         this.liveCallbacks = {};
+        this.liveSessionGeneration = 0;
+        this.liveSessionStopped = false;
     }
     async init() {
         await loadGoogleGenAIModule();
@@ -1350,6 +1352,11 @@ class Gemini extends BaseAIModel {
     isLiveAvailable() {
         return this.isAvailable() && EndSensitivity && StartSensitivity && Modality;
     }
+    /**
+     * Shares a pending connection between concurrent starts. Stopping or disposing
+     * invalidates that start; any session returned later is closed and the start
+     * rejects with AbortError. The provider cannot be aborted before it returns.
+     */
     async startLiveSession(params = {}, model) {
         if (!this.isLiveAvailable()) {
             throw new Error('Live API not available. Make sure @google/genai module is loaded.');
@@ -1357,6 +1364,13 @@ class Gemini extends BaseAIModel {
         if (this.liveSession) {
             return this.liveSession;
         }
+        if (this.liveSessionPromise) {
+            return this.liveSessionPromise;
+        }
+        const generation = ++this.liveSessionGeneration;
+        this.liveSessionStopped = false;
+        const isCurrent = () => generation === this.liveSessionGeneration;
+        const isRunning = () => isCurrent() && !this.liveSessionStopped;
         const defaultConfig = {
             responseModalities: [Modality.AUDIO],
             speechConfig: {
@@ -1368,6 +1382,8 @@ class Gemini extends BaseAIModel {
         };
         const callbacks = {
             onopen: () => {
+                if (!isRunning())
+                    return;
                 this.isLiveMode = true;
                 console.log('🔓 Live session opened.');
                 if (this.liveCallbacks?.onopen) {
@@ -1375,17 +1391,25 @@ class Gemini extends BaseAIModel {
                 }
             },
             onmessage: (e) => {
+                if (!isRunning())
+                    return;
                 if (this.liveCallbacks?.onmessage) {
                     this.liveCallbacks.onmessage(e);
                 }
             },
             onerror: (e) => {
+                if (!isRunning())
+                    return;
                 console.error('❌ Live session error:', e);
                 if (this.liveCallbacks?.onerror) {
                     this.liveCallbacks.onerror(e);
                 }
             },
             onclose: (event) => {
+                if (!isCurrent())
+                    return;
+                this.liveSessionStopped = true;
+                this.liveSessionPromise = undefined;
                 this.isLiveMode = false;
                 this.liveSession = undefined;
                 if (event.reason) {
@@ -1399,28 +1423,56 @@ class Gemini extends BaseAIModel {
                 }
             },
         };
-        try {
-            const connectParams = {
-                model: model ?? this.options.liveModel,
-                callbacks: callbacks,
-                config: defaultConfig,
-            };
-            console.log('Connecting with params:', connectParams);
-            this.liveSession = await this.ai.live.connect(connectParams);
-            return this.liveSession;
-        }
-        catch (error) {
-            console.error('❌ Failed to start live session:', error);
-            throw error;
-        }
+        const connectParams = {
+            model: model ?? this.options.liveModel,
+            callbacks: callbacks,
+            config: defaultConfig,
+        };
+        // Publish the pending promise before provider callbacks can reenter start.
+        this.liveSessionPromise = Promise.resolve().then(async () => {
+            try {
+                if (!isRunning()) {
+                    throw new DOMException('Live session start cancelled.', 'AbortError');
+                }
+                console.log('Connecting with params:', connectParams);
+                const session = await this.ai.live.connect(connectParams);
+                if (!isRunning()) {
+                    session.close();
+                    throw new DOMException('Live session start cancelled.', 'AbortError');
+                }
+                this.liveSession = session;
+                return session;
+            }
+            catch (error) {
+                if (isCurrent()) {
+                    this.liveSessionStopped = true;
+                    this.isLiveMode = false;
+                }
+                console.error('❌ Failed to start live session:', error);
+                throw error;
+            }
+            finally {
+                if (isCurrent())
+                    this.liveSessionPromise = undefined;
+            }
+        });
+        return this.liveSessionPromise;
     }
     async stopLiveSession() {
-        if (!this.liveSession) {
-            return;
-        }
-        this.liveSession.close();
+        this.closeLiveSession();
+    }
+    /** Invalidates live work synchronously without creating a teardown promise. */
+    dispose() {
+        ++this.liveSessionGeneration;
+        this.closeLiveSession();
+    }
+    closeLiveSession() {
+        this.liveSessionStopped = true;
+        this.liveSessionPromise = undefined;
+        const session = this.liveSession;
         this.liveSession = undefined;
         this.isLiveMode = false;
+        session?.close();
     }
     // Set Live session callbacks
     setLiveCallbacks(callbacks) {
@@ -1806,6 +1858,10 @@ class AI extends Script {
         }
         return await this.model.query(input, tools);
     }
+    /**
+     * Concurrent starts share a connection. A start invalidated by stop or dispose
+     * rejects with AbortError when the provider returns, closing that late session.
+     */
     async startLiveSession(config = {}, model) {
         if (!this.model) {
             throw new Error('AI model is not initialized.');
@@ -1822,6 +1878,10 @@ class AI extends Script {
             throw error;
         }
     }
+    /**
+     * Invalidates pending live work and closes any established session. This does
+     * not wait for an in-flight provider connection to finish.
+     */
     async stopLiveSession() {
         if (!this.model)
             return;
@@ -1831,6 +1891,13 @@ class AI extends Script {
         catch (error) {
             console.error('❌ Error stopping Live session:', error);
         }
+    }
+    /** Closes live resources synchronously for the Script disposal contract. */
+    dispose() {
+        if (this.model instanceof Gemini) {
+            this.model.dispose();
+        }
+        super.dispose();
     }
     async setLiveCallbacks(callbacks) {
         if (this.model && 'setLiveCallbacks' in this.model) {
@@ -1858,7 +1925,7 @@ class AI extends Script {
             'isLiveAvailable' in this.model &&
             this.model.isLiveAvailable());
     }
-    async generate(prompt, type = 'image', systemInstruction = 'Generate an image', model = undefined) {
+    async generate(prompt, type = 'image', systemInstruction = 'Generate an image', model) {
         if (!this.isAvailable()) {
             throw new Error("AI is not available. Check if it's enabled and properly initialized.");
         }
@@ -2395,6 +2462,31 @@ async function cropImage(imageSource, boundingBox) {
 }
 
 /**
+ * Type guard to determine if a renderer instance is a THREE.WebGPURenderer.
+ *
+ * @param renderer - The renderer instance to test.
+ * @returns True if the renderer is a WebGPURenderer, false otherwise.
+ */
+function isWebGPURenderer(renderer) {
+    return (renderer != null &&
+        typeof renderer === 'object' &&
+        'isWebGPURenderer' in renderer &&
+        renderer.isWebGPURenderer === true);
+}
+/**
+ * Asserts that the provided renderer is a THREE.WebGLRenderer.
+ *
+ * @param renderer - The renderer instance to check.
+ * @param consumerName - The name of the subsystem or feature requiring WebGLRenderer.
+ * @throws Error if the renderer is a WebGPURenderer.
+ */
+function assertWebGLRenderer(renderer, consumerName) {
+    if (isWebGPURenderer(renderer)) {
+        throw new Error(`${consumerName} requires THREE.WebGLRenderer, but Core is configured with WebGPURenderer.`);
+    }
+}
+
+/**
  * Enum for video stream states.
  */
 var StreamState;
@@ -2879,6 +2971,7 @@ class XRDeviceCamera extends VideoStream {
     updateXRCamera(frame) {
         if (!this.useXRCameraAccess_ || !this.renderer_ || !frame)
             return;
+        assertWebGLRenderer(this.renderer_, 'XRDeviceCamera.updateXRCamera');
         const binding = this.renderer_.xr.getBinding();
         const refSpace = this.renderer_.xr.getReferenceSpace();
         if (!binding || !refSpace)
@@ -2960,6 +3053,9 @@ class XRDeviceCamera extends VideoStream {
         }, XRDeviceCamera.XR_CAMERA_ACCESS_TIMEOUT_MS);
     }
     isXRCameraAccessGranted_() {
+        if (this.renderer_ && isWebGPURenderer(this.renderer_)) {
+            return false;
+        }
         const session = this.renderer_?.xr.getSession();
         if (!session) {
             return true;
@@ -3052,10 +3148,17 @@ class ScreenshotSynthesizer {
     async createVirtualImageDataURL(renderer, renderSceneFn) {
         const mainRenderTarget = renderer.getRenderTarget();
         const isRenderingStereo = renderer.xr.isPresenting && renderer.xr.getCamera().cameras.length == 2;
+        const mainRenderTargetSize = new THREE.Vector2();
+        if (mainRenderTarget) {
+            mainRenderTargetSize.set(mainRenderTarget.width, mainRenderTarget.height);
+        }
+        else {
+            renderer.getSize(mainRenderTargetSize);
+        }
         const mainRenderTargetSingleViewWidth = isRenderingStereo
-            ? mainRenderTarget.width / 2
-            : mainRenderTarget.width;
-        const scaledHeight = Math.round(mainRenderTarget.height *
+            ? mainRenderTargetSize.x / 2
+            : mainRenderTargetSize.x;
+        const scaledHeight = Math.round(mainRenderTargetSize.y *
             (this.renderTargetWidth / mainRenderTargetSingleViewWidth));
         if (!this.virtualRenderTarget ||
             this.virtualRenderTarget.width != this.renderTargetWidth) {
@@ -3453,6 +3556,29 @@ class HandsOptions {
         this.enabled = true;
         this.visualization = true;
         return this;
+    }
+}
+
+/**
+ * Options for WebXR composition layers.
+ *
+ * Off by default. Layers are an optional session feature and the layer types
+ * an app would want are newer than the SDK's baseline browser, so asking for
+ * them unconditionally would mean every app pays for a capability most do not
+ * use.
+ */
+class LayersOptions {
+    constructor() {
+        /** Whether to request the `layers` session feature. */
+        this.enabled = false;
+        /**
+         * Whether a video shown through {@link VideoView} should be presented as a
+         * composition layer when the platform allows it.
+         *
+         * Falls back to rendering into the scene as a texture when it cannot, so an
+         * app can leave this on and still work everywhere.
+         */
+        this.video = true;
     }
 }
 
@@ -4716,14 +4842,24 @@ function pathLength(points) {
     }
     return d;
 }
-/** Resamples a path into n evenly spaced points. */
+/** Resamples a path into n evenly spaced points, or returns null if it cannot advance. */
 function resample(points, n) {
     const interval = pathLength(points) / (n - 1);
+    if (points.length < 2 || !Number.isFinite(interval) || interval <= 0) {
+        return null;
+    }
     let D = 0;
     const newPoints = [points[0]];
     const pts = points.slice();
     let i = 1;
+    // At most m - 1 segment consumptions plus n - 1 insertions are needed.
+    // The budget scales with input length and deliberately allows two extra iterations.
+    const maxIterations = points.length + n;
+    let iterations = 0;
     while (i < pts.length) {
+        if (iterations++ >= maxIterations) {
+            return null;
+        }
         const pt1 = pts[i - 1];
         const pt2 = pts[i];
         const d = distance(pt1, pt2);
@@ -4733,6 +4869,11 @@ function resample(points, n) {
                 x: pt1.x + t * (pt2.x - pt1.x),
                 y: pt1.y + t * (pt2.y - pt1.y),
             };
+            if (!Number.isFinite(q.x) ||
+                !Number.isFinite(q.y) ||
+                (q.x === pt1.x && q.y === pt1.y)) {
+                return null;
+            }
             newPoints.push(q);
             pts.splice(i, 0, q);
             D = 0;
@@ -4870,11 +5011,23 @@ class OneDollarUnistrokeRecognizer extends StrokeRecognizerBackend {
     /**
      * Recognizes a stroke from a list of 2D points by comparing it against stored templates.
      * Supports both forward and backward matching to handle bi-directional strokes.
+     * Returns Unknown with zero confidence for input that cannot form a valid normalized stroke.
      * @param points - The list of points captured during the stroke.
      * @returns The recognition result containing the shape name and confidence score.
      */
     recognize(points) {
+        if (points.length < 2 ||
+            points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) {
+            return { recognizedShape: 'Unknown', confidence: 0 };
+        }
+        const length = pathLength(points);
+        if (length === 0 || !Number.isFinite(length)) {
+            return { recognizedShape: 'Unknown', confidence: 0 };
+        }
         const resampledForward = resample(points, 64);
+        if (!resampledForward) {
+            return { recognizedShape: 'Unknown', confidence: 0 };
+        }
         const resampledBackward = resampledForward.slice().reverse();
         const pointsForwardUnrotated = this.scaleAndTranslate(resampledForward);
         const pointsBackwardUnrotated = pointsForwardUnrotated.slice().reverse();
@@ -4970,6 +5123,7 @@ class OneDollarUnistrokeRecognizer extends StrokeRecognizerBackend {
      * @param name - The name of the shape.
      * @param points -  The points defining the shape.
      * @param useRotation - Whether to use rotation invariance.
+     * @throws RangeError if the template cannot be resampled.
      */
     addClosedTemplate(name, points, useRotation = true) {
         const n = points.length;
@@ -4986,6 +5140,7 @@ class OneDollarUnistrokeRecognizer extends StrokeRecognizerBackend {
      * @param name - The name of the shape.
      * @param points - The points defining the shape.
      * @param useRotation - Whether to use rotation invariance.
+     * @throws RangeError if the template cannot be resampled.
      */
     addTemplate(name, points, useRotation = true) {
         this.templates.push({
@@ -5000,9 +5155,14 @@ class OneDollarUnistrokeRecognizer extends StrokeRecognizerBackend {
      * @param points - The list of points to preprocess.
      * @param useRotation - Whether to rotate the points to zero.
      * @returns The preprocessed list of points.
+     * @throws RangeError if the stroke cannot be resampled.
      */
     preprocess(points, useRotation = true) {
-        points = resample(points, 64);
+        const resampled = resample(points, 64);
+        if (!resampled) {
+            throw new RangeError('Cannot normalize stroke: resampling failed.');
+        }
+        points = resampled;
         if (useRotation) {
             points = rotateToZero(points);
         }
@@ -6086,6 +6246,7 @@ class Options {
         this.world = new WorldOptions();
         this.context = new ContextOptions();
         this.physics = new PhysicsOptions();
+        this.layers = new LayersOptions();
         this.transition = new XRTransitionOptions();
         this.camera = {
             near: 0.01,
@@ -6207,6 +6368,23 @@ class Options {
      */
     enableDepth() {
         this.depth = new DepthOptions(xrDepthMeshOptions);
+        return this;
+    }
+    /**
+     * Enables WebXR composition layers.
+     *
+     * Content presented as a layer is composited once at its own resolution
+     * rather than being drawn into the eye buffer and resampled again, so video
+     * and text come out sharper, and the compositor keeps reprojecting it to the
+     * latest head pose even when the app's own frame rate dips.
+     *
+     * Requested optionally, and each layer falls back to ordinary in-scene
+     * rendering where the platform cannot present one.
+     *
+     * @returns The instance for chaining.
+     */
+    enableLayers() {
+        this.layers.enabled = true;
         return this;
     }
     /**
@@ -10084,15 +10262,205 @@ function disposeObjectChildren(object) {
     }
 }
 
+/**
+ * Creates a PlaneGeometry with UVs remapped to the active depth sensor region.
+ */
+function createDepthPlaneGeometry(segments, minU, maxU, minV, maxV) {
+    const geometry = new THREE.PlaneGeometry(1, 1, segments, segments);
+    const uvs = geometry.attributes.uv.array;
+    const rangeU = maxU - minU;
+    const rangeV = maxV - minV;
+    for (let i = 0; i < uvs.length; i += 2) {
+        uvs[i] = minU + uvs[i] * rangeU;
+        uvs[i + 1] = minV + uvs[i + 1] * rangeV;
+    }
+    return geometry;
+}
+/**
+ * Computes smooth vertex normals directly on a regular (cols x rows) grid
+ * using central differences, avoiding Three.js's indexed triangle accumulation.
+ */
+function computeGridVertexNormals(geometry, cols, rows) {
+    const posAttr = geometry.attributes.position;
+    const normAttr = geometry.attributes.normal;
+    if (!normAttr || posAttr.count !== cols * rows) {
+        geometry.computeVertexNormals();
+        return;
+    }
+    const pos = posAttr.array;
+    const norm = normAttr.array;
+    for (let row = 0; row < rows; ++row) {
+        const rowUp = row > 0 ? row - 1 : 0;
+        const rowDown = row < rows - 1 ? row + 1 : rows - 1;
+        const rowOffset = row * cols;
+        const upOffset = rowUp * cols;
+        const downOffset = rowDown * cols;
+        for (let col = 0; col < cols; ++col) {
+            const colLeft = col > 0 ? col - 1 : 0;
+            const colRight = col < cols - 1 ? col + 1 : cols - 1;
+            const iLeft = (rowOffset + colLeft) * 3;
+            const iRight = (rowOffset + colRight) * 3;
+            const iUp = (upOffset + col) * 3;
+            const iDown = (downOffset + col) * 3;
+            const txX = pos[iRight] - pos[iLeft];
+            const txY = pos[iRight + 1] - pos[iLeft + 1];
+            const txZ = pos[iRight + 2] - pos[iLeft + 2];
+            const tyX = pos[iUp] - pos[iDown];
+            const tyY = pos[iUp + 1] - pos[iDown + 1];
+            const tyZ = pos[iUp + 2] - pos[iDown + 2];
+            const nx = txY * tyZ - txZ * tyY;
+            const ny = txZ * tyX - txX * tyZ;
+            const nz = txX * tyY - txY * tyX;
+            const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+            const iOut = (rowOffset + col) * 3;
+            if (len > 0) {
+                const invLen = 1.0 / len;
+                norm[iOut] = nx * invLen;
+                norm[iOut + 1] = ny * invLen;
+                norm[iOut + 2] = nz * invLen;
+            }
+            else {
+                norm[iOut] = 0;
+                norm[iOut + 1] = 0;
+                norm[iOut + 2] = 1;
+            }
+        }
+    }
+    normAttr.needsUpdate = true;
+}
+/**
+ * Caches per-vertex camera unprojection rays and performs vectorized depth-mesh
+ * vertex position updates.
+ */
+class DepthGeometryUpdater {
+    constructor() {
+        this.geometryRayCache = new WeakMap();
+        this.scratchVertexPosition = new THREE.Vector3();
+    }
+    getOrComputeUnprojectionRays(geometry, projectionMatrixInverse) {
+        const vertexCount = geometry.attributes.position.count;
+        const projElements = projectionMatrixInverse.elements;
+        let cached = this.geometryRayCache.get(geometry);
+        if (cached && cached.rayXY.length === 2 * vertexCount) {
+            let unchanged = true;
+            for (let k = 0; k < 16; ++k) {
+                if (cached.projInvElements[k] !== projElements[k]) {
+                    unchanged = false;
+                    break;
+                }
+            }
+            if (unchanged) {
+                return cached.rayXY;
+            }
+        }
+        else {
+            cached = {
+                rayXY: new Float64Array(2 * vertexCount),
+                projInvElements: new Float64Array(16),
+            };
+            this.geometryRayCache.set(geometry, cached);
+        }
+        cached.projInvElements.set(projElements);
+        const rayXY = cached.rayXY;
+        const uvArray = geometry.attributes.uv.array;
+        const vertexPosition = this.scratchVertexPosition;
+        for (let i = 0; i < vertexCount; ++i) {
+            const u = uvArray[2 * i];
+            const v = uvArray[2 * i + 1];
+            vertexPosition
+                .set(2.0 * (u - 0.5), 2.0 * (v - 0.5), -1)
+                .applyMatrix4(projectionMatrixInverse);
+            const invNegZ = -1 / vertexPosition.z;
+            rayXY[2 * i] = vertexPosition.x * invNegZ;
+            rayXY[2 * i + 1] = vertexPosition.y * invNegZ;
+        }
+        return rayXY;
+    }
+    updateGeometryPositions(params) {
+        const { depthData, geometry, depthDataFormat, projectionMatrixInverse, patchHoles, patchHolesUpper, minDepthPrev, maxDepthPrev, } = params;
+        let { minDepth, maxDepth } = params;
+        const width = depthData.width;
+        const height = depthData.height;
+        const maxX = width - 1;
+        const maxY = height - 1;
+        const rawValueToMeters = depthData.rawValueToMeters;
+        const depthArray = depthDataFormat === 'float32'
+            ? new Float32Array(depthData.data)
+            : new Uint16Array(depthData.data);
+        const uvArray = geometry.attributes.uv.array;
+        const posArray = geometry.attributes.position.array;
+        const vertexCount = geometry.attributes.position.count;
+        const rayXY = this.getOrComputeUnprojectionRays(geometry, projectionMatrixInverse);
+        const transformMatrix = depthData.normDepthBufferFromNormView?.matrix;
+        const hasTransform = Boolean(transformMatrix);
+        let m0 = 1, m1 = 0, m3 = 0, m4 = 0, m5 = 1, m7 = 0, m12 = 0, m13 = 0, m15 = 1;
+        let isAffineTransform = true;
+        if (transformMatrix) {
+            m0 = transformMatrix[0];
+            m1 = transformMatrix[1];
+            m3 = transformMatrix[3];
+            m4 = transformMatrix[4];
+            m5 = transformMatrix[5];
+            m7 = transformMatrix[7];
+            m12 = transformMatrix[12];
+            m13 = transformMatrix[13];
+            m15 = transformMatrix[15];
+            isAffineTransform = m3 === 0 && m7 === 0 && m15 === 1;
+        }
+        for (let i = 0; i < vertexCount; ++i) {
+            const uvIdx = 2 * i;
+            const u = uvArray[uvIdx];
+            const v = uvArray[uvIdx + 1];
+            const vInv = 1.0 - v;
+            let sampleU = u;
+            let sampleV = vInv;
+            if (hasTransform) {
+                sampleU = m0 * u + m4 * vInv + m12;
+                sampleV = m1 * u + m5 * vInv + m13;
+                if (!isAffineTransform) {
+                    const invW = 1.0 / (m3 * u + m7 * vInv + m15);
+                    sampleU *= invW;
+                    sampleV *= invW;
+                }
+            }
+            const depthX = Math.round(clamp$1(sampleU * maxX, 0, maxX));
+            const depthY = Math.round(clamp$1(sampleV * maxY, 0, maxY));
+            const rawDepth = depthArray[depthY * width + depthX];
+            let depth = rawValueToMeters * rawDepth;
+            if (depth > 0) {
+                if (depth < minDepth) {
+                    minDepth = depth;
+                }
+                else if (depth > maxDepth) {
+                    maxDepth = depth;
+                }
+            }
+            if (depth === 0 && patchHoles) {
+                depth = maxDepthPrev;
+            }
+            if (patchHolesUpper && v > 0.9) {
+                depth = minDepthPrev;
+            }
+            const posIdx = 3 * i;
+            posArray[posIdx] = depth * rayXY[uvIdx];
+            posArray[posIdx + 1] = depth * rayXY[uvIdx + 1];
+            posArray[posIdx + 2] = -depth;
+        }
+        return { minDepth, maxDepth };
+    }
+}
+
 const DepthMeshTexturedShader = {
     vertexShader: /* glsl */ `
 varying vec3 vNormal;
 varying vec3 vViewPosition;
+varying vec3 vObjectPosition;
 varying vec2 vUv;
 
 void main() {
   vUv = uv;
   vNormal = normal;
+  vObjectPosition = position;
 
   // Computes the view position.
   vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
@@ -10113,6 +10481,7 @@ uniform float uRawValueToMeters;
 
 varying vec3 vNormal;
 varying vec3 vViewPosition;
+varying vec3 vObjectPosition;
 varying vec2 vUv;
 
 const highp float kMaxDepthInMeters = 8.0;
@@ -10123,6 +10492,7 @@ uniform float uDebug;
 uniform float uOpacity;
 uniform bool uUsingFloatDepth;
 uniform bool uIsTextureArray;
+uniform bool uUseDerivativeNormals;
 uniform mat4 uNormDepthBufferFromNormView;
 
 float saturate(in float x) {
@@ -10168,6 +10538,9 @@ vec3 DepthGetColorVisualization(in float x) {
 
 void main() {
   vec3 lightDirection = normalize(uLightDirection);
+  vec3 surfaceNormal = uUseDerivativeNormals
+    ? normalize(cross(dFdx(vObjectPosition), dFdy(vObjectPosition)))
+    : normalize(vNormal);
 
   // Compute UV coordinates relative to resolution
   // vec2 uv = gl_FragCoord.xy / uResolution;
@@ -10175,17 +10548,17 @@ void main() {
 
   // Ambient, diffuse, and specular terms
   vec3 ambient = 0.1 * uColor;
-  float diff = max(dot(vNormal, lightDirection), 0.0);
+  float diff = max(dot(surfaceNormal, lightDirection), 0.0);
   vec3 diffuse = diff * uColor;
 
   vec3 viewDir = normalize(vViewPosition);
-  vec3 reflectDir = reflect(-lightDirection, vNormal);
+  vec3 reflectDir = reflect(-lightDirection, surfaceNormal);
   float spec = pow(max(dot(viewDir, reflectDir), 0.0), 16.0);
   vec3 specular = vec3(0.5) * spec; // Adjust specular color/strength
 
   // Combine Phong lighting
   vec3 finalColor = ambient + diffuse + specular;
-  // finalColor = vec3(vNormal);
+  // finalColor = vec3(surfaceNormal);
 
   // Output color
   gl_FragColor = uOpacity * vec4(finalColor, 1.0);
@@ -10206,25 +10579,17 @@ void main() {
 };
 
 class DepthMesh extends MeshScript {
-    static { this.dependencies = {
-        renderer: THREE.WebGLRenderer,
-    }; }
     static { this.isDepthMesh = true; }
     constructor(depthOptions, width, height, depthTextures) {
         const options = depthOptions.depthMesh;
         const depthResolution = options.depthFullResolution;
         const ignoreEdgePixels = options.ignoreEdgePixels;
         const activeRes = Math.max(2, depthResolution - 2 * ignoreEdgePixels);
-        const geometry = new THREE.PlaneGeometry(1, 1, activeRes - 1, activeRes - 1);
         const minU = ignoreEdgePixels / (depthResolution - 1);
         const maxU = (depthResolution - 1 - ignoreEdgePixels) / (depthResolution - 1);
         const minV = ignoreEdgePixels / (depthResolution - 1);
         const maxV = (depthResolution - 1 - ignoreEdgePixels) / (depthResolution - 1);
-        const uvs = geometry.attributes.uv.array;
-        for (let i = 0; i < uvs.length; i += 2) {
-            uvs[i] = minU + uvs[i] * (maxU - minU);
-            uvs[i + 1] = minV + uvs[i + 1] * (maxV - minV);
-        }
+        const geometry = createDepthPlaneGeometry(activeRes - 1, minU, maxU, minV, maxV);
         let material;
         let uniforms;
         if (options.useDepthTexture || options.showDebugTexture) {
@@ -10242,6 +10607,9 @@ class DepthMesh extends MeshScript {
                 uLightDirection: { value: new THREE.Vector3(1.0, 1.0, 1.0).normalize() },
                 uUsingFloatDepth: {
                     value: depthOptions.dataFormatPreference[0] === 'float32',
+                },
+                uUseDerivativeNormals: {
+                    value: !options.updateVertexNormals,
                 },
                 uNormDepthBufferFromNormView: { value: new THREE.Matrix4() },
             };
@@ -10273,6 +10641,8 @@ class DepthMesh extends MeshScript {
         this.lastColliderUpdateTime = 0;
         this.colliderId = 0;
         this.disposed = false;
+        this.geometryUpdater = new DepthGeometryUpdater();
+        this.gridResolution = activeRes;
         this.visible = true;
         this.xb = { pointerEvents: 'none', reticleMode: 'surface' };
         this.options = options;
@@ -10286,21 +10656,37 @@ class DepthMesh extends MeshScript {
         }
         // Create a downsampled geometry for raycasts and physics.
         if (options.useDownsampledGeometry) {
-            this.downsampledGeometry = new THREE.PlaneGeometry(1, 1, 39, 39);
-            const dsUvs = this.downsampledGeometry.attributes.uv.array;
-            for (let i = 0; i < dsUvs.length; i += 2) {
-                dsUvs[i] = minU + dsUvs[i] * (maxU - minU);
-                dsUvs[i + 1] = minV + dsUvs[i + 1] * (maxV - minV);
-            }
+            this.downsampledGeometry = createDepthPlaneGeometry(39, minU, maxU, minV, maxV);
             this.downsampledMesh = new THREE.Mesh(this.downsampledGeometry, material);
             this.downsampledMesh.visible = false;
         }
     }
+    get depthTextureUniforms() {
+        return this.depthTextureMaterialUniforms;
+    }
     /**
-     * Initialize the depth mesh.
+     * Sets a custom material (such as a WebGPU NodeMaterial) and registers a
+     * callback to synchronize uniforms on depth updates.
+     *
+     * @param material - The material to apply to the depth mesh.
+     * @param onUpdate - Optional callback invoked whenever depth uniforms change.
      */
-    init({ renderer }) {
-        this.renderer = renderer;
+    setCustomMaterial(material, onUpdate) {
+        disposeMaterial(this.material);
+        material.visible =
+            this.options.showDebugTexture || this.options.renderShadow;
+        if (this.depthTextureMaterialUniforms) {
+            material.uniforms =
+                this.depthTextureMaterialUniforms;
+        }
+        this.material = material;
+        if (this.downsampledMesh) {
+            this.downsampledMesh.material = material;
+        }
+        this.customMaterialUpdateCallback = onUpdate;
+        this.onBeforeRender = () => {
+            this.customMaterialUpdateCallback?.();
+        };
     }
     /**
      * Updates the depth data and geometry positions based on the provided camera
@@ -10329,6 +10715,8 @@ class DepthMesh extends MeshScript {
         if (depthTextureLeft && this.depthTextureMaterialUniforms) {
             this.depthTextureMaterialUniforms.uUsingFloatDepth.value =
                 depthDataFormat === 'float32';
+            this.depthTextureMaterialUniforms.uUseDerivativeNormals.value =
+                !this.options.updateVertexNormals;
             if (depthData.normDepthBufferFromNormView) {
                 this.depthTextureMaterialUniforms.uNormDepthBufferFromNormView.value.fromArray(depthData.normDepthBufferFromNormView.matrix);
             }
@@ -10352,9 +10740,9 @@ class DepthMesh extends MeshScript {
                 ? this.depthTextures.depthData[0].rawValueToMeters
                 : 1.0;
         }
+        this.customMaterialUpdateCallback?.();
         if (this.options.updateVertexNormals) {
-            this.geometry.computeVertexNormals();
-            this.downsampledGeometry?.computeVertexNormals();
+            computeGridVertexNormals(this.geometry, this.gridResolution, this.gridResolution);
         }
         this.updateColliderIfNeeded();
     }
@@ -10378,61 +10766,20 @@ class DepthMesh extends MeshScript {
      * Internal method to update the geometry of the depth mesh.
      */
     updateGeometry(depthData, geometry, depthDataFormat) {
-        const width = depthData.width;
-        const height = depthData.height;
-        const depthArray = depthDataFormat === 'float32'
-            ? new Float32Array(depthData.data)
-            : new Uint16Array(depthData.data);
-        const vertexPosition = new THREE.Vector3();
-        const normViewCoord = new THREE.Vector3();
-        const normDepthBufferFromNormView = depthData.normDepthBufferFromNormView
-            ? new THREE.Matrix4().fromArray(depthData.normDepthBufferFromNormView.matrix)
-            : new THREE.Matrix4().identity();
-        for (let i = 0; i < geometry.attributes.position.count; ++i) {
-            const u = geometry.attributes.uv.array[2 * i];
-            const v = geometry.attributes.uv.array[2 * i + 1];
-            let sampleU = u;
-            let sampleV = v;
-            if (depthData.normDepthBufferFromNormView) {
-                normViewCoord.set(u, 1.0 - v, 0);
-                normViewCoord.applyMatrix4(normDepthBufferFromNormView);
-                sampleU = normViewCoord.x;
-                sampleV = normViewCoord.y;
-            }
-            else {
-                sampleV = 1.0 - v;
-            }
-            // Grabs the nearest for now.
-            const depthX = Math.round(clamp$1(sampleU * (width - 1), 0, width - 1));
-            const depthY = Math.round(clamp$1(sampleV * (height - 1), 0, height - 1));
-            const rawDepth = depthArray[depthY * width + depthX];
-            let depth = depthData.rawValueToMeters * rawDepth;
-            // Finds global min/max.
-            if (depth > 0) {
-                if (depth < this.minDepth) {
-                    this.minDepth = depth;
-                }
-                else if (depth > this.maxDepth) {
-                    this.maxDepth = depth;
-                }
-            }
-            // This is a wrong algorithm to patch holes but working amazingly well.
-            // Per-row maximum may work better but haven't tried here.
-            // A proper local maximum takes another pass.
-            if (depth == 0 && this.options.patchHoles) {
-                depth = this.maxDepthPrev;
-            }
-            if (this.options.patchHolesUpper && v > 0.9) {
-                depth = this.minDepthPrev;
-            }
-            vertexPosition.set(2.0 * (u - 0.5), 2.0 * (v - 0.5), -1);
-            // This relates to camera.near
-            vertexPosition.applyMatrix4(this.projectionMatrixInverse);
-            vertexPosition.multiplyScalar(-depth / vertexPosition.z);
-            geometry.attributes.position.array[3 * i + 0] = vertexPosition.x;
-            geometry.attributes.position.array[3 * i + 1] = vertexPosition.y;
-            geometry.attributes.position.array[3 * i + 2] = vertexPosition.z;
-        }
+        const bounds = this.geometryUpdater.updateGeometryPositions({
+            depthData,
+            geometry,
+            depthDataFormat,
+            projectionMatrixInverse: this.projectionMatrixInverse,
+            patchHoles: this.options.patchHoles,
+            patchHolesUpper: this.options.patchHolesUpper,
+            minDepthPrev: this.minDepthPrev,
+            maxDepthPrev: this.maxDepthPrev,
+            minDepth: this.minDepth,
+            maxDepth: this.maxDepth,
+        });
+        this.minDepth = bounds.minDepth;
+        this.maxDepth = bounds.maxDepth;
     }
     /**
      * Optimizes collider updates to run periodically based on the specified FPS.
@@ -12743,6 +13090,9 @@ class XREffects {
         this.renderTargets = [];
         this.dimensions = new THREE.Vector2();
     }
+    setRenderTarget(target) {
+        this.renderer.setRenderTarget(target);
+    }
     /**
      * Adds a pass to the effect pipeline.
      */
@@ -12766,7 +13116,8 @@ class XREffects {
                 this.renderTargets[i]?.depthTexture?.dispose();
                 this.renderTargets[i]?.dispose();
                 this.renderTargets[i] = defaultTarget.clone();
-                this.renderTargets[i].depthTexture = new THREE.DepthTexture(dimensions.x, dimensions.y);
+                const hasStencil = this.renderTargets[i].stencilBuffer;
+                this.renderTargets[i].depthTexture = new THREE.DepthTexture(dimensions.x, dimensions.y, hasStencil ? THREE.UnsignedInt248Type : THREE.UnsignedIntType, undefined, undefined, undefined, undefined, undefined, undefined, hasStencil ? THREE.DepthStencilFormat : THREE.DepthFormat);
             }
         }
         for (let i = neededRenderTargets; i < this.renderTargets.length; i++) {
@@ -12793,25 +13144,37 @@ class XREffects {
         }
     }
     renderXr() {
+        assertWebGLRenderer(this.renderer, 'XREffects.renderXr');
         const defaultTarget = this.renderer.getRenderTarget();
         const renderer = this.renderer;
         const xrEnabled = renderer.xr.enabled;
         const xrIsPresenting = renderer.xr.isPresenting;
+        const prevAutoClearColor = renderer.autoClearColor;
         const renderTargets = this.renderTargets;
         renderer.xr.cameraAutoUpdate = false;
         renderer.xr.enabled = false;
         const deltaTime = this.timer.getDelta();
         const numCameras = renderer.xr.getCamera().cameras.length;
         if (numCameras > 0) {
-            for (let camIndex = 0; camIndex < numCameras; ++camIndex) {
-                const cam = renderer.xr.getCamera().cameras[camIndex];
-                renderer.setViewport(cam.viewport);
-                renderer.setRenderTarget(renderTargets[camIndex]);
-                renderer.clear();
-                renderer.xr.isPresenting = true;
-                renderer.render(this.scene, cam);
+            const prevMatrixWorldAutoUpdate = this.scene.matrixWorldAutoUpdate;
+            if (prevMatrixWorldAutoUpdate) {
+                this.scene.updateMatrixWorld();
             }
-            renderer.setRenderTarget(defaultTarget);
+            this.scene.matrixWorldAutoUpdate = false;
+            try {
+                for (let camIndex = 0; camIndex < numCameras; ++camIndex) {
+                    const cam = renderer.xr.getCamera().cameras[camIndex];
+                    renderer.setViewport(cam.viewport);
+                    this.setRenderTarget(renderTargets[camIndex]);
+                    renderer.clear();
+                    renderer.xr.isPresenting = true;
+                    renderer.render(this.scene, cam);
+                }
+            }
+            finally {
+                this.scene.matrixWorldAutoUpdate = prevMatrixWorldAutoUpdate;
+            }
+            this.setRenderTarget(defaultTarget);
             renderer.clear();
             renderer.xr.isPresenting = false;
             renderer.autoClearColor = false;
@@ -12832,6 +13195,7 @@ class XREffects {
                     /*viewId=*/ eye);
                 }
             }
+            renderer.autoClearColor = prevAutoClearColor;
             renderer.xr.enabled = xrEnabled;
             renderer.xr.isPresenting = xrIsPresenting;
         }
@@ -12840,23 +13204,21 @@ class XREffects {
         const defaultTarget = this.renderer.getRenderTarget();
         const renderer = this.renderer;
         const xrEnabled = renderer.xr.enabled;
-        const xrIsPresenting = renderer.xr.isPresenting;
+        const prevAutoClearColor = renderer.autoClearColor;
         renderer.xr.cameraAutoUpdate = false;
         renderer.xr.enabled = false;
         const deltaTime = this.timer.getDelta();
         if (this.passes.length === 0) {
-            renderer.setRenderTarget(defaultTarget);
+            this.setRenderTarget(defaultTarget);
             renderer.render(this.scene, camera);
             renderer.xr.enabled = xrEnabled;
-            renderer.xr.isPresenting = xrIsPresenting;
             return;
         }
-        renderer.setRenderTarget(this.renderTargets[0]);
+        this.setRenderTarget(this.renderTargets[0]);
         renderer.clear();
         renderer.render(this.scene, camera);
-        renderer.setRenderTarget(defaultTarget);
+        this.setRenderTarget(defaultTarget);
         renderer.clear();
-        renderer.xr.isPresenting = false;
         renderer.autoClearColor = false;
         for (let i = 0; i < this.passes.length - 1; ++i) {
             const lastRenderTargetIndex = i % 2;
@@ -12871,8 +13233,8 @@ class XREffects {
             /*maskActive=*/ false, 
             /*viewId=*/ 0);
         }
+        renderer.autoClearColor = prevAutoClearColor;
         renderer.xr.enabled = xrEnabled;
-        renderer.xr.isPresenting = xrIsPresenting;
     }
     dispose() {
         let firstError;
@@ -13076,6 +13438,7 @@ class DepthTextures {
         this.depthData[viewId] = depthData;
     }
     updateNativeTexture(depthData, renderer, viewId) {
+        assertWebGLRenderer(renderer, 'DepthTextures.updateNativeTexture');
         this.renderer = renderer;
         if (this.nativeTextures.length < viewId + 1) {
             this.nativeTextures[viewId] = new THREE.ExternalTexture(depthData.texture);
@@ -13121,9 +13484,16 @@ class DepthTextures {
 class GPUDepthConverter {
     constructor(renderer) {
         this.renderer = renderer;
+        this.savedViewport = new THREE.Vector4();
+        this.savedScissor = new THREE.Vector4();
+        this.logicalViewport = new THREE.Vector4();
+        this.restoredViewport = new THREE.Vector4();
     }
     /**
      * Converts unsigned short GPU depth from Quest 3 to float32 CPU depth.
+     * Restores renderer-managed target and raster state, not arbitrary raw-GL
+     * bindings. An independently overridden canvas viewport is restored in GL,
+     * but its renderer cache cannot be restored without changing logical defaults.
      */
     convertGPUToCPU(depthData) {
         if (!this.depthTarget) {
@@ -13136,8 +13506,6 @@ class GPUDepthConverter {
                 depthBuffer: false,
             });
             this.depthTexture = new THREE.ExternalTexture(depthData.texture);
-            const textureProperties = this.renderer.properties.get(this.depthTexture);
-            textureProperties.__webglTexture = depthData.texture;
             this.gpuPixels = new Float32Array(depthData.width * depthData.height);
             const depthShader = new THREE.ShaderMaterial({
                 vertexShader: `
@@ -13174,24 +13542,101 @@ class GPUDepthConverter {
                 depthWrite: false,
                 side: THREE.DoubleSide,
             });
-            const depthMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), depthShader);
+            this.depthMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), depthShader);
             this.depthScene = new THREE.Scene();
-            this.depthScene.add(depthMesh);
+            this.depthScene.add(this.depthMesh);
             this.depthCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
         }
+        else if (this.depthTarget.width !== depthData.width ||
+            this.depthTarget.height !== depthData.height) {
+            this.depthTarget.setSize(depthData.width, depthData.height);
+            this.gpuPixels = new Float32Array(depthData.width * depthData.height);
+        }
+        this.depthTexture.sourceTexture = depthData.texture;
         const originalRenderTarget = this.renderer.getRenderTarget();
-        this.renderer.xr.enabled = false;
-        this.renderer.setRenderTarget(this.depthTarget);
-        this.renderer.render(this.depthScene, this.depthCamera);
-        this.renderer.readRenderTargetPixels(this.depthTarget, 0, 0, depthData.width, depthData.height, this.gpuPixels, 0);
-        this.renderer.xr.enabled = true;
-        this.renderer.setRenderTarget(originalRenderTarget);
+        const activeCubeFace = this.renderer.getActiveCubeFace();
+        const activeMipmapLevel = this.renderer.getActiveMipmapLevel();
+        this.renderer.getCurrentViewport(this.savedViewport);
+        this.renderer.getViewport(this.logicalViewport);
+        const gl = this.renderer.getContext();
+        // The renderer's scissor getters expose logical defaults, not live state.
+        this.savedScissor.fromArray(gl.getParameter(gl.SCISSOR_BOX));
+        const scissorTest = gl.isEnabled(gl.SCISSOR_TEST);
+        const xrEnabled = this.renderer.xr.enabled;
+        try {
+            this.renderer.xr.enabled = false;
+            this.renderer.setRenderTarget(this.depthTarget);
+            this.renderer.render(this.depthScene, this.depthCamera);
+            this.renderer.readRenderTargetPixels(this.depthTarget, 0, 0, depthData.width, depthData.height, this.gpuPixels, 0);
+        }
+        finally {
+            this.renderer.xr.enabled = xrEnabled;
+            if (originalRenderTarget) {
+                const { viewport, scissor, scissorTest: targetScissorTest, } = originalRenderTarget;
+                // setViewport/setScissor would overwrite renderer-wide logical defaults.
+                // Rebind with physical pixels, then restore the target's stored defaults.
+                originalRenderTarget.viewport = this.savedViewport;
+                originalRenderTarget.scissor = this.savedScissor;
+                originalRenderTarget.scissorTest = scissorTest;
+                try {
+                    this.renderer.setRenderTarget(originalRenderTarget, activeCubeFace, activeMipmapLevel);
+                }
+                finally {
+                    originalRenderTarget.viewport = viewport;
+                    originalRenderTarget.scissor = scissor;
+                    originalRenderTarget.scissorTest = targetScissorTest;
+                }
+            }
+            else {
+                this.renderer.setRenderTarget(null, activeCubeFace, activeMipmapLevel);
+                this.renderer.getCurrentViewport(this.restoredViewport);
+                if (!this.restoredViewport.equals(this.savedViewport)) {
+                    // setRenderTarget floors, but setViewport rounds at fractional DPR.
+                    this.renderer.setViewport(this.logicalViewport);
+                }
+                this.renderer.state.viewport(this.savedViewport);
+                this.renderer.state.scissor(this.savedScissor);
+                this.renderer.state.setScissorTest(scissorTest);
+            }
+        }
         return {
             width: depthData.width,
             height: depthData.height,
             data: this.gpuPixels.buffer,
             rawValueToMeters: depthData.rawValueToMeters,
         };
+    }
+    /**
+     * Releases conversion resources without deleting the UA-owned depth texture.
+     * The first cleanup error is rethrown after all releases are attempted.
+     * A later conversion lazily recreates the resources.
+     */
+    dispose() {
+        const { depthTarget, depthMesh, depthTexture, depthScene } = this;
+        if (!depthTarget)
+            return;
+        this.depthTarget = undefined;
+        this.gpuPixels = new Float32Array(0);
+        depthTexture.sourceTexture = null;
+        let firstError;
+        const cleanups = [
+            () => depthTarget.dispose(),
+            () => depthMesh.geometry.dispose(),
+            () => depthMesh.material.dispose(),
+            () => this.renderer.properties.remove(depthTexture),
+            () => depthTexture.dispose(),
+            () => depthScene.clear(),
+        ];
+        for (const cleanup of cleanups) {
+            try {
+                cleanup();
+            }
+            catch (error) {
+                firstError ??= error;
+            }
+        }
+        if (firstError !== undefined)
+            throw firstError;
     }
 }
 
@@ -13416,7 +13861,12 @@ class OcclusionMapMeshMaterial extends THREE.MeshBasicMaterial {
             ].join('\n'))
                 .replace('#include <fog_vertex>', [
                 '#include <fog_vertex>',
-                'vec4 world_position = modelMatrix * vec4( position, 1.0 );',
+                // `transformed` is the post-<skinning_vertex> / <morphtarget_vertex>
+                // position (identical to `position` for rigid meshes), so skinned
+                // and morphed meshes -- animated avatars -- write their POSED depth
+                // and sample the occlusion map at their posed location, not at
+                // the bind pose.
+                'vec4 world_position = modelMatrix * vec4( transformed, 1.0 );',
                 'vec4 depth_view_position = uDepthViewMatrix * world_position;',
                 'vVirtualDepth = -depth_view_position.z;',
                 'vec4 depth_clip_position = uDepthProjectionMatrix * depth_view_position;',
@@ -13581,7 +14031,15 @@ class OcclusionPass extends Pass {
         if (depthProjectionMatrix) {
             this.depthProjectionMatrices[viewId] = depthProjectionMatrix;
         }
-        depthTexture.needsUpdate = true;
+        // CPU depth arrives in a DataTexture whose bytes were rewritten in place,
+        // so it must be re-uploaded. GPU-optimized depth (Quest) is an
+        // ExternalTexture wrapping the native WebGLTexture: it has no image to
+        // upload, and bumping its version makes three's setTexture2DArray (which,
+        // unlike setTexture2D, does not skip external textures) call
+        // uploadTexture -> resizeImage(null) and crash.
+        if (!(depthTexture instanceof THREE.ExternalTexture)) {
+            depthTexture.needsUpdate = true;
+        }
     }
     /**
      * Render the occlusion map.
@@ -13836,10 +14294,16 @@ class Depth {
         this.renderer = renderer;
         this.registry = registry;
         this.enabled = options.enabled;
-        this.gpuDepthConverter = new GPUDepthConverter(renderer);
+        this.gpuDepthConverter = isWebGPURenderer(renderer)
+            ? undefined
+            : new GPUDepthConverter(renderer);
         if (this.options.depthTexture.enabled) {
             this.depthTextures = new DepthTextures(options);
             registry.register(this.depthTextures);
+        }
+        if (this.options.occlusion.enabled) {
+            assertWebGLRenderer(renderer, 'OcclusionPass');
+            this.occlusionPass = new OcclusionPass(scene, camera);
         }
         if (this.options.depthMesh.enabled) {
             this.depthMesh = new DepthMesh(options, this.width, this.height, this.depthTextures);
@@ -13848,32 +14312,55 @@ class Depth {
                 this.renderer.shadowMap.enabled = true;
                 this.renderer.shadowMap.type = THREE.PCFShadowMap;
             }
+            if (isWebGPURenderer(renderer) &&
+                (this.options.depthMesh.useDepthTexture ||
+                    this.options.depthMesh.showDebugTexture)) {
+                return import('./DepthMeshWebGPUMaterial.js').then(({ applyWebGPUDepthMeshMaterial }) => {
+                    if (!this.disposed && this.depthMesh) {
+                        applyWebGPUDepthMeshMaterial(this.depthMesh);
+                        scene.add(this.depthMesh);
+                    }
+                });
+            }
             scene.add(this.depthMesh);
         }
-        if (this.options.occlusion.enabled) {
-            this.occlusionPass = new OcclusionPass(scene, camera);
+    }
+    /**
+     * Converts bottom-origin view UVs into normalized depth buffer coordinates.
+     *
+     * {@link https://immersive-web.github.io/depth-sensing/#obtain-depth-at-coordinates | The WebXR algorithm}
+     * takes top-origin normalized view coordinates, applies
+     * `normDepthBufferFromNormView`, then scales the result straight into the
+     * buffer. Flipping V after the transform instead samples a different pixel
+     * for any transform that does not commute with that flip, and disagrees
+     * with {@link DepthMesh}, which flips first.
+     * @param u - Normalized horizontal coordinate, origin at bottom left.
+     * @param v - Normalized vertical coordinate, origin at bottom left.
+     * @param target - Vector that receives the result.
+     * @returns The normalized depth buffer coordinates.
+     */
+    normDepthBufferCoords(u, v, target) {
+        target.set(u, 1.0 - v, 0);
+        if (this.normDepthBufferFromNormViewMatrices.length > 0) {
+            target.applyMatrix4(this.normDepthBufferFromNormViewMatrices[0]);
         }
+        return target;
     }
     /**
      * Retrieves the depth at normalized coordinates (u, v).
      * Note: The UV coordinates are with respect to the user's view, not the depth camera view.
-     * @param u - Normalized horizontal coordinate.
-     * @param v - Normalized vertical coordinate.
+     * @param u - Normalized horizontal coordinate, origin at the bottom left of
+     * the view, growing right.
+     * @param v - Normalized vertical coordinate, origin at the bottom left of
+     * the view, growing up.
      * @returns Depth value at the specified coordinates.
      */
     getDepth(u, v) {
         if (!this.depthArray[0])
             return 0.0;
-        // When matchDepthView is false, transform from view-space UVs to
-        // depth buffer UVs using normDepthBufferFromNormView.
-        if (this.normDepthBufferFromNormViewMatrices.length > 0) {
-            normViewCoord.set(u, v, 0);
-            normViewCoord.applyMatrix4(this.normDepthBufferFromNormViewMatrices[0]);
-            u = normViewCoord.x;
-            v = normViewCoord.y;
-        }
-        const depthX = Math.round(clamp$1(u * this.width, 0, this.width - 1));
-        const depthY = Math.round(clamp$1((1.0 - v) * this.height, 0, this.height - 1));
+        const coords = this.normDepthBufferCoords(u, v, normViewCoord);
+        const depthX = Math.round(clamp$1(coords.x * this.width, 0, this.width - 1));
+        const depthY = Math.round(clamp$1(coords.y * this.height, 0, this.height - 1));
         const rawDepth = this.depthArray[0][depthY * this.width + depthX];
         return this.rawValueToMeters * rawDepth;
     }
@@ -13905,26 +14392,24 @@ class Depth {
     /**
      * Retrieves the depth at normalized coordinates (u, v).
      * Note: The UV coordinates are with respect to the user's view, not the depth camera view.
-     * @param u - Normalized horizontal coordinate.
-     * @param v - Normalized vertical coordinate.
+     * @param u - Normalized horizontal coordinate, origin at the bottom left of
+     * the view, growing right.
+     * @param v - Normalized vertical coordinate, origin at the bottom left of
+     * the view, growing up.
      * @returns Vertex at (u, v)
      */
     getVertex(u, v) {
         if (!this.depthArray[0])
             return null;
-        // When matchDepthView is false, transform from view-space UVs to
-        // depth buffer UVs using normDepthBufferFromNormView.
-        if (this.normDepthBufferFromNormViewMatrices.length > 0) {
-            normViewCoord.set(u, v, 0);
-            normViewCoord.applyMatrix4(this.normDepthBufferFromNormViewMatrices[0]);
-            u = normViewCoord.x;
-            v = normViewCoord.y;
-        }
-        const depthX = Math.round(clamp$1(u * this.width, 0, this.width - 1));
-        const depthY = Math.round(clamp$1((1.0 - v) * this.height, 0, this.height - 1));
+        const coords = this.normDepthBufferCoords(u, v, normViewCoord);
+        const depthX = Math.round(clamp$1(coords.x * this.width, 0, this.width - 1));
+        const depthY = Math.round(clamp$1(coords.y * this.height, 0, this.height - 1));
         const rawDepth = this.depthArray[0][depthY * this.width + depthX];
         const depth = this.rawValueToMeters * rawDepth;
-        const vertexPosition = new THREE.Vector3(2.0 * (u - 0.5), 2.0 * (v - 0.5), -1);
+        // depthProjectionInverseMatrices belongs to the depth camera, so the clip
+        // space point has to come from the depth buffer coordinates. Buffer V
+        // grows downward while clip Y grows upward, hence the flip back here.
+        const vertexPosition = new THREE.Vector3(2.0 * (coords.x - 0.5), 2.0 * (0.5 - coords.y), -1);
         vertexPosition.applyMatrix4(this.depthProjectionInverseMatrices[0]);
         vertexPosition.multiplyScalar(-depth / vertexPosition.z);
         return vertexPosition;
@@ -13988,6 +14473,7 @@ class Depth {
         }
     }
     updateGPUDepthData(depthData, viewId) {
+        assertWebGLRenderer(this.renderer, 'WebXR GPU depth');
         this.gpuDepthData[viewId] = depthData;
         this.updateDepthMatrices(depthData, viewId);
         // Reading the depth target back is a synchronous GPU stall, and in stereo
@@ -14004,7 +14490,8 @@ class Depth {
         if (cpuDepth) {
             this.cpuDepthData[viewId] = cpuDepth;
             this.depthDataFormat = 'float32';
-            if (this.depthArray[viewId] instanceof Float32Array) {
+            if (this.depthArray[viewId] instanceof Float32Array &&
+                this.depthArray[viewId].byteLength === cpuDepth.data.byteLength) {
                 this.depthArray[viewId].set(new Float32Array(cpuDepth.data));
             }
             else {
@@ -14083,7 +14570,7 @@ class Depth {
                     const view = pose.views[viewId];
                     this.view[viewId] = view;
                     if (session.depthUsage === 'gpu-optimized') {
-                        const depthData = binding.getDepthInformation(view);
+                        const depthData = binding?.getDepthInformation(view);
                         if (!depthData) {
                             return;
                         }
@@ -14104,6 +14591,7 @@ class Depth {
         }
     }
     renderOcclusionPass() {
+        assertWebGLRenderer(this.renderer, 'OcclusionPass');
         const leftDepthTexture = this.getTexture(0);
         if (leftDepthTexture) {
             this.occlusionPass.setDepthTexture(leftDepthTexture, this.rawValueToMeters, 0, this.gpuDepthData[0]
@@ -14150,6 +14638,9 @@ class Depth {
             return;
         this.disposed = true;
         this.enabled = false;
+        if (Depth.instance === this) {
+            Depth.instance = undefined;
+        }
         const mesh = this.depthMesh;
         const textures = this.depthTextures;
         const pass = this.occlusionPass;
@@ -14158,6 +14649,7 @@ class Depth {
         this.occlusionPass = undefined;
         let firstError;
         const cleanups = [
+            () => this.gpuDepthConverter?.dispose(),
             () => {
                 if (mesh && this.registry?.get(DepthMesh) === mesh) {
                     this.registry.unregister(DepthMesh);
@@ -14181,7 +14673,6 @@ class Depth {
                 firstError ??= error;
             }
         }
-        // TODO: Wire GPU converter disposal when its cleanup API from #600 lands.
         this.gpuDepthConverter = undefined;
         this.registry = undefined;
         this.view.length = 0;
@@ -16350,14 +16841,22 @@ class UIRenderer {
         this.connectedRoots = new Set();
         this.viewport = { width: 0, height: 0 };
         this.backendState = { kind: 'idle' };
-        this.presentationStateFor = (element, cursorPoints) => ({
-            hovered: this.interaction.isPointingAt(element),
-            active: this.interaction.isSelectingAt(element),
-            disabled: getSemanticControl(element)?.isDisabled() ?? false,
-            cursorPointCount: cursorPoints
+        this.presentationState = {
+            hovered: false,
+            active: false,
+            disabled: false,
+            cursorPointCount: 0,
+        };
+        this.presentationStateFor = (element, cursorPoints) => {
+            const state = this.presentationState;
+            state.hovered = this.interaction.isPointingAt(element);
+            state.active = this.interaction.isSelectingAt(element);
+            state.disabled = getSemanticControl(element)?.isDisabled() ?? false;
+            state.cursorPointCount = cursorPoints
                 ? this.interaction.writeCursorPointsAt(element, cursorPoints[0], cursorPoints[1])
-                : 0,
-        });
+                : 0;
+            return state;
+        };
         /** Reports issues from the latest completed mounted layout. */
         this.validate = (root) => {
             if (this.backendState.kind !== 'ready') {
@@ -23208,7 +23707,7 @@ class Segmenter extends Script {
  * Manages all interactions with the real-world environment perceived by the XR
  * device. This class abstracts the complexity of various perception APIs
  * (Depth, Planes, Meshes, etc.) and provides a simple, event-driven interface
- * for developers to use `this.world.depth.mesh`, `this.world.planes`.
+ * for developers to use `this.world.planes` and `this.world.meshes`.
  */
 class World extends Script {
     constructor() {
@@ -23287,7 +23786,9 @@ class World extends Script {
         this.resolveInitialized();
     }
     /**
-     * Places an object at the reticle.
+     * Unimplemented placeholder. Does not place or anchor the object.
+     *
+     * @throws Always throws an error because this method is not implemented.
      */
     anchorObjectAtReticle(_object, _reticle) {
         throw new Error('Method not implemented');
@@ -23315,7 +23816,7 @@ class World extends Script {
      * (currently planes) and places a 3D object at the intersection point,
      * oriented to face the user.
      *
-     * See /templates/3_spatial_placement/ for a complete placement example.
+     * See /templates/03_spatial_placement/ for a complete placement example.
      *
      * @param objectToPlace - The object to position in the
      * world.
@@ -23705,33 +24206,9 @@ class PermissionsManager {
     }
 }
 
-/**
- * Type guard to determine if a renderer instance is a THREE.WebGPURenderer.
- *
- * @param renderer - The renderer instance to test.
- * @returns True if the renderer is a WebGPURenderer, false otherwise.
- */
-function isWebGPURenderer(renderer) {
-    return ('isWebGPURenderer' in renderer &&
-        renderer.isWebGPURenderer === true);
-}
-/**
- * Asserts that the provided renderer is a THREE.WebGLRenderer.
- *
- * @param renderer - The renderer instance to check.
- * @param consumerName - The name of the subsystem or feature requiring WebGLRenderer.
- * @throws Error if the renderer is a WebGPURenderer or not an instance of THREE.WebGLRenderer.
- */
-function assertWebGLRenderer(renderer, consumerName) {
-    if (isWebGPURenderer(renderer) ||
-        !(renderer instanceof THREE.WebGLRenderer)) {
-        throw new Error(`${consumerName} requires THREE.WebGLRenderer, but Core is configured with WebGPURenderer.`);
-    }
-}
-
 const EPSILON$1 = 1e-9;
 function loadSimulatorModule() {
-    return import('./Simulator.js');
+    return import('./Simulator.js').then(function (n) { return n.S; });
 }
 /**
  * Core is the central engine of the XR Blocks framework, acting as a
@@ -23927,15 +24404,12 @@ class Core {
             const frameCamera = this.getFrameCamera();
             this.uiRenderer.reconcile(deltaSeconds, frameCamera);
             this.interaction.syncTouchCandidates(this.scriptsManager.directTouchCandidates);
-            this.scene.updateMatrixWorld(true);
+            this.scene.updateMatrixWorld();
             this.interaction.update(this.input.getFrame(), deltaSeconds);
             this.uiRenderer.present();
             this.renderSimulatorAndScene();
             if (this.renderer instanceof THREE.WebGLRenderer) {
                 this.screenshotSynthesizer.onAfterRender(this.renderer, this.renderSceneCallback, this.deviceCamera);
-            }
-            if (this.simulatorRunning) {
-                this.simulator?.renderSimulatorScene();
             }
         };
         /**
@@ -23960,7 +24434,6 @@ class Core {
                 const { Simulator } = await this.simulatorLoader();
                 this.assertLifecycleActive('load the simulator runtime');
                 const simulator = new Simulator(this.renderSceneCallback, this.renderer);
-                simulator.effects = this.effects;
                 try {
                     // Keep the simulator connected to the script lifecycle while its async
                     // initialization runs. Otherwise the frame loop treats it as removed
@@ -24279,7 +24752,6 @@ class Core {
         }
         // Sets up device camera.
         if (options.deviceCamera?.enabled) {
-            assertWebGLRenderer(this.renderer, 'XRDeviceCamera');
             this.deviceCamera = new XRDeviceCamera(options.deviceCamera);
             this.deviceCamera.setRenderer(this.renderer);
             this.registry.register(this.deviceCamera);
@@ -24300,7 +24772,6 @@ class Core {
         this.webXRSettings.optionalFeatures = webXROptionalFeatures;
         // Sets up depth.
         if (options.depth.enabled) {
-            assertWebGLRenderer(this.renderer, 'Depth');
             webXRRequiredFeatures.push('depth-sensing');
             webXRRequiredFeatures.push('local-floor');
             this.webXRSettings.depthSensing = {
@@ -24309,7 +24780,8 @@ class Core {
                 depthTypeRequest: options.depth.depthTypeRequest,
                 matchDepthView: options.depth.matchDepthView,
             };
-            this.depth.init(this.camera, options.depth, this.renderer, this.registry, this.scene);
+            await this.depth.init(this.camera, options.depth, this.renderer, this.registry, this.scene);
+            this.assertInitializing();
             if (this.depth.depthMesh) {
                 this.depth.depthMesh.xb = {
                     ...this.depth.depthMesh.xb,
@@ -24337,6 +24809,12 @@ class Core {
         }
         if (options.world.meshes.enabled) {
             webXROptionalFeatures.push('mesh-detection');
+        }
+        // Composition layers are optional too: without the feature the layer
+        // classes simply never appear and each layer falls back to being drawn
+        // into the scene.
+        if (options.layers.enabled) {
+            webXROptionalFeatures.push('layers');
         }
         if (options.world.anchors.enabled) {
             webXROptionalFeatures.push('anchors');
@@ -24373,7 +24851,6 @@ class Core {
         this.assertInitializing();
         // Sets up postprocessing effects.
         if (options.usePostprocessing) {
-            assertWebGLRenderer(this.renderer, 'XREffects');
             this.effects = new XREffects(this.renderer, this.scene, this.timer);
         }
         // Sets up AI services.
@@ -24449,7 +24926,7 @@ class Core {
     }
     renderSimulatorAndScene() {
         if (this.simulatorRunning && this.simulator) {
-            this.simulator.renderScene();
+            this.simulator.renderFrame();
         }
         else {
             this.renderScene();
@@ -24792,6 +25269,456 @@ class OcclusionUtils {
 }
 
 /**
+ * Works out how this platform can back a quad layer.
+ *
+ * @param session - The active XR session, if any.
+ * @param binding - The WebGL binding, if one exists.
+ * @param preferWebGL - Take the WebGL path even where a media binding exists.
+ *   Quest ships both, so without this the WebGL path has no hardware to run
+ *   on: every device that can take it would take the media path instead.
+ * @returns Which layer path is available.
+ */
+function layerCapability(session, binding, preferWebGL = false) {
+    if (!session)
+        return 'unsupported';
+    const hasWebGLQuad = typeof binding?.createQuadLayer ===
+        'function';
+    if (preferWebGL && hasWebGLQuad)
+        return 'webgl';
+    // Media layers need no per-frame drawing, so prefer them where present.
+    if (typeof XRMediaBinding === 'function')
+        return 'media';
+    if (hasWebGLQuad)
+        return 'webgl';
+    return 'unsupported';
+}
+/**
+ * Whether a capability can actually present a layer.
+ *
+ * @param capability - Result of {@link layerCapability}.
+ * @returns True when a quad layer can be created.
+ */
+function isLayerCapable(capability) {
+    return capability !== 'unsupported';
+}
+
+/**
+ * Owns the composition layers an app adds on top of the scene.
+ *
+ * three.js sets `layers: [projectionLayer]` once when the session starts and
+ * never touches that array again, so anything extra has to be composed back in
+ * together with its layer. Dropping the projection layer would blank the scene,
+ * which is why {@link setBaseLayer} is required before anything is added.
+ *
+ * Ordering follows the layers spec: earlier entries are composited behind later
+ * ones, so the projection layer goes first and app layers sit in front of it.
+ */
+class LayerManager {
+    constructor() {
+        this.session = null;
+        this.binding = null;
+        this.gl = null;
+        this.baseLayer = null;
+        this.layers = [];
+        this.capability = 'unsupported';
+        this.preferWebGL = false;
+    }
+    /**
+     * Forces the WebGL path on platforms that also offer a media binding.
+     *
+     * Quest has both and would otherwise always take the media path, so without
+     * this the WebGL path cannot be exercised on the hardware most likely to be
+     * to hand.
+     *
+     * @param prefer - Whether to take WebGL over media.
+     */
+    setPreferWebGL(prefer) {
+        this.preferWebGL = prefer;
+        this.capability = layerCapability(this.session, this.binding, prefer);
+    }
+    /**
+     * Binds the manager to a session.
+     *
+     * @param session - The active session, or null when one ends.
+     * @param binding - The WebGL binding, if one exists.
+     * @param gl - The context the binding was made against. Needed to upload
+     *   frames into a layer's texture on the WebGL path.
+     */
+    setSession(session, binding = null, gl = null) {
+        this.session = session;
+        this.binding = binding;
+        this.gl = gl;
+        this.capability = layerCapability(session, binding, this.preferWebGL);
+        if (!session) {
+            this.layers.length = 0;
+            this.baseLayer = null;
+            this.binding = null;
+            this.gl = null;
+        }
+    }
+    /** @returns The WebGL binding, if the session has one. */
+    getBinding() {
+        return this.binding;
+    }
+    /** @returns The context layer textures are uploaded through. */
+    getContext() {
+        return this.gl;
+    }
+    /**
+     * Records the layer three.js renders the scene into.
+     *
+     * @param layer - The projection or WebGL layer backing the scene.
+     */
+    setBaseLayer(layer) {
+        this.baseLayer = layer;
+    }
+    /** @returns Which layer path this platform supports. */
+    getCapability() {
+        return this.capability;
+    }
+    /** @returns True when a layer can actually be presented. */
+    isSupported() {
+        return isLayerCapable(this.capability) && !!this.baseLayer;
+    }
+    /** @returns The layers currently composited in front of the scene. */
+    getLayers() {
+        return this.layers;
+    }
+    /**
+     * Adds a layer in front of the scene.
+     *
+     * @param layer - Layer to present.
+     * @returns True when it was added and submitted.
+     */
+    add(layer) {
+        if (!this.session || !this.baseLayer)
+            return false;
+        if (this.layers.includes(layer))
+            return true;
+        this.layers.push(layer);
+        try {
+            this.submit();
+        }
+        catch (error) {
+            this.layers.pop();
+            throw error;
+        }
+        return true;
+    }
+    /**
+     * Removes a layer.
+     *
+     * @param layer - Layer to stop presenting.
+     * @returns True when it was present and removed.
+     */
+    remove(layer) {
+        const index = this.layers.indexOf(layer);
+        if (index < 0)
+            return false;
+        this.layers.splice(index, 1);
+        this.submit();
+        return true;
+    }
+    /**
+     * Pushes the current layer stack to the compositor.
+     *
+     * Always includes the base layer, since replacing the array without it would
+     * leave the scene itself unrendered.
+     */
+    submit() {
+        if (!this.session || !this.baseLayer)
+            return;
+        this.session.updateRenderState({
+            layers: [this.baseLayer, ...this.layers],
+        });
+    }
+}
+
+const DEFAULT_WIDTH_M = 1.6;
+/**
+ * Presents a video as a composition layer where the platform allows it.
+ *
+ * The point is resampling. Drawn into the scene, a video goes into the eye
+ * buffer and is then warped again by the compositor, so it is sampled twice and
+ * the first of those is into a buffer that is already lower resolution than the
+ * panel. As a layer it is sampled once, at its own resolution.
+ *
+ * Reports {@link VideoLayerState} rather than throwing when it cannot, so an
+ * app can ask for a layer everywhere and draw the video into the scene on the
+ * platforms that have no layers.
+ */
+class VideoLayer {
+    /**
+     * @param manager - Owns the layer stack this layer joins.
+     */
+    constructor(manager) {
+        this.manager = manager;
+        this.layer = null;
+        this.state = 'fallback';
+        this.path = 'none';
+        this.video = null;
+        this.sourceWidth = 0;
+        this.sourceHeight = 0;
+        this.uploads = 0;
+        this.lastFrameTime = -1;
+    }
+    /** @returns Whether the video is being presented as a layer. */
+    getState() {
+        return this.state;
+    }
+    /** @returns Which binding is presenting the video. */
+    getPath() {
+        return this.path;
+    }
+    /** @returns The underlying layer, if one was created. */
+    getLayer() {
+        return this.layer;
+    }
+    /**
+     * Tries to present a video element as a quad layer.
+     *
+     * @param video - The element to present. Must already have metadata loaded
+     *   for its aspect ratio to be known.
+     * @param session - The active XR session.
+     * @param space - Reference space the placement is expressed in.
+     * @param placement - Where to put the quad.
+     * @returns Whether a layer was created.
+     */
+    attach(video, session, space, placement = {}) {
+        this.detach();
+        if (!this.manager.isSupported()) {
+            this.state = 'fallback';
+            return false;
+        }
+        const width = placement.width ?? DEFAULT_WIDTH_M;
+        const height = placement.height ?? width / aspectRatioOf(video);
+        const position = placement.position ?? new THREE.Vector3(0, 0, -2);
+        const quaternion = placement.quaternion ?? new THREE.Quaternion();
+        const transform = new XRRigidTransform({ x: position.x, y: position.y, z: position.z }, { x: quaternion.x, y: quaternion.y, z: quaternion.z, w: quaternion.w });
+        const capability = this.manager.getCapability();
+        const layer = capability === 'media'
+            ? createMediaLayer(video, session, space, transform, width, height)
+            : capability === 'webgl'
+                ? createWebGLLayer(this.manager.getBinding(), video, space, transform, width, height)
+                : null;
+        if (!layer) {
+            this.state = 'fallback';
+            return false;
+        }
+        let added = false;
+        try {
+            added = this.manager.add(layer);
+        }
+        finally {
+            // A rejected submission must not leave an unowned native layer behind.
+            if (!added)
+                layer.destroy?.();
+        }
+        if (!added) {
+            this.state = 'fallback';
+            return false;
+        }
+        this.layer = layer;
+        this.video = video;
+        this.sourceWidth = video.videoWidth;
+        this.sourceHeight = video.videoHeight;
+        this.uploads = 0;
+        this.lastFrameTime = -1;
+        this.path = capability === 'media' ? 'media' : 'webgl';
+        this.state = 'layer';
+        return true;
+    }
+    /**
+     * Draws the current video frame into the layer.
+     *
+     * Only the WebGL path needs this: on the media path the compositor pulls
+     * frames from the element itself and the app never draws one. Safe to call
+     * every frame regardless.
+     *
+     * @param frame - The frame being rendered.
+     */
+    update(frame) {
+        if (this.path !== 'webgl' || !this.layer || !this.video)
+            return;
+        const binding = this.manager.getBinding();
+        const gl = this.manager.getContext();
+        if (!binding || !gl)
+            return;
+        // The layer texture was allocated at the size the video reported when it
+        // was created. If the source has since changed size, texSubImage2D would
+        // raise a GL error on every frame, so re-attach instead of uploading.
+        if (this.video.videoWidth !== this.sourceWidth ||
+            this.video.videoHeight !== this.sourceHeight) {
+            return;
+        }
+        // The card streams at 30fps but the headset renders at 90, so uploading
+        // every frame would push the same 2048x1152 image three times over.
+        // needsRedraw still forces one, since that means the compositor lost the
+        // layer's contents.
+        const stale = this.video.currentTime === this.lastFrameTime;
+        if (stale && !this.layer.needsRedraw)
+            return;
+        this.lastFrameTime = this.video.currentTime;
+        try {
+            const subImage = binding.getSubImage(this.layer, frame);
+            // three.js caches GL state and skips redundant calls, so binding a
+            // texture behind its back leaves its cache describing something that is
+            // no longer true, and it then renders with whatever it thinks is bound.
+            // Everything touched here is put back so the cache stays honest.
+            const previousUnit = gl.getParameter(gl.ACTIVE_TEXTURE);
+            const previousTexture = gl.getParameter(gl.TEXTURE_BINDING_2D);
+            const previousFlip = gl.getParameter(gl.UNPACK_FLIP_Y_WEBGL);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+            gl.bindTexture(gl.TEXTURE_2D, subImage.colorTexture);
+            gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.video);
+            gl.bindTexture(gl.TEXTURE_2D, previousTexture);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, previousFlip);
+            gl.activeTexture(previousUnit);
+            this.uploads++;
+        }
+        catch {
+            // getSubImage throws until updateRenderState has taken effect, which is
+            // a frame or two after the layer is added. Dropping a frame is better
+            // than tearing the layer down over a transient state.
+        }
+    }
+    /**
+     * How many frames have actually been uploaded.
+     *
+     * On the WebGL path the app draws every frame itself, so a count that stays
+     * at zero is the difference between a layer that is presenting and one that
+     * was created and then quietly did nothing.
+     *
+     * @returns Number of successful uploads since attaching.
+     */
+    getUploadCount() {
+        return this.uploads;
+    }
+    /** Stops presenting the layer and returns the video to the scene. */
+    detach() {
+        const layer = this.layer;
+        this.layer = null;
+        this.video = null;
+        this.sourceWidth = 0;
+        this.sourceHeight = 0;
+        this.path = 'none';
+        this.state = 'fallback';
+        if (layer) {
+            try {
+                this.manager.remove(layer);
+            }
+            finally {
+                layer.destroy?.();
+            }
+        }
+    }
+}
+/**
+ * Whether this platform treats quad extents as half width and half height.
+ *
+ * The spec means full metres and Chromium passes them to OpenXR unchanged, but
+ * the Quest browser halves them, so the same numbers give a quad at twice the
+ * size there. It applies to the compositor, not to one binding, so the WebGL
+ * path needs the same correction on Quest that the media path does.
+ *
+ * `XRMediaBinding` is the tell: Quest is the only browser that ships it, and it
+ * is still present when the WebGL path is taken by choice.
+ * See immersive-web/layers#324.
+ *
+ * @returns True when extents must be halved.
+ */
+function usesHalfExtents() {
+    return typeof XRMediaBinding === 'function';
+}
+/**
+ * Builds a quad layer the compositor drives itself.
+ *
+ * @param video - Element the compositor reads frames from.
+ * @param session - Session the binding is made against.
+ * @param space - Space the transform is expressed in.
+ * @param transform - Where the quad sits.
+ * @param width - Full width in metres.
+ * @param height - Full height in metres.
+ * @returns The layer, or null when the platform refuses it.
+ */
+function createMediaLayer(video, session, space, transform, width, height) {
+    if (typeof XRMediaBinding !== 'function')
+        return null;
+    const scale = usesHalfExtents() ? 0.5 : 1;
+    try {
+        return new XRMediaBinding(session).createQuadLayer(video, {
+            space,
+            layout: 'mono',
+            transform,
+            width: width * scale,
+            height: height * scale,
+        });
+    }
+    catch (error) {
+        // A platform can advertise the binding and still refuse a given video, for
+        // example one whose metadata has not loaded yet.
+        console.warn('Could not create XR media quad layer:', error);
+        return null;
+    }
+}
+/**
+ * Builds a quad layer the app draws into each frame.
+ *
+ * This is the path Chrome and Android XR need, since neither implements
+ * `XRMediaBinding`.
+ *
+ * @param binding - The WebGL binding for the session.
+ * @param video - Element frames are uploaded from.
+ * @param space - Space the transform is expressed in.
+ * @param transform - Where the quad sits.
+ * @param width - Full width in metres.
+ * @param height - Full height in metres.
+ * @returns The layer, or null when the platform refuses it.
+ */
+function createWebGLLayer(binding, video, space, transform, width, height) {
+    if (!binding?.createQuadLayer)
+        return null;
+    // The texture is allocated once at this size and texSubImage2D refuses a
+    // source that does not fit it. Guessing here and uploading a differently
+    // sized frame raises a GL error every frame, which can take the session down
+    // with it, so wait for the real dimensions instead.
+    if (!video.videoWidth || !video.videoHeight)
+        return null;
+    const scale = usesHalfExtents() ? 0.5 : 1;
+    try {
+        return binding.createQuadLayer({
+            space,
+            // 'default' is a TypeError on a quad layer, so it has to be named.
+            layout: 'mono',
+            transform,
+            width: width * scale,
+            height: height * scale,
+            viewPixelWidth: video.videoWidth,
+            viewPixelHeight: video.videoHeight,
+            // A video changes every frame. getSubImage throws InvalidStateError on a
+            // static layer once needsRedraw has gone false.
+            isStatic: false,
+        });
+    }
+    catch (error) {
+        console.warn('Could not create XR WebGL quad layer:', error);
+        return null;
+    }
+}
+/**
+ * Aspect ratio of a video, falling back to 16:9 before metadata arrives.
+ *
+ * @param video - The element to measure.
+ * @returns Width divided by height.
+ */
+function aspectRatioOf(video) {
+    if (video.videoWidth > 0 && video.videoHeight > 0) {
+        return video.videoWidth / video.videoHeight;
+    }
+    return 16 / 9;
+}
+
+/**
  * StrokeRecognizer is a framework Script that handles recording hand stroke gestures
  * and recognizing them as geometric shapes using a configured provider.
  * It listens to gesture events and tracks specified hand joints to record the path.
@@ -24804,7 +25731,7 @@ class StrokeRecognizer extends Script {
         this.isRecording = false;
         this.gestureStartTime = 0;
         this.gestureEndTime = 0;
-        this.activeHand = Handedness.LEFT;
+        this.activeHand = Handedness.NONE;
     }
     static { this.dependencies = {
         scene: THREE.Scene,
@@ -24850,10 +25777,17 @@ class StrokeRecognizer extends Script {
         this.isActive = true;
     }
     /**
-     * Deactivates the stroke recognizer and clears any captured points.
+     * Deactivates the stroke recognizer, cancels recording without an end event,
+     * and clears any captured points. The next stroke starts with a fresh delay
+     * and hand selection after reactivation.
+     * Callers should clear any in-progress stroke UI when deactivating.
      */
     deactivate() {
         this.isActive = false;
+        this.isRecording = false;
+        this.gestureStartTime = 0;
+        this.gestureEndTime = 0;
+        this.activeHand = Handedness.NONE;
         this.clearPoints();
     }
     /**
@@ -24897,6 +25831,8 @@ class StrokeRecognizer extends Script {
                 else if (this.user.isSelecting?.(Handedness.RIGHT))
                     this.activeHand = Handedness.RIGHT;
                 this.dispatchEvent({ type: 'unistrokestart', target: this, detail: {} });
+                if (!this.isActive || !this.isRecording)
+                    return;
             }
             const elapsedSincePinch = currentTime - this.gestureStartTime;
             // Wait for the start delay to avoid capturing the initial jitter of the pinch motion.
@@ -28335,6 +29271,8 @@ var sdk = /*#__PURE__*/Object.freeze({
     get Keycodes () { return Keycodes; },
     LEFT: LEFT,
     LEFT_VIEW_ONLY_LAYER: LEFT_VIEW_ONLY_LAYER,
+    LayerManager: LayerManager,
+    LayersOptions: LayersOptions,
     Lighting: Lighting,
     LightingOptions: LightingOptions,
     LoadingSpinnerManager: LoadingSpinnerManager,
@@ -28424,6 +29362,7 @@ var sdk = /*#__PURE__*/Object.freeze({
     User: User,
     VIEW_DEPTH_GAP: VIEW_DEPTH_GAP,
     VideoFileStream: VideoFileStream,
+    VideoLayer: VideoLayer,
     VideoStream: VideoStream,
     VisibilityTransition: VisibilityTransition,
     get VolumeCategory () { return VolumeCategory; },
@@ -28447,6 +29386,7 @@ var sdk = /*#__PURE__*/Object.freeze({
     anchorCapability: anchorCapability,
     applyBVH: applyBVH,
     applySimulatorHandPoseRotationConstraints: applySimulatorHandPoseRotationConstraints,
+    aspectRatioOf: aspectRatioOf,
     assertWebGLRenderer: assertWebGLRenderer,
     average: average,
     callInitWithDependencyInjection: callInitWithDependencyInjection,
@@ -28512,7 +29452,9 @@ var sdk = /*#__PURE__*/Object.freeze({
     intrinsicsToProjectionMatrix: intrinsicsToProjectionMatrix,
     isBVHReady: isBVHReady,
     isDeviceCameraPoseAvailable: isDeviceCameraPoseAvailable,
+    isLayerCapable: isLayerCapable,
     isWebGPURenderer: isWebGPURenderer,
+    layerCapability: layerCapability,
     lerp: lerp,
     loadStereoImageAsTextures: loadStereoImageAsTextures,
     loadingSpinnerManager: loadingSpinnerManager,
@@ -28548,5 +29490,5 @@ var sdk = /*#__PURE__*/Object.freeze({
 
 registerDebugGlobals(sdk);
 
-export { UIOverlay as $, updateScrollViewLayout as A, bindTextInput as B, normalizeTextInputValue as C, Depth as D, isUIElement as E, getUIElementKind as F, getUIStructureRevision as G, Handedness as H, Interaction as I, UICard as J, Keycodes as K, setResolvedUICardSize as L, ModelLoader as M, UIText as N, Options as O, Physics as P, UITextInput as Q, Reticle as R, SimulatorHandPose as S, TransformScript as T, UIScrollView as U, registerUIPresentationObject as V, WaitFrame as W, XRDeviceCamera as X, getUIRevision as Y, getUICardEdgeOptions as Z, getSemanticControl as _, Script as a, HumanRecognizer as a$, XR_BLOCKS_ASSETS_PATH as a0, SIMULATOR_HAND_POSE_NAMES as a1, AI as a2, AIOptions as a3, ActiveControllers as a4, Agent as a5, AnchorManager as a6, AnchoredObjects as a7, AnchorsOptions as a8, AudioListener as a9, FaceLandmarkName as aA, FaceRecognizer as aB, FacesOptions as aC, FollowHead as aD, FollowObject as aE, GEMINI_DEFAULT_FLASH_MODEL as aF, GEMINI_DEFAULT_IMAGE_MODEL as aG, GEMINI_DEFAULT_LIVE_MODEL as aH, GamepadBindings as aI, GamepadController as aJ, GazeController as aK, Gemini as aL, GeminiOptions as aM, GenerateSkyboxTool as aN, GestureRecognition as aO, GestureRecognitionOptions as aP, GetWeatherTool as aQ, HAND_BONE_IDX_CONNECTION_MAP as aR, HAND_INDEX_TO_LABEL as aS, HAND_JOINT_COUNT as aT, HAND_JOINT_IDX_CONNECTION_MAP as aU, Hands as aV, HandsOptions as aW, HeadGestureRecognition as aX, HeadGestureRecognitionOptions as aY, HeuristicGestureRecognizer as aZ, HeuristicHeadGestureRecognizer as a_, AudioPlayer as aa, BACK as ab, BackgroundMusic as ac, CategoryVolumes as ad, Context as ae, ContextOptions as af, Core as ag, CoreSound as ah, DEFAULT_DEVICE_CAMERA_HEIGHT as ai, DEFAULT_DEVICE_CAMERA_WIDTH as aj, DEFAULT_RGB_TO_DEPTH_PARAMS as ak, DEVICE_CAMERA_PARAMETERS as al, DOWN as am, DepthMesh as an, DepthMeshOptions as ao, DepthOptions as ap, DepthTextures as aq, DetectedBodyPose as ar, DetectedFace as as, DetectedMesh as at, DetectedObject as au, DetectedPlane as av, DeviceCameraOptions as aw, FINGER_ORDER as ax, FORWARD as ay, FaceCamera as az, SimulatorMode as b, UIIcon as b$, HumansOptions as b0, InputOptions as b1, InteractionOptions as b2, LEFT as b3, LEFT_VIEW_ONLY_LAYER as b4, Lighting as b5, LightingOptions as b6, LoadingSpinnerManager as b7, LocalStorageAnchorStore as b8, MediaPipeHandContext as b9, SceneDetector as bA, SceneOptions as bB, SceneSetOfMarkOptions as bC, SceneVisibilityOptions as bD, ScreenshotSynthesizer as bE, ScriptMixin as bF, ScriptsManager as bG, ScriptsManagerEventType as bH, SegmentCategory as bI, SegmentationOptions as bJ, Segmenter as bK, SimulatorAnchor as bL, SkyboxAgent as bM, SoundOptions as bN, SoundSynthesizer as bO, SpatialAudio as bP, SpeechRecognizer as bQ, SpeechRecognizerOptions as bR, SpeechSynthesizer as bS, SpeechSynthesizerOptions as bT, StreamState as bU, StrokeRecognizer as bV, StylizedFace as bW, TensorFlowHandPoseEstimator as bX, Tool as bY, UIButton as bZ, UIElement as b_, MediaPipeHandPoseEstimator as ba, MeshDetectionOptions as bb, MeshDetector as bc, MeshScript as bd, ModelViewer as be, MouseController as bf, NUM_HANDS as bg, OCCLUDABLE_ITEMS_LAYER as bh, ObjectDetector as bi, ObjectsOptions as bj, OcclusionPass as bk, OcclusionUtils as bl, OpenAI as bm, OpenAIOptions as bn, Orbit as bo, PhysicsOptions as bp, PlaneDetector as bq, PlanesOptions as br, PoseJointName as bs, RENDERER_BACKENDS as bt, RIGHT as bu, RIGHT_VIEW_ONLY_LAYER as bv, ReticleOptions as bw, Reticles as bx, SIMULATOR_HAND_COMMON_BIOMECHANICAL_CONSTRAINTS_DEGREES as by, SOUND_PRESETS as bz, SetSimulatorModeEvent as c, getPalmRight as c$, UIImage as c0, UIPanel as c1, UISlider as c2, UP as c3, User as c4, VIEW_DEPTH_GAP as c5, VideoFileStream as c6, VideoStream as c7, VisibilityTransition as c8, VolumeCategory as c9, disposeMaterial as cA, disposeMeshResources as cB, disposeRenderableResources as cC, enableAcceleratedRaycast as cD, estimateHandScale as cE, extractYaw as cF, getAdjacentFingerSpreads as cG, getBoneVectors as cH, getCameraParametersSnapshot as cI, getColorHex as cJ, getDeltaTime as cK, getDeviceCameraClipFromView as cL, getDeviceCameraWorldFromClip as cM, getDeviceCameraWorldFromView as cN, getElapsedTime as cO, getFingerBendAngles as cP, getFingerCurl as cQ, getFingerDirection as cR, getFingerJoint as cS, getFingerPalmAlignment as cT, getFingerSpread as cU, getFingerStraightness as cV, getFingertipDistance as cW, getFingertipPalmDistance as cX, getObjectTargetPoint as cY, getPalmNormal as cZ, getPalmPose as c_, WebXRHandContext as ca, WebXRHandPoseEstimator as cb, WorldOptions as cc, XRButton as cd, XREffects as ce, XRPass as cf, XRReferenceSpaceCache as cg, XRTransitionOptions as ch, ZERO_VECTOR3 as ci, ZERO_VISEME as cj, _getBvhImportStatus as ck, add as cl, ai as cm, anchorCapability as cn, applyBVH as co, average as cp, camera as cq, clamp$1 as cr, clamp01 as cs, clampRotationToAngle as ct, context as cu, core as cv, cropImage as cw, defaultAnchorStorageKey as cx, depth as cy, disposeBVH as cz, SIMULATOR_HAND_POSE_ROTATIONS as d, getPalmUp as d0, getPalmWidth as d1, getRelativeBoneAngles as d2, getThumbBendAngles as d3, getThumbCurl as d4, getThumbDirection as d5, getThumbOpposition as d6, getThumbStraightness as d7, getThumbVerticalDirection as d8, getUrlParamBool as d9, sound as dA, timer as dB, transformRgbUvToWorld as dC, traverseUtil as dD, ui as dE, urlParams as dF, user as dG, visualizeDepth as dH, visualizeDepthMap as dI, world as dJ, xrDepthMeshOptions as dK, xrDepthMeshPhysicsOptions as dL, xrDepthMeshVisualizationOptions as dM, xrDeviceCameraEnvironmentContinuousOptions as dN, xrDeviceCameraEnvironmentOptions as dO, xrDeviceCameraUserContinuousOptions as dP, xrDeviceCameraUserOptions as dQ, getUrlParamFloat as da, getUrlParamInt as db, getUrlParameter as dc, getVec4ByColorString as dd, getXrCameraLeft as de, getXrCameraRight as df, init as dg, initScript as dh, input as di, intrinsicsToProjectionMatrix as dj, isBVHReady as dk, isDeviceCameraPoseAvailable as dl, lerp as dm, loadStereoImageAsTextures as dn, loadingSpinnerManager as dp, lookAtRotation as dq, objectIsDescendantOf as dr, parseBase64DataURL as ds, parseSimulatorHandPoseRotations as dt, placeObjectAtIntersectionFacingTarget as du, print as dv, resolveSimulatorRotationsFromKeypoints as dw, scene as dx, showOnlyInLeftEye as dy, showOnlyInRightEye as dz, SimulatorHandPoseChangeRequestEvent as e, HAND_JOINT_NAMES as f, applySimulatorHandPoseRotationConstraints as g, disposeObjectChildren as h, SetSimulatorEnvironmentEvent as i, ShowSimulatorInstructionsEvent as j, SetSimulatorHandPhysicsEvent as k, Registry as l, callInitWithDependencyInjection as m, disposeObjectTree as n, World as o, Input as p, SimulatorOptions as q, resolveSimulatorHandPoseRotations as r, assertWebGLRenderer as s, isWebGPURenderer as t, SparkRendererHolder as u, MAX_GRADIENT_STOPS as v, DEFAULT_GRADIENT_PANEL_PROPS as w, ManipulationAction as x, getUIPresentationObject as y, bindScrollView as z };
+export { XR_BLOCKS_ASSETS_PATH as $, bindTextInput as A, normalizeTextInputValue as B, isUIElement as C, Depth as D, getUIElementKind as E, getUIStructureRevision as F, UICard as G, Handedness as H, Interaction as I, setResolvedUICardSize as J, Keycodes as K, UIText as L, ModelLoader as M, UITextInput as N, Options as O, Physics as P, registerUIPresentationObject as Q, Reticle as R, SparkRendererHolder as S, TransformScript as T, UIScrollView as U, getUIRevision as V, WaitFrame as W, XRDeviceCamera as X, getUICardEdgeOptions as Y, getSemanticControl as Z, UIOverlay as _, SimulatorHandPose as a, HumansOptions as a$, SIMULATOR_HAND_POSE_NAMES as a0, AI as a1, AIOptions as a2, ActiveControllers as a3, Agent as a4, AnchorManager as a5, AnchoredObjects as a6, AnchorsOptions as a7, AudioListener as a8, AudioPlayer as a9, FaceRecognizer as aA, FacesOptions as aB, FollowHead as aC, FollowObject as aD, GEMINI_DEFAULT_FLASH_MODEL as aE, GEMINI_DEFAULT_IMAGE_MODEL as aF, GEMINI_DEFAULT_LIVE_MODEL as aG, GamepadBindings as aH, GamepadController as aI, GazeController as aJ, Gemini as aK, GeminiOptions as aL, GenerateSkyboxTool as aM, GestureRecognition as aN, GestureRecognitionOptions as aO, GetWeatherTool as aP, HAND_BONE_IDX_CONNECTION_MAP as aQ, HAND_INDEX_TO_LABEL as aR, HAND_JOINT_COUNT as aS, HAND_JOINT_IDX_CONNECTION_MAP as aT, Hands as aU, HandsOptions as aV, HeadGestureRecognition as aW, HeadGestureRecognitionOptions as aX, HeuristicGestureRecognizer as aY, HeuristicHeadGestureRecognizer as aZ, HumanRecognizer as a_, BACK as aa, BackgroundMusic as ab, CategoryVolumes as ac, Context as ad, ContextOptions as ae, Core as af, CoreSound as ag, DEFAULT_DEVICE_CAMERA_HEIGHT as ah, DEFAULT_DEVICE_CAMERA_WIDTH as ai, DEFAULT_RGB_TO_DEPTH_PARAMS as aj, DEVICE_CAMERA_PARAMETERS as ak, DOWN as al, DepthMesh as am, DepthMeshOptions as an, DepthOptions as ao, DepthTextures as ap, DetectedBodyPose as aq, DetectedFace as ar, DetectedMesh as as, DetectedObject as at, DetectedPlane as au, DeviceCameraOptions as av, FINGER_ORDER as aw, FORWARD as ax, FaceCamera as ay, FaceLandmarkName as az, Script as b, UIElement as b$, InputOptions as b0, InteractionOptions as b1, LEFT as b2, LEFT_VIEW_ONLY_LAYER as b3, LayerManager as b4, LayersOptions as b5, Lighting as b6, LightingOptions as b7, LoadingSpinnerManager as b8, LocalStorageAnchorStore as b9, SOUND_PRESETS as bA, SceneDetector as bB, SceneOptions as bC, SceneSetOfMarkOptions as bD, SceneVisibilityOptions as bE, ScreenshotSynthesizer as bF, ScriptMixin as bG, ScriptsManager as bH, ScriptsManagerEventType as bI, SegmentCategory as bJ, SegmentationOptions as bK, Segmenter as bL, SimulatorAnchor as bM, SkyboxAgent as bN, SoundOptions as bO, SoundSynthesizer as bP, SpatialAudio as bQ, SpeechRecognizer as bR, SpeechRecognizerOptions as bS, SpeechSynthesizer as bT, SpeechSynthesizerOptions as bU, StreamState as bV, StrokeRecognizer as bW, StylizedFace as bX, TensorFlowHandPoseEstimator as bY, Tool as bZ, UIButton as b_, MediaPipeHandContext as ba, MediaPipeHandPoseEstimator as bb, MeshDetectionOptions as bc, MeshDetector as bd, MeshScript as be, ModelViewer as bf, MouseController as bg, NUM_HANDS as bh, OCCLUDABLE_ITEMS_LAYER as bi, ObjectDetector as bj, ObjectsOptions as bk, OcclusionPass as bl, OcclusionUtils as bm, OpenAI as bn, OpenAIOptions as bo, Orbit as bp, PhysicsOptions as bq, PlaneDetector as br, PlanesOptions as bs, PoseJointName as bt, RENDERER_BACKENDS as bu, RIGHT as bv, RIGHT_VIEW_ONLY_LAYER as bw, ReticleOptions as bx, Reticles as by, SIMULATOR_HAND_COMMON_BIOMECHANICAL_CONSTRAINTS_DEGREES as bz, SimulatorMode as c, getFingertipPalmDistance as c$, UIIcon as c0, UIImage as c1, UIPanel as c2, UISlider as c3, UP as c4, User as c5, VIEW_DEPTH_GAP as c6, VideoFileStream as c7, VideoLayer as c8, VideoStream as c9, cropImage as cA, defaultAnchorStorageKey as cB, depth as cC, disposeBVH as cD, disposeMaterial as cE, disposeMeshResources as cF, disposeRenderableResources as cG, enableAcceleratedRaycast as cH, estimateHandScale as cI, extractYaw as cJ, getAdjacentFingerSpreads as cK, getBoneVectors as cL, getCameraParametersSnapshot as cM, getColorHex as cN, getDeltaTime as cO, getDeviceCameraClipFromView as cP, getDeviceCameraWorldFromClip as cQ, getDeviceCameraWorldFromView as cR, getElapsedTime as cS, getFingerBendAngles as cT, getFingerCurl as cU, getFingerDirection as cV, getFingerJoint as cW, getFingerPalmAlignment as cX, getFingerSpread as cY, getFingerStraightness as cZ, getFingertipDistance as c_, VisibilityTransition as ca, VolumeCategory as cb, WebXRHandContext as cc, WebXRHandPoseEstimator as cd, WorldOptions as ce, XRButton as cf, XREffects as cg, XRPass as ch, XRReferenceSpaceCache as ci, XRTransitionOptions as cj, ZERO_VECTOR3 as ck, ZERO_VISEME as cl, _getBvhImportStatus as cm, add as cn, ai as co, anchorCapability as cp, applyBVH as cq, aspectRatioOf as cr, assertWebGLRenderer as cs, average as ct, camera as cu, clamp$1 as cv, clamp01 as cw, clampRotationToAngle as cx, context as cy, core as cz, SetSimulatorModeEvent as d, getObjectTargetPoint as d0, getPalmNormal as d1, getPalmPose as d2, getPalmRight as d3, getPalmUp as d4, getPalmWidth as d5, getRelativeBoneAngles as d6, getThumbBendAngles as d7, getThumbCurl as d8, getThumbDirection as d9, placeObjectAtIntersectionFacingTarget as dA, print as dB, resolveSimulatorRotationsFromKeypoints as dC, scene as dD, showOnlyInLeftEye as dE, showOnlyInRightEye as dF, sound as dG, timer as dH, transformRgbUvToWorld as dI, traverseUtil as dJ, ui as dK, urlParams as dL, user as dM, visualizeDepth as dN, visualizeDepthMap as dO, world as dP, xrDepthMeshOptions as dQ, xrDepthMeshPhysicsOptions as dR, xrDepthMeshVisualizationOptions as dS, xrDeviceCameraEnvironmentContinuousOptions as dT, xrDeviceCameraEnvironmentOptions as dU, xrDeviceCameraUserContinuousOptions as dV, xrDeviceCameraUserOptions as dW, getThumbOpposition as da, getThumbStraightness as db, getThumbVerticalDirection as dc, getUrlParamBool as dd, getUrlParamFloat as de, getUrlParamInt as df, getUrlParameter as dg, getVec4ByColorString as dh, getXrCameraLeft as di, getXrCameraRight as dj, init as dk, initScript as dl, input as dm, intrinsicsToProjectionMatrix as dn, isBVHReady as dp, isDeviceCameraPoseAvailable as dq, isLayerCapable as dr, layerCapability as ds, lerp as dt, loadStereoImageAsTextures as du, loadingSpinnerManager as dv, lookAtRotation as dw, objectIsDescendantOf as dx, parseBase64DataURL as dy, parseSimulatorHandPoseRotations as dz, SIMULATOR_HAND_POSE_ROTATIONS as e, SimulatorHandPoseChangeRequestEvent as f, HAND_JOINT_NAMES as g, applySimulatorHandPoseRotationConstraints as h, isWebGPURenderer as i, disposeObjectChildren as j, SetSimulatorEnvironmentEvent as k, ShowSimulatorInstructionsEvent as l, SetSimulatorHandPhysicsEvent as m, Registry as n, callInitWithDependencyInjection as o, disposeObjectTree as p, World as q, resolveSimulatorHandPoseRotations as r, Input as s, SimulatorOptions as t, MAX_GRADIENT_STOPS as u, DEFAULT_GRADIENT_PANEL_PROPS as v, ManipulationAction as w, getUIPresentationObject as x, bindScrollView as y, updateScrollViewLayout as z };
 //# sourceMappingURL=entry.js.map

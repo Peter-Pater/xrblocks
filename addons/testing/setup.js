@@ -90,6 +90,9 @@ vi.mock('three', async (importOriginal) => {
         self.clearDepth = () => { };
         self.dispose = () => { };
         self.getRenderTarget = () => null;
+        self.getClearColor = (target) => target ?? new original.Color();
+        self.getClearAlpha = () => 0;
+        self.setClearColor = () => { };
         self.readRenderTargetPixelsAsync = () => Promise.resolve();
         return self;
     };
@@ -100,7 +103,8 @@ vi.mock('three', async (importOriginal) => {
     };
 });
 // Mock three/webgpu WebGPURenderer for JSDOM headless testing.
-vi.mock('three/webgpu', async () => {
+vi.mock('three/webgpu', async (importOriginal) => {
+    const actual = await importOriginal();
     const original = await vi.importActual('three');
     class MockWebGPURenderer {
         constructor() {
@@ -134,13 +138,18 @@ vi.mock('three/webgpu', async () => {
             this.clear = vi.fn();
             this.clearDepth = vi.fn();
             this.setRenderTarget = vi.fn();
+            this.getRenderTarget = vi.fn(() => null);
+            this.getClearColor = vi.fn((target) => target ?? new original.Color());
+            this.getClearAlpha = vi.fn(() => 0);
+            this.setClearColor = vi.fn();
+            this.autoClearColor = true;
+            this.getDrawingBufferSize = vi.fn((target) => target.set(160, 160));
+            this.readRenderTargetPixelsAsync = vi.fn(() => Promise.resolve(new Float32Array(160 * 160)));
         }
     }
-    class MockNodeMaterial extends original.Material {
-    }
     return {
+        ...actual,
         WebGPURenderer: MockWebGPURenderer,
-        NodeMaterial: MockNodeMaterial,
     };
 });
 // Mock GLTFLoader to return a mock hand hierarchy with bones immediately under JSDOM.
