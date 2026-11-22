@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>PCVR / Quest Link | XR Blocks Template</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="../../samples/main.css" />
+    <style>
+      #connection-help,
+      #connection-status {
+        position: fixed;
+        z-index: 11;
+        left: 1rem;
+        right: 1rem;
+        padding: 1rem;
+        background: #101820e8;
+        border-radius: 0.5rem;
+        text-align: center;
+      }
+      #connection-help {
+        top: 1rem;
+      }
+      #connection-status {
+        bottom: 1rem;
+      }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js",
+          "three/": "https://cdn.jsdelivr.net/npm/three@0.186.0/",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/",
+          "@pmndrs/uikit": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit@1.0.77/dist/index.min.js",
+          "@pmndrs/uikit-pub-sub": "https://cdn.jsdelivr.net/npm/@pmndrs/uikit-pub-sub@1.0.77/dist/index.min.js",
+          "@pmndrs/msdfonts": "https://cdn.jsdelivr.net/npm/@pmndrs/msdfonts@1.0.77/dist/index.min.js",
+          "@pmndrs/msdfonts/inter": "https://cdn.jsdelivr.net/npm/@pmndrs/msdfonts@1.0.77/dist/inter.js",
+          "@pmndrs/msdfonts/": "https://cdn.jsdelivr.net/npm/@pmndrs/msdfonts@1.0.77/dist/",
+          "zod": "https://cdn.jsdelivr.net/npm/zod@4.4.3/+esm",
+          "@preact/signals-core": "https://cdn.jsdelivr.net/npm/@preact/signals-core@1.14.0/dist/signals-core.mjs",
+          "yoga-layout/load": "https://cdn.jsdelivr.net/npm/yoga-layout@3.2.1/dist/src/load.js",
+          "xrblocks": "../../build/xrblocks.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <aside id="connection-help">
+      <strong>Render on your Windows PC</strong><br />
+      Connect Quest with a USB data cable, start wired Link in the headset, and
+      open this page in desktop Chrome or Edge. Select the active OpenXR runtime
+      in the Link app. Aim at the cube and release a controller trigger to
+      change its color. <a href="README.md">Setup and troubleshooting</a>
+    </aside>
+    <p id="connection-status" role="status" aria-live="polite">
+      Loading PCVR scene…
+    </p>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

@@ -56,10 +56,10 @@ it.each([
     const nativeSession = session();
     const requestSession = vi.fn(async () => nativeSession);
     vi.stubGlobal('navigator', {
-      xr: {
+      xr: Object.assign(new EventTarget(), {
         isSessionSupported: async (mode: string) => supported.includes(mode),
         requestSession,
-      },
+      }),
     });
     manager = new WebXRSessionManager(
       {xr: {setSession: async () => {}}} as unknown as THREE.WebGLRenderer,
@@ -94,10 +94,10 @@ it.each(['request', 'setup'] as const)(
     const nativeSession = session();
     const setSession = vi.fn(() => setup.promise);
     vi.stubGlobal('navigator', {
-      xr: {
+      xr: Object.assign(new EventTarget(), {
         isSessionSupported: async () => true,
         requestSession: () => requested.promise,
-      },
+      }),
     });
     manager = new WebXRSessionManager(
       {xr: {setSession}} as unknown as THREE.WebGLRenderer,
@@ -123,3 +123,78 @@ it.each(['request', 'setup'] as const)(
     }
   }
 );
+
+it('makes a headset connected after page load available without automatically entering XR', async () => {
+  let connected = false;
+  const nativeSession = session();
+  const requestSession = vi.fn(async () => nativeSession);
+  const offerSession = vi.fn(async () => nativeSession);
+  const xr = Object.assign(new EventTarget(), {
+    isSessionSupported: async () => connected,
+    requestSession,
+    offerSession,
+  });
+  vi.stubGlobal('navigator', {xr});
+  manager = new WebXRSessionManager(
+    {xr: {setSession: async () => {}}} as unknown as THREE.WebGLRenderer,
+    {},
+    'immersive-vr'
+  );
+  await manager.initialize();
+  expect(manager.isXRSupported()).toBe(false);
+  connected = true;
+  xr.dispatchEvent(new Event('devicechange'));
+  await vi.waitFor(() => expect(manager!.isXRSupported()).toBe(true));
+  expect(offerSession).not.toHaveBeenCalled();
+  expect(requestSession).not.toHaveBeenCalled();
+  manager.startSession();
+  await vi.waitFor(() => expect(manager!.currentSession).toBe(nativeSession));
+
+  // A device event must not replace the active session. Recheck when it ends.
+  connected = false;
+  xr.dispatchEvent(new Event('devicechange'));
+  expect(manager.currentSession).toBe(nativeSession);
+  await manager.endSession();
+  await vi.waitFor(() => expect(manager!.isXRSupported()).toBe(false));
+  expect(() => manager!.startSession()).toThrow(/not supported/);
+
+  await manager.dispose();
+  connected = true;
+  xr.dispatchEvent(new Event('devicechange'));
+  await Promise.resolve();
+  expect(manager.isXRSupported()).toBe(false);
+});
+
+it('ignores an obsolete support check and restores the requested AR mode after reconnecting', async () => {
+  let arAvailable = false;
+  const delayed = Promise.withResolvers<boolean>();
+  const isSessionSupported = vi.fn(async (mode: string) =>
+    mode === 'immersive-vr' ? true : arAvailable
+  );
+  const nativeSession = session();
+  const requestSession = vi.fn(async () => nativeSession);
+  const xr = Object.assign(new EventTarget(), {
+    isSessionSupported,
+    requestSession,
+  });
+  vi.stubGlobal('navigator', {xr});
+  manager = new WebXRSessionManager(
+    {xr: {setSession: async () => {}}} as unknown as THREE.WebGLRenderer,
+    {},
+    'immersive-ar'
+  );
+  await manager.initialize();
+  isSessionSupported.mockImplementationOnce(() => delayed.promise);
+  xr.dispatchEvent(new Event('devicechange'));
+  arAvailable = true;
+  xr.dispatchEvent(new Event('devicechange'));
+  await vi.waitFor(() => expect(isSessionSupported).toHaveBeenCalledTimes(4));
+  delayed.resolve(false);
+  await Promise.resolve();
+  manager.startSession();
+  await vi.waitFor(() => expect(manager!.currentSession).toBe(nativeSession));
+  expect(requestSession.mock.calls[0]).toEqual([
+    'immersive-ar',
+    expect.any(Object),
+  ]);
+});

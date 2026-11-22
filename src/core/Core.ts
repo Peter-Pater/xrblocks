@@ -206,7 +206,14 @@ export class Core {
     void this.onXRSessionStarted(event.session);
   };
   private onWebXRUnsupported = () => {
-    if (!this.options.enableSimulator) return;
+    // Simulator fallback is a startup decision. A temporary device loss must
+    // leave the entry button available for a later reconnect.
+    if (
+      !this.options.enableSimulator ||
+      this.lifecycleState !== 'initializing'
+    ) {
+      return;
+    }
     this.xrButton?.domElement.remove();
     this.shouldAutostartSimulator = true;
   };

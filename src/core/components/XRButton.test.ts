@@ -26,7 +26,10 @@ beforeEach(async () => {
     .mockReset()
     .mockResolvedValue({getTracks: () => []} as unknown as MediaStream);
   vi.stubGlobal('navigator', {
-    xr: {isSessionSupported: async () => true, requestSession},
+    xr: Object.assign(new EventTarget(), {
+      isSessionSupported: async () => true,
+      requestSession,
+    }),
     mediaDevices: {getUserMedia},
   });
   manager = new WebXRSessionManager(
@@ -59,6 +62,20 @@ afterEach(async () => {
 });
 
 describe('XR entry through browser permission and session boundaries', () => {
+  it('refreshes the entry button when a PCVR runtime becomes available after page load', async () => {
+    const xr = navigator.xr!;
+    const support = vi.spyOn(xr, 'isSessionSupported');
+    support.mockResolvedValue(false);
+    xr.dispatchEvent(new Event('devicechange'));
+    await vi.waitFor(() => expect(button.xrButtonElement.disabled).toBe(true));
+    expect(button.xrButtonElement.textContent).toBe('XR NOT SUPPORTED');
+    support.mockResolvedValue(true);
+    xr.dispatchEvent(new Event('devicechange'));
+    await vi.waitFor(() => expect(button.xrButtonElement.disabled).toBe(false));
+    button.xrButtonElement.click();
+    await vi.waitFor(() => expect(manager.currentSession).toBeDefined());
+  });
+
   it('shows permission denial without requesting XR and lets the user retry', async () => {
     getUserMedia.mockRejectedValueOnce(
       Object.assign(new Error('Microphone denied'), {name: 'NotAllowedError'})

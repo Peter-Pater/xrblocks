@@ -444,7 +444,9 @@ describe('Core native renderer readiness', () => {
     };
     vi.stubGlobal('navigator', {
       ...navigator,
-      xr: {isSessionSupported: async () => true},
+      xr: Object.assign(new EventTarget(), {
+        isSessionSupported: async () => true,
+      }),
     });
   });
   afterEach(() => {
@@ -456,6 +458,30 @@ describe('Core native renderer readiness', () => {
     result.xrButton.enabled = false;
     return result;
   }
+
+  it('keeps XR entry mounted when a running app loses and regains its headset', async () => {
+    let connected = true;
+    const xr = Object.assign(new EventTarget(), {
+      isSessionSupported: async () => connected,
+    });
+    vi.stubGlobal('navigator', {...navigator, xr});
+    core = new Core();
+    const configuration = options();
+    configuration.xrButton.enabled = true;
+    ready.resolve();
+    await core.init(configuration);
+    const entry = core.xrButton!;
+    expect(entry.domElement.isConnected).toBe(true);
+    connected = false;
+    xr.dispatchEvent(new Event('devicechange'));
+    await vi.waitFor(() => expect(entry.xrButtonElement.disabled).toBe(true));
+    expect(entry.domElement.isConnected).toBe(true);
+    expect(core.simulatorRunning).toBe(false);
+    connected = true;
+    xr.dispatchEvent(new Event('devicechange'));
+    await vi.waitFor(() => expect(entry.xrButtonElement.disabled).toBe(false));
+    expect(entry.domElement.isConnected).toBe(true);
+  });
 
   it('keeps startup pending until GPU initialization finishes and only then initializes apps', async () => {
     const observed: boolean[] = [];
@@ -521,7 +547,10 @@ describe('Core native renderer readiness', () => {
       const requestSession = vi.fn(async () => session);
       vi.stubGlobal('navigator', {
         ...navigator,
-        xr: {isSessionSupported: async () => true, requestSession},
+        xr: Object.assign(new EventTarget(), {
+          isSessionSupported: async () => true,
+          requestSession,
+        }),
       });
       core = new Core();
       const configuration = options().enableHands();
@@ -551,7 +580,9 @@ describe('Core native renderer readiness', () => {
     );
     vi.stubGlobal('navigator', {
       ...navigator,
-      xr: {isSessionSupported: async () => true},
+      xr: Object.assign(new EventTarget(), {
+        isSessionSupported: async () => true,
+      }),
       gpu: {
         requestAdapter: async () => ({
           limits: {
@@ -590,10 +621,10 @@ describe('Core native renderer readiness', () => {
     vi.stubGlobal('XRGPUBinding', class {});
     vi.stubGlobal('navigator', {
       ...navigator,
-      xr: {
+      xr: Object.assign(new EventTarget(), {
         isSessionSupported: async () => true,
         requestSession: vi.fn(async () => session),
-      },
+      }),
     });
 
     core = new Core();
