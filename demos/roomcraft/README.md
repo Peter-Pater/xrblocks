@@ -26,6 +26,14 @@ Roomcraft uses the standard SDK XR entry screen and shared browser API-key dialo
 
 The XR entry button shows `ENTERING XR...` while the browser responds. If entry fails, the browser error appears below the buttons and Enter XR becomes available to retry.
 
+## Wired PCVR
+
+Start wired Meta Horizon Link, then open [Roomcraft](http://127.0.0.1:8080/demos/roomcraft/) in Chrome or Edge on the Windows PC. Choose **Switch to PCVR** from the **XR** menu. Pick **Reading nook**, **Gallery**, **Miniature city**, or **Clockwork robot** under **Starter scenes**, then select **Enter PCVR**. For **Moonlit garden**, use the [virtual world PCVR page](http://127.0.0.1:8080/demos/roomcraft/?pcvr=1&environment=1). Both modes use the WebXR base layer for Quest Link compatibility. The starter scenes need no Gemini key.
+
+Use **Switch to PCVR** or **Switch to Standard XR** in the same tab to carry
+the current scene layout, including its objects and environment, into the
+other mode.
+
 ## Collaboration and connectivity
 
 Open `/demos/roomcraft-collab/` for the room-code entry. This small launch alias opens the shared Roomcraft editor in its collaboration lobby; it does not copy or fork the editor. The website also lists **Collaborative Roomcraft** as its own sample. The lobby stays local until you choose **Start new room** or enter a four-letter code and press **Join**. Both actions use WebRTC, announce the display name from Connection settings and keep the current scene and authoring draft without reloading the page. Joining an existing room then imports its established shared scene. **Copy code** copies only the code, which is a meeting identifier rather than a password or a guaranteed-unique private room.

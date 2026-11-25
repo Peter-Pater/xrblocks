@@ -47,6 +47,9 @@ export const ENVIRONMENT_MODE_PARAMETER = 'environment';
 /** The URL parameter for opening an exported layout from the same server. */
 export const SAVED_SCENE_PARAMETER = 'scene';
 
+const MODE_SCENE_PARAMETER = 'xrScene';
+const MODE_SCENE_STORAGE = 'roomcraft.modeSwitchScene';
+
 /**
  * An empty simulator backdrop, so the virtual page has no living room behind
  * the environment Roomcraft owns. The manifest declares no scene, video,
@@ -321,16 +324,18 @@ export class RoomcraftConsole extends xb.Script {
   /** Loads the opening scene once XR Blocks has finished starting. */
   async start() {
     try {
-      if (this.virtual) {
-        await this.newEnvironment(true);
-      } else {
-        await this.applyStarter(this.starters[0]);
-      }
-      const savedScene = xb.getUrlParameter(SAVED_SCENE_PARAMETER);
-      if (savedScene) {
-        await this.loadSavedScene(savedScene);
-        // Keep an import failure visible instead of replacing it with key setup.
-        if (this.errorMessage) return;
+      if (!(await this.restoreModeSwitchScene())) {
+        if (this.virtual) {
+          await this.newEnvironment(true);
+        } else {
+          await this.applyStarter(this.starters[0]);
+        }
+        const savedScene = xb.getUrlParameter(SAVED_SCENE_PARAMETER);
+        if (savedScene) {
+          await this.loadSavedScene(savedScene);
+          // Keep an import failure visible instead of replacing it with key setup.
+          if (this.errorMessage) return;
+        }
       }
     } finally {
       this.sceneReady = true;
@@ -338,6 +343,55 @@ export class RoomcraftConsole extends xb.Script {
     if (xb.getUrlParameter('key') || xb.getUrlParameter('geminiKey')) {
       await this.connectGemini(false);
     }
+  }
+
+  /** Carries the current layout into a mode switch in the same browser tab. */
+  saveModeSwitchScene(destination) {
+    if (!this.sceneReady || this.isBusy()) {
+      this.setError('Wait for Roomcraft to finish before switching XR modes.');
+      return false;
+    }
+    if (xb.getUrlParameter(MODE_SCENE_PARAMETER)) {
+      this.setError(
+        'Reload this tab to finish restoring your scene before switching XR modes.'
+      );
+      return false;
+    }
+    try {
+      const token = crypto.randomUUID();
+      sessionStorage.setItem(
+        MODE_SCENE_STORAGE,
+        JSON.stringify({token, layout: this.room.layout})
+      );
+      destination.searchParams.set(MODE_SCENE_PARAMETER, token);
+      return true;
+    } catch (error) {
+      console.warn(
+        '[roomcraft] Could not save the layout for XR mode switch.',
+        error
+      );
+      this.setError(
+        'Could not save your scene for the switch. Export it before opening the other mode in a new tab.'
+      );
+      return false;
+    }
+  }
+
+  async restoreModeSwitchScene() {
+    const token = xb.getUrlParameter(MODE_SCENE_PARAMETER);
+    if (!token) return false;
+    const pending = JSON.parse(sessionStorage.getItem(MODE_SCENE_STORAGE));
+    const url = new URL(window.location.href);
+    url.searchParams.delete(MODE_SCENE_PARAMETER);
+    if (pending?.token !== token) {
+      history.replaceState(history.state, '', url);
+      return false;
+    }
+    const layout = await this.room.applyLayout(pending.layout);
+    history.replaceState(history.state, '', url);
+    sessionStorage.removeItem(MODE_SCENE_STORAGE);
+    this.setStatus(`Restored "${layout.title}" after switching XR modes.`);
+    return true;
   }
 
   /** Imports saved data without a provider request or an implicit scene fallback. */
@@ -2492,10 +2546,11 @@ function createLighting() {
  * virtual page additionally uses the SDK's VR session mode, an empty simulator
  * backdrop, and an eye position near the front of the authored ground.
  *
- * @param virtual - Whether this page opened in fully virtual mode.
+ * @param virtual - Whether to use the virtual world and its starter scenes.
+ * @param pcvr - Whether to enter VR on the Windows PC through WebXR.
  * @returns The configured XR Blocks options.
  */
-export function createRoomcraftOptions(virtual = false) {
+export function createRoomcraftOptions(virtual = false, pcvr = false) {
   const options = new xb.Options();
   options.enableAI();
   // No model request happens on load; the demo connects Gemini on demand.
@@ -2517,14 +2572,19 @@ export function createRoomcraftOptions(virtual = false) {
   options.setAppTitle('Roomcraft');
   options.setAppDescription('Speak a scene into your room.');
   options.xrButton.showEnterSimulatorButton = true;
+  options.xrButton.pcvrModeSwitch = true;
+  if (pcvr) {
+    options.enablePCVR();
+    options.setAppDescription('Explore the Roomcraft starter scenes.');
+  } else if (virtual) {
+    options.enableVR();
+    // Quest can reject VR entry for this unused space even when it is optional.
+    options.webxrOptionalFeatures = options.webxrOptionalFeatures.filter(
+      (feature) => feature !== 'unbounded'
+    );
+  }
   if (!virtual) return options;
 
-  // A fully virtual page: no passthrough, no prebuilt room behind the scene.
-  options.enableVR();
-  // Quest can reject VR entry for this unused space even when it is optional.
-  options.webxrOptionalFeatures = options.webxrOptionalFeatures.filter(
-    (feature) => feature !== 'unbounded'
-  );
   options.setAppDescription('Author a whole virtual place.');
   options.simulator.environments = [{...VIRTUAL_ENVIRONMENT}];
   options.simulator.activeEnvironmentIndex = 0;
@@ -2534,8 +2594,12 @@ export function createRoomcraftOptions(virtual = false) {
 
 export async function startRoomcraftDemo(onProgress = () => {}) {
   onProgress('initializing-sdk', 'Starting XR Blocks...');
+  const pcvr = xb.getUrlParameter('pcvr') === '1';
+  if (pcvr && !navigator.platform.startsWith('Win')) {
+    throw new Error('Open the PCVR mode in Chrome or Edge on a Windows PC.');
+  }
   const virtual = !!xb.getUrlParameter(ENVIRONMENT_MODE_PARAMETER);
-  const options = createRoomcraftOptions(virtual);
+  const options = createRoomcraftOptions(virtual, pcvr);
 
   const room = new Roomcraft({
     repairInvalidPlans: true,
@@ -2555,6 +2619,8 @@ export async function startRoomcraftDemo(onProgress = () => {}) {
 
   const lighting = createLighting();
   const consoleScript = new RoomcraftConsole(room, {virtual, lighting});
+  options.xrButton.beforeModeSwitch = (destination) =>
+    consoleScript.saveModeSwitchScene(destination);
   xb.add(room, consoleScript, lighting);
   await xb.init(options);
   if (virtual) {

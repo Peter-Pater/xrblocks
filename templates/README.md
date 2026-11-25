@@ -1,8 +1,9 @@
 # XR Blocks Templates
 
 Templates are small, complete starting points for common XR application goals.
-Each no-build template runs in the desktop simulator and uses the same input
-path in WebXR where the required device capability is available.
+Most no-build templates run in the desktop simulator and use the same input
+path in WebXR where the required device capability is available. The PCVR
+template requires a physical headset and disables simulator fallback.
 
 Run the repository server, then open a template at its numbered path:
 
@@ -55,6 +56,8 @@ AI requests through a server that you control.
   with the live depth mesh.
 - [`14_simulator_setup`](14_simulator_setup): Start the desktop simulator with
   its interface, control modes, and common debug visualizations enabled.
+- [`16_pcvr`](16_pcvr): Render on a Windows PC and enter immersive VR through
+  Quest Link and a compatible OpenXR runtime.
 
 Each folder includes its own controls, requirements, device behavior, and next
 customization steps in `README.md`.

@@ -178,6 +178,50 @@ Those filenames are implementation details.
 
 ---
 
+## PC rendering with Quest Link
+
+For PCVR, open the app in **Chrome or Edge on a Windows PC** while Quest Link
+is running over a USB data cable. Set Link as the active OpenXR runtime in
+the Link app's **Settings > General**. A compatible browser and native runtime
+are required; see [Chromium's platform support](https://chromium.googlesource.com/chromium/src/+/main/device/vr/README.md).
+
+Use `enablePCVR()` to request `immersive-vr` with WebGL and the
+`XRWebGLLayer` base layer for Quest Link compatibility. The preset disables
+the desktop simulator and camera access.
+
+```javascript
+const options = new xb.Options().enablePCVR();
+xb.add(new MyScript());
+await xb.init(options);
+```
+
+The PC browser renders the scene and receives WebXR head/controller input.
+Meta's runtime handles video streaming and USB transport. Opening the page
+in Quest Browser, even through USB port forwarding, renders on the headset
+instead. WebXR does not report whether Link is using USB or Air Link.
+
+Open the **XR** menu in the upper-right corner and choose the entry button.
+The menu can be collapsed while **Exit XR** and first-frame status stay
+accessible during a session.
+Set `options.xrButton.enabled = false` to hide the SDK controls entirely. Pages
+with an existing startup overlay can set `options.xrButton.layout = "overlay"`.
+For a sample that also implements `?pcvr=1`, set
+`options.xrButton.pcvrModeSwitch = true` to expose **Switch to PCVR** and
+**Switch to Standard XR** on Windows. Use
+`options.xrButton.beforeModeSwitch` to save app state before navigation or
+return `false` to cancel it.
+
+The entry button refreshes when the browser reports `devicechange` and after
+an immersive session ends. If Link or the active runtime changes without a
+browser event, reload the PC page or restart the browser. Camera and depth
+features available on standalone devices may not be available in PCVR.
+
+After building the repository, `npm run pcvr` starts the local server and opens
+the PCVR template in your default browser. Use Chrome or Edge for PCVR.
+
+Start with <CodeSearchLink path="templates/16_pcvr/index.html"/> and its
+README for setup, controls, and physical-headset acceptance checks.
+
 ## Creating an Interactive Scene
 
 XR Blocks uses a singleton engine driven by a script lifecycle. Rather than managing the renderer and canvas yourself, you write your app as one or more `xb.Script` subclasses and register them.

@@ -14,6 +14,7 @@
     "start": "npm run dev",
     "build:watch": "rolldown -c -w",
     "serve": "http-server --cors -c-1 -a 127.0.0.1 -p 8080",
+    "pcvr": "http-server --cors -c-1 -a 127.0.0.1 -p 8080 -o /templates/16_pcvr/",
     "build": "echo \"Building xrblocks.js...\" && rolldown -c",
     "build:sdk": "XRBLOCKS_BUILD=sdk rolldown -c",
     "build:check-imports": "node tools/check-bundle-imports.js",

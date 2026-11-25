@@ -45,6 +45,8 @@ class PreloadPanel extends xb.Script {
 }
 
 const options = new xb.Options().enableCamera();
+// The model preload panel shares the original startup overlay.
+options.xrButton.layout = 'overlay';
 options.xrButton.showEnterSimulatorButton = true;
 options.xrButton.appTitle = 'What am I looking at?';
 options.xrButton.appDescription =
