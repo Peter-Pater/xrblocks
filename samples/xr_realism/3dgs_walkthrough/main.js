@@ -266,7 +266,20 @@ class WalkthroughManager extends xb.Script {
 }
 
 document.addEventListener('DOMContentLoaded', async function () {
-  const options = new xb.Options().enableSplats();
+  const pcvr = xb.getUrlParameter('pcvr') === '1';
+  const windows = navigator.platform.startsWith('Win');
+  const status = document.getElementById('pcvr-status');
+  if (pcvr && !windows) {
+    status.textContent =
+      'Open this PCVR page in Chrome or Edge on a Windows PC.';
+    status.hidden = false;
+    return;
+  }
+
+  const options = new xb.Options();
+  options.xrButton.pcvrModeSwitch = true;
+  if (pcvr) options.enablePCVR();
+  options.enableSplats();
   options.enableXRTransitions();
   options.transition.defaultBackgroundColor = 0x000000;
   options.reticles.enabled = false;
@@ -275,5 +288,12 @@ document.addEventListener('DOMContentLoaded', async function () {
   options.hands.visualizeMeshes = true;
 
   xb.add(new WalkthroughManager());
-  await xb.init(options);
+  try {
+    await xb.init(options);
+  } catch (error) {
+    status.textContent =
+      '3DGS Walkthrough could not start. Check the connection and reload.';
+    status.hidden = false;
+    console.error(error);
+  }
 });

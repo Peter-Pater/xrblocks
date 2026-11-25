@@ -31,3 +31,22 @@ it('enables splats with WebGPU defaults without losing explicit renderer or anti
   expect(explicit.framebufferScaleFactor).toBe(1);
   expect(explicit.splats.minContribution).toBe(2.25);
 });
+
+it('keeps the PCVR renderer and headset entry after a desktop automation preset', () => {
+  const options = new Options().enableAutomationMode();
+  options.webxrOptionalFeatures = ['unbounded', 'hand-tracking'];
+  expect(options.permissions.camera).toBe(true);
+  options.enablePCVR().enableSplats();
+  expect(options.xrSessionMode).toBe('immersive-vr');
+  expect(options.rendererBackend).toBe('webgl');
+  expect(options.useXRWebGLBaseLayer).toBe(true);
+  expect(options.enableSimulator).toBe(false);
+  expect(options.xrButton).toMatchObject({
+    enabled: true,
+    startText: 'Enter PCVR',
+    waitForStereoFrame: true,
+  });
+  expect(options.permissions.camera).toBe(false);
+  expect(options.deviceCamera.enabled).toBe(false);
+  expect(options.webxrOptionalFeatures).toEqual(['hand-tracking']);
+});

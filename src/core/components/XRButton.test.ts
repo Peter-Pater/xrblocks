@@ -76,6 +76,31 @@ describe('XR entry through browser permission and session boundaries', () => {
     await vi.waitFor(() => expect(manager.currentSession).toBeDefined());
   });
 
+  it('keeps XR entry disabled until the headset is checked after a disconnect', async () => {
+    const native = session();
+    requestSession.mockResolvedValue(native);
+    button.xrButtonElement.click();
+    await vi.waitFor(() => expect(manager.currentSession).toBe(native));
+
+    const support = vi.spyOn(navigator.xr!, 'isSessionSupported');
+    const disconnected = Promise.withResolvers<boolean>();
+    release.push(() => disconnected.resolve(false));
+    support.mockReturnValue(disconnected.promise);
+    await native.end();
+    expect(button.xrButtonElement.textContent).toBe('Checking for a headset…');
+    expect(button.xrButtonElement.disabled).toBe(true);
+    button.xrButtonElement.click();
+    expect(requestSession).toHaveBeenCalledOnce();
+
+    disconnected.resolve(false);
+    await vi.waitFor(() =>
+      expect(button.xrButtonElement.textContent).toBe('XR NOT SUPPORTED')
+    );
+    support.mockResolvedValue(true);
+    navigator.xr!.dispatchEvent(new Event('devicechange'));
+    await vi.waitFor(() => expect(button.xrButtonElement.disabled).toBe(false));
+  });
+
   it('shows permission denial without requesting XR and lets the user retry', async () => {
     getUserMedia.mockRejectedValueOnce(
       Object.assign(new Error('Microphone denied'), {name: 'NotAllowedError'})
@@ -143,6 +168,33 @@ describe('XR entry through browser permission and session boundaries', () => {
     }
   );
 
+  it('shows a native exit error and keeps the active session available for retry', async () => {
+    const native = session();
+    const denied = Promise.withResolvers<void>();
+    vi.mocked(native.end).mockReturnValueOnce(denied.promise);
+    requestSession.mockResolvedValue(native);
+    button.xrButtonElement.click();
+    await vi.waitFor(() => expect(manager.currentSession).toBe(native));
+
+    button.xrButtonElement.click();
+    expect(button.xrButtonElement.textContent).toBe('EXITING XR...');
+    expect(button.xrButtonElement.disabled).toBe(true);
+    button.xrButtonElement.click();
+    await vi.waitFor(() => expect(native.end).toHaveBeenCalledOnce());
+    denied.reject(new DOMException('Native exit failed', 'OperationError'));
+
+    await vi.waitFor(() =>
+      expect(alert().textContent).toContain('XR could not end')
+    );
+    expect(alert().textContent).toContain('Native exit failed');
+    expect(manager.currentSession).toBe(native);
+    expect(button.xrButtonElement.disabled).toBe(false);
+    button.xrButtonElement.click();
+    await vi.waitFor(() => expect(manager.currentSession).toBeUndefined());
+    expect(native.end).toHaveBeenCalledTimes(2);
+    expect(alert().hidden).toBe(true);
+  });
+
   it('does not enter XR after disposal during a native permission grant and stops the granted tracks', async () => {
     const pending = Promise.withResolvers<MediaStream>();
     const stop = vi.fn();
@@ -156,6 +208,51 @@ describe('XR entry through browser permission and session boundaries', () => {
     await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
     expect(requestSession).not.toHaveBeenCalled();
     expect(button.domElement.isConnected).toBe(false);
+  });
+});
+
+describe('compact XR menu', () => {
+  it('collapses the panel and keeps an exit action available during XR', async () => {
+    button.dispose();
+    button = new XRButton(
+      manager,
+      new PermissionsManager(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      {}
+    );
+    document.body.append(button.domElement);
+    await manager.initialize();
+    const trigger = button.domElement.querySelector<HTMLButtonElement>(
+      '[aria-controls="XRButtonMenu"]'
+    )!;
+    const panel =
+      button.domElement.querySelector<HTMLElement>('#XRButtonMenu')!;
+    const exit =
+      button.domElement.querySelectorAll<HTMLButtonElement>(
+        '.XRMenuTrigger'
+      )[1];
+    expect(panel.hidden).toBe(true);
+    trigger.click();
+    expect(panel.hidden).toBe(false);
+    button.xrButtonElement.click();
+    await vi.waitFor(() => expect(manager.currentSession).toBeDefined());
+    panel.dispatchEvent(
+      new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})
+    );
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(panel.hidden).toBe(true);
+    expect(exit.hidden).toBe(false);
+    exit.click();
+    await vi.waitFor(() => expect(manager.currentSession).toBeUndefined());
+    expect(exit.hidden).toBe(true);
   });
 });
 

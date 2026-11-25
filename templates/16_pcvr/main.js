@@ -44,7 +44,7 @@ class PCVRScene extends xb.Script {
   onXRSessionStarted() {
     this.frames = 0;
     this.lastStatusTime = -Infinity;
-    status.textContent = 'Immersive VR started in this PC browser.';
+    status.textContent = 'VR session established. Waiting for stereo frames…';
   }
 
   onXRSessionEnded() {
@@ -73,22 +73,9 @@ async function start() {
   }
 
   const options = new xb.Options({
-    formFactor: 'vr',
-    rendererBackend: 'webgl',
     controllers: {visualizeRays: true},
-    xrButton: {
-      appTitle: 'XR Blocks PCVR',
-      startText: 'Enter PCVR',
-      invalidText: 'No PCVR headset available',
-    },
-  });
-  // This sample must never fall back to the emulated desktop headset,
-  // including when a URL contains a simulator/automation preset.
-  options.formFactor = 'vr';
-  options.rendererBackend = 'webgl';
-  options.deviceCamera.enabled = false;
-  options.permissions.camera = false;
-  options.xrButton.enabled = true;
+    xrButton: {appTitle: 'XR Blocks PCVR'},
+  }).enablePCVR();
   xb.add(new PCVRScene());
   await xb.init(options);
   status.textContent =

@@ -205,18 +205,6 @@ export class Core {
   private onWebXRSessionStarted = (event: {session: XRSession}) => {
     void this.onXRSessionStarted(event.session);
   };
-  private onWebXRUnsupported = () => {
-    // Simulator fallback is a startup decision. A temporary device loss must
-    // leave the entry button available for a later reconnect.
-    if (
-      !this.options.enableSimulator ||
-      this.lifecycleState !== 'initializing'
-    ) {
-      return;
-    }
-    this.xrButton?.domElement.remove();
-    this.shouldAutostartSimulator = true;
-  };
 
   private _isPaused = false;
   private isSteppingFrame = false;
@@ -502,10 +490,6 @@ export class Core {
       WebXRSessionEventType.SESSION_END,
       this.onXRSessionEnded
     );
-    manager.removeEventListener(
-      WebXRSessionEventType.UNSUPPORTED,
-      this.onWebXRUnsupported
-    );
     await manager.dispose();
   }
 
@@ -642,13 +626,27 @@ export class Core {
       await this.renderer.init();
       this.assertInitializing();
     } else {
-      this.renderer = new THREE.WebGLRenderer({
-        canvas: options.canvas,
-        antialias: options.antialias,
-        stencil: options.stencil,
-        alpha: true,
-        logarithmicDepthBuffer: options.logarithmicDepthBuffer,
-      });
+      // Three.js checks for XRWebGLBinding when it constructs its XR manager.
+      // Hide the binding only during construction to select XRWebGLLayer.
+      const xrBinding = options.useXRWebGLBaseLayer
+        ? Object.getOwnPropertyDescriptor(globalThis, 'XRWebGLBinding')
+        : undefined;
+      if (xrBinding?.configurable) {
+        Object.defineProperty(globalThis, 'XRWebGLBinding', {value: undefined});
+      }
+      try {
+        this.renderer = new THREE.WebGLRenderer({
+          canvas: options.canvas,
+          antialias: options.antialias,
+          stencil: options.stencil,
+          alpha: true,
+          logarithmicDepthBuffer: options.logarithmicDepthBuffer,
+        });
+      } finally {
+        if (xrBinding?.configurable) {
+          Object.defineProperty(globalThis, 'XRWebGLBinding', xrBinding);
+        }
+      }
       this.renderer.xr.enabled = true;
     }
     if (
@@ -854,7 +852,8 @@ export class Core {
         this.renderer,
         this.webXRSettings,
         options.xrSessionMode,
-        options.fallbackToVR
+        options.fallbackToVR,
+        options.xrButton.waitForStereoFrame
       );
       this.registry.register(this.webXRSessionManager, WebXRSessionManager);
       this.webXRSessionManager.addEventListener(
@@ -870,8 +869,12 @@ export class Core {
         this.onXRSessionEnded
       );
 
-      // Sets up xrButton.
-      if (!this.shouldAutostartSimulator && options.xrButton.enabled) {
+      // Compact XR controls remain reachable from the desktop simulator.
+      const xrMenu = options.xrButton.layout === 'menu';
+      if (
+        options.xrButton.enabled &&
+        (xrMenu || !this.shouldAutostartSimulator)
+      ) {
         this.xrButton = new XRButton(
           this.webXRSessionManager,
           this.permissionsManager,
@@ -883,18 +886,28 @@ export class Core {
           options.xrButton?.startSimulatorText,
           options.xrButton?.showEnterSimulatorButton,
           this.startSimulator,
-          options.permissions
+          options.permissions,
+          xrMenu
+            ? {
+                pcvrModeSwitch: options.xrButton.pcvrModeSwitch,
+                beforeModeSwitch: options.xrButton.beforeModeSwitch,
+                isPCVR: options.xrButton.waitForStereoFrame,
+              }
+            : undefined
         );
         document.body.appendChild(this.xrButton.domElement);
       }
 
-      this.webXRSessionManager.addEventListener(
-        WebXRSessionEventType.UNSUPPORTED,
-        this.onWebXRUnsupported
-      );
-
       await this.webXRSessionManager.initialize();
       this.assertInitializing();
+      // Choose the simulator once, after the initial headset check settles.
+      if (
+        options.enableSimulator &&
+        this.webXRSessionManager.isXRSupported() === false
+      ) {
+        if (!xrMenu) this.xrButton?.domElement.remove();
+        this.shouldAutostartSimulator = true;
+      }
     }
 
     // Sets up postprocessing effects.
@@ -1023,6 +1036,7 @@ export class Core {
     this.splats.sync();
 
     this.renderSimulatorAndScene();
+    this.webXRSessionManager?.onFrameRendered(frame);
     if (!isSerializerRenderer(this.renderer)) {
       this.screenshotSynthesizer.onAfterRender(
         this.renderer,
@@ -1148,8 +1162,12 @@ export class Core {
         this.simulator = simulator;
         this.registry.register(simulator);
         this.onSimulatorStarted();
-        this.xrButton?.dispose();
-        this.xrButton = undefined;
+        if (this.xrButton?.usesMenu) {
+          this.xrButton.setSimulatorRunning();
+        } else {
+          this.xrButton?.dispose();
+          this.xrButton = undefined;
+        }
         return simulator;
       } catch (error) {
         simulator.removeFromParent();

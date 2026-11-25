@@ -193,6 +193,12 @@ export class Options {
   webgpuOptions?: WebGPURendererOptions;
 
   /**
+   * Uses XRWebGLLayer for the WebGL renderer. Enable this when the browser
+   * exposes XRProjectionLayer but the headset runtime cannot present it.
+   */
+  useXRWebGLBaseLayer = false;
+
+  /**
    * Optional Split Engine serializer instance or factory function used when
    * `rendererBackend` is `'serializer'`.
    */
@@ -292,11 +298,18 @@ export class Options {
     appTitle: '',
     appDescription: '',
     enabled: true,
+    layout: 'menu' as 'menu' | 'overlay',
+    // Enable for apps that implement the ?pcvr=1 entry through enablePCVR().
+    pcvrModeSwitch: false,
+    // Save app state before navigating, or return false to stay on the page.
+    beforeModeSwitch: undefined as ((destination: URL) => boolean) | undefined,
     startText: 'Enter XR',
     endText: 'Exit XR',
     invalidText: 'XR Not Supported',
     startSimulatorText: 'Enter Simulator',
     showEnterSimulatorButton: false,
+    // Report the first rendered stereo frame and slow startup for PCVR.
+    waitForStereoFrame: false,
     // Whether to autostart the simulator even if WebXR is available.
     alwaysAutostartSimulator: false,
   };
@@ -467,6 +480,25 @@ export class Options {
    */
   enableVR() {
     this.xrSessionMode = 'immersive-vr';
+    return this;
+  }
+
+  /** Uses immersive WebGL on the PC with the WebXR base layer and no camera. */
+  enablePCVR() {
+    this.formFactor = 'vr';
+    this.rendererBackend = 'webgl';
+    this.useXRWebGLBaseLayer = true;
+    this.deviceCamera.enabled = false;
+    this.permissions.camera = false;
+    this.xrButton.enabled = true;
+    this.xrButton.showEnterSimulatorButton = false;
+    this.xrButton.startText = 'Enter PCVR';
+    this.xrButton.waitForStereoFrame = true;
+    this.xrButton.invalidText = 'No PCVR headset available';
+    // Some Quest runtimes reject immersive VR with the unused unbounded space.
+    this.webxrOptionalFeatures = this.webxrOptionalFeatures.filter(
+      (feature) => feature !== 'unbounded'
+    );
     return this;
   }
 

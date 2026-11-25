@@ -37,6 +37,8 @@ class PreloadPanel extends xb.Script {
 }
 
 const options = new xb.Options().enableSceneContext().enableHands();
+// The model preload panel shares the original startup overlay.
+options.xrButton.layout = 'overlay';
 options.xrButton.showEnterSimulatorButton = true;
 options.xrButton.appTitle = 'Gemma 4 on-device';
 options.xrButton.appDescription =
